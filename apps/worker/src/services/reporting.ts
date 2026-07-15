@@ -9,6 +9,7 @@ import { deliverablesDir } from '../paths.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 import { ErrorCode } from '../types/errors.js';
 import { PentestError } from './error-handling.js';
+import { loadVerdicts, renderVerdictSections } from './triage-report.js';
 
 interface DeliverableFile {
   name: string;
@@ -24,6 +25,7 @@ export async function assembleFinalReport(
   sourceDir: string,
   deliverablesSubdir: string | undefined,
   logger: ActivityLogger,
+  triageRan: boolean,
 ): Promise<string> {
   const deliverableFiles: readonly DeliverableFile[] = [
     { name: 'Injection', paths: ['injection_exploitation_evidence.md', 'injection_findings.md'], required: false },
@@ -67,7 +69,11 @@ export async function assembleFinalReport(
     }
   }
 
-  const finalContent = sections.join('\n\n');
+  // Prepend the deterministic triage sections (Confirmed / Ruled-out tables, or the
+  // UNVALIDATED banner if verdicts are missing/invalid — fail-open).
+  const verdicts = await loadVerdicts(sourceDir, deliverablesSubdir, logger);
+  const verdictMarkdown = renderVerdictSections(verdicts, triageRan);
+  const finalContent = [verdictMarkdown, ...sections].join('\n\n');
   const finalReportPath = path.join(dir, 'comprehensive_security_assessment_report.md');
 
   try {

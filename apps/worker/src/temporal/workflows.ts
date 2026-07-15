@@ -207,6 +207,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     error: null,
     startTime: Date.now(),
     agentMetrics: {},
+    triageRan: false,
     summary: null,
   };
 
@@ -552,6 +553,30 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     state.currentAgent = null;
     await a.logPhaseTransition(activityInput, 'vulnerability-exploitation', 'complete');
 
+    // === Phase 4.5: Triage Gate (fail-open) ===
+    // Validates each finding before reporting. A triage failure must never lose a
+    // completed exploitation run, so this is wrapped fail-open: on error the report
+    // renders all findings under an UNVALIDATED banner (see services/reporting.ts).
+    if (!shouldSkip('triage')) {
+      state.currentPhase = 'triage';
+      state.currentAgent = 'triage';
+      await a.logPhaseTransition(activityInput, 'triage', 'start');
+      try {
+        state.agentMetrics.triage = await a.runTriageAgent(activityInput);
+        state.completedAgents.push('triage');
+        state.triageRan = true;
+        await a.logPhaseTransition(activityInput, 'triage', 'complete');
+      } catch (error) {
+        state.triageRan = false;
+        const msg = error instanceof Error ? error.message : String(error);
+        log.warn(`Triage gate failed — continuing fail-open (report will be UNVALIDATED): ${msg}`);
+      }
+    } else {
+      log.info('Skipping triage (already complete)');
+      state.completedAgents.push('triage');
+      state.triageRan = true;
+    }
+
     // === Phase 5: Reporting ===
     if (!shouldSkip('report')) {
       state.currentPhase = 'reporting';
@@ -559,7 +584,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       await a.logPhaseTransition(activityInput, 'reporting', 'start');
 
       // First, assemble the concatenated report from per-class deliverables
-      await a.assembleReportActivity(activityInput, exploit);
+      await a.assembleReportActivity(activityInput, exploit, state.triageRan);
 
       // Then run the report agent to add executive summary and clean up
       state.agentMetrics.report = await a.runReportAgent(activityInput);

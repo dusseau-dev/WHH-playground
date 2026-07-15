@@ -7,8 +7,10 @@
 import { fs, path } from 'zx';
 
 import { validateQueueAndDeliverable } from './services/queue-validation.js';
+import { validateTriageVerdicts } from './services/triage-validation.js';
 import type { ActivityLogger } from './types/activity-logger.js';
 import type { AgentDefinition, AgentName, AgentValidator, PlaywrightSession, VulnType } from './types/index.js';
+import { isErr } from './types/result.js';
 
 // Agent definitions according to PRD
 export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freeze({
@@ -97,6 +99,14 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
     promptTemplate: 'exploit-authz',
     deliverableFilename: 'authz_exploitation_evidence.md',
   },
+  triage: {
+    name: 'triage',
+    displayName: 'Triage gate',
+    prerequisites: ['injection-exploit', 'xss-exploit', 'auth-exploit', 'ssrf-exploit', 'authz-exploit'],
+    promptTemplate: 'triage-verdict',
+    deliverableFilename: 'triage_verdicts.json',
+    modelTier: 'large',
+  },
   report: {
     name: 'report',
     displayName: 'Report agent',
@@ -123,6 +133,7 @@ export const AGENT_PHASE_MAP: Readonly<Record<AgentName, PhaseName>> = Object.fr
   'auth-exploit': 'exploitation',
   'authz-exploit': 'exploitation',
   'ssrf-exploit': 'exploitation',
+  triage: 'reporting',
   report: 'reporting',
 });
 
@@ -176,6 +187,7 @@ export const PLAYWRIGHT_SESSION_MAPPING: Record<string, PlaywrightSession> = Obj
 
   // Phase 5: Reporting
   'report-executive': 'agent3',
+  'triage-verdict': 'agent3',
 });
 
 // Direct agent-to-validator mapping - much simpler than pattern matching
@@ -205,6 +217,27 @@ export const AGENT_VALIDATORS: Record<AgentName, AgentValidator> = Object.freeze
   'auth-exploit': createExploitValidator('auth'),
   'ssrf-exploit': createExploitValidator('ssrf'),
   'authz-exploit': createExploitValidator('authz'),
+
+  // Triage gate — validates the emitted verdicts file against the schema
+  triage: async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
+    const verdictsFile = path.join(sourceDir, 'triage_verdicts.json');
+    if (!(await fs.pathExists(verdictsFile))) {
+      logger.warn('Missing required deliverable: triage_verdicts.json');
+      return false;
+    }
+    try {
+      const raw = JSON.parse(await fs.readFile(verdictsFile, 'utf8')) as unknown;
+      const result = validateTriageVerdicts(raw);
+      if (isErr(result)) {
+        logger.warn(`Invalid triage_verdicts.json: ${result.error.message}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      logger.warn(`Could not read triage_verdicts.json: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  },
 
   // Executive report agent
   report: async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {

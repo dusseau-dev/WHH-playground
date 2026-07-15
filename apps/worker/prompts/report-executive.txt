@@ -44,6 +44,7 @@ You will analyze the following deliverable files:
 - `.shannon/deliverables/pre_recon_deliverable.md` - Initial reconnaissance and technology stack
 - `.shannon/deliverables/recon_deliverable.md` - Attack surface mapping and endpoint discovery
 - `.shannon/deliverables/comprehensive_security_assessment_report.md` - The already-concatenated report that you will modify
+- `.shannon/deliverables/triage_verdicts.json` - Triage verdicts (authoritative validation results)
 </input_files>
 
 <deliverable_instructions>
@@ -109,5 +110,14 @@ IMPORTANT: Do NOT reorder the existing per-class report sections. Maintain the e
    - Save as the modified `.shannon/deliverables/comprehensive_security_assessment_report.md`
 
 CRITICAL: You are modifying the existing concatenated report at `.shannon/deliverables/comprehensive_security_assessment_report.md` IN-PLACE, not creating a separate file.
+
+5. RESPECT THE TRIAGE GATE:
+   - The report already begins with deterministic "## Confirmed Findings" and
+     "## Considered & Ruled Out" sections built from triage_verdicts.json. PRESERVE
+     them verbatim — do not delete, reorder, or move findings between them.
+   - If a "⚠️ Triage did not run — findings are UNVALIDATED" banner is present, KEEP it
+     at the very top and state in the Executive Summary that findings are unvalidated.
+   - Align the Executive Summary with the Confirmed Findings table. Do NOT describe a
+     KILL/ruled-out finding as confirmed, and do NOT promote a ruled-out item.
 </instructions>
 
