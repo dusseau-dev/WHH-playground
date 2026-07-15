@@ -569,6 +569,10 @@ export async function runReportAgent(input: ActivityInput, exploit: boolean): Pr
   return runAgentActivity('report', input, collector.tools, writeDeliverable);
 }
 
+export async function runTriageAgent(input: ActivityInput): Promise<AgentMetrics> {
+  return runAgentActivity('triage', input);
+}
+
 /**
  * Preflight validation activity.
  *
@@ -805,7 +809,11 @@ export async function syncCodePathDenyRules(input: ActivityInput): Promise<void>
  * directly. Under exploit=false, exploit agents didn't run; we deterministically
  * render `*_findings.md` from each `*_exploitation_queue.json` first, then assemble.
  */
-export async function assembleReportActivity(input: ActivityInput, exploit: boolean): Promise<void> {
+export async function assembleReportActivity(
+  input: ActivityInput,
+  exploit: boolean,
+  triageRan: boolean,
+): Promise<void> {
   const { repoPath, deliverablesSubdir } = input;
   const logger = createActivityLogger();
 
@@ -821,7 +829,7 @@ export async function assembleReportActivity(input: ActivityInput, exploit: bool
 
   logger.info('Assembling deliverables from specialist agents...');
   try {
-    await assembleFinalReport(repoPath, deliverablesSubdir, logger);
+    await assembleFinalReport(repoPath, deliverablesSubdir, logger, triageRan);
   } catch (error) {
     const err = error as Error;
     logger.warn(`Error assembling final report: ${err.message}`);

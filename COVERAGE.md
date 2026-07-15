@@ -19,6 +19,20 @@ Shannon currently targets the following classes of *exploitable* vulnerabilities
 
 This list is not exhaustive of all potential security risks. Shannon does not, for example, report on issues that it cannot actively exploit, such as the use of vulnerable third-party libraries, weak encryption algorithms, or insecure configurations. These types of static-analysis findings are the focus of our upcoming **Keygraph Code Security (SAST)** product.
 
+## Triage gate
+
+Between exploitation and reporting, a `triage` agent validates every candidate finding against a
+7-point exploitability rubric and emits `triage_verdicts.json` with one verdict each:
+
+- **PASS** — confirmed; appears under "Confirmed Findings".
+- **DOWNGRADE** — real but lower severity than claimed (severity corrected).
+- **KILL** — not exploitable; moved to the "Considered & Ruled Out" appendix with a reason.
+- **CHAIN_REQUIRED** — only exploitable combined with another finding (appendix, labelled).
+
+Phase order: pre-recon → recon → vuln+exploit → **triage** → report. The gate is **fail-open**: if
+triage errors, the report still renders all findings under a "⚠️ Triage did not run — findings are
+UNVALIDATED" banner.
+
 ## WST Testing Checklist
 
 | Test ID | Test Name | Status |

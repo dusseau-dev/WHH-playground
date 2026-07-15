@@ -57,6 +57,8 @@ export interface PipelineState {
   errorCode?: ErrorCode;
   startTime: number;
   agentMetrics: Record<string, AgentMetrics>;
+  /** False when the triage gate failed open — the report renders an UNVALIDATED banner. */
+  triageRan: boolean;
   summary: PipelineSummary | null;
 }
 
