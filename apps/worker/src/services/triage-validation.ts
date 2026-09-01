@@ -9,15 +9,16 @@
  * shape checks returning Result<T, PentestError>, no extra deps).
  */
 
+import { type FindingSeverity, SEVERITY_VALUES } from '../collectors/finding-collector.js';
 import { ErrorCode } from '../types/errors.js';
 import { err, isErr, ok, type Result } from '../types/result.js';
 import { PentestError } from './error-handling.js';
 
 export type Verdict = 'PASS' | 'DOWNGRADE' | 'KILL' | 'CHAIN_REQUIRED';
-export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
+export type Severity = FindingSeverity;
 
 export const VERDICTS: readonly Verdict[] = ['PASS', 'DOWNGRADE', 'KILL', 'CHAIN_REQUIRED'];
-export const SEVERITIES: readonly Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
+export const SEVERITIES: readonly Severity[] = SEVERITY_VALUES;
 
 export interface TriageVerdict {
   id: string;

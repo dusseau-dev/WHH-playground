@@ -51,6 +51,8 @@ IMPORTANT: When a finding is plausibly real but you could not PROVE exploitation
 <output>
 Produce STRICT JSON (no prose, no markdown fences) with a verdict for every candidate finding:
 
+For each verdict, copy `id` exactly, byte-for-byte, from the matching vulnerability queue `ID`. Never normalize, trim, recase, translate, or renumber an ID.
+
 {
   "version": 1,
   "verdicts": [

@@ -5,16 +5,14 @@
 // as published by the Free Software Foundation.
 
 /**
- * TypeBox schemas + submit-tool factory for vulnerability exploitation queues.
+ * TypeBox schemas and captured submit tools for vulnerability queues.
  *
- * pi captures each vuln agent's structured queue via a `submit_exploitation_queue`
- * custom tool whose parameters mirror the per-class schema below. Entry types are
- * derived from the same schemas and consumed by the findings renderer.
+ * Pi captures structured output through `submit_exploitation_queue`. The
+ * caller writes the captured payload to the existing per-class queue file.
  */
 
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { type Static, type TObject, Type } from 'typebox';
-import { stringEnum } from '../collectors/schema.js';
 import type { AgentName } from '../types/agents.js';
 import type { CapturedSubmitTool } from './submit-tool.js';
 
@@ -24,39 +22,25 @@ function optStr(description?: string) {
   return Type.Optional(Type.String(description === undefined ? {} : { description }));
 }
 
-/**
- * Base fields shared by every queue entry. `notes` gains guidance in analysis mode.
- *
- * `confidence` is enumerated so it reaches the report agent in the same casing the report
- * schema accepts — an analysis-only run carries it through verbatim as its only rating.
- */
-function baseFields(exploit: boolean) {
+function baseFields(safeDemonstration: boolean) {
   return {
     ID: Type.String(),
     vulnerability_type: Type.String(),
     externally_exploitable: Type.Boolean(),
-    confidence: stringEnum(['high', 'medium', 'low'], {
-      description: 'Confidence that this is a real, reachable vulnerability.',
-    }),
+    confidence: Type.String(),
     code_locations: Type.Optional(
       Type.Array(
         Type.Object({
           file: Type.String({ description: 'Repository-relative path, no leading slash.' }),
           start_line: Type.Optional(Type.Integer({ minimum: 1 })),
           end_line: Type.Optional(Type.Integer({ minimum: 1, description: 'Set when the flaw spans a range.' })),
-          role: stringEnum(['sink', 'source', 'guard'], {
-            description:
-              'sink where the flaw manifests, source where untrusted input enters, guard for a check ' +
-              'that is missing or misplaced.',
-          }),
-          symbol: Type.Optional(
-            Type.String({ description: 'Enclosing function or method, named as written in the code.' }),
-          ),
+          role: Type.Union([Type.Literal('sink'), Type.Literal('source'), Type.Literal('guard')]),
+          symbol: Type.Optional(Type.String({ description: 'Enclosing function or method.' })),
         }),
         { description: 'Every code site this finding touches, sink first.' },
       ),
     ),
-    notes: exploit ? optStr() : optStr(ANALYSIS_NOTES_DESCRIPTION),
+    notes: safeDemonstration ? optStr() : optStr(ANALYSIS_NOTES_DESCRIPTION),
   };
 }
 
@@ -112,8 +96,6 @@ const authzFields = {
   minimal_witness: optStr(),
 };
 
-// === Per-entry schemas (single vulnerability). Entry types derive from these. ===
-
 const injectionEntry = () => Type.Object({ ...baseFields(true), ...injectionFields });
 const xssEntry = () => Type.Object({ ...baseFields(true), ...xssFields });
 const authEntry = () => Type.Object({ ...baseFields(true), ...authFields });
@@ -121,7 +103,6 @@ const ssrfEntry = () => Type.Object({ ...baseFields(true), ...ssrfFields });
 const authzEntry = () => Type.Object({ ...baseFields(true), ...authzFields });
 
 export type QueueCodeLocation = NonNullable<Static<ReturnType<typeof injectionEntry>>['code_locations']>[number];
-
 export type InjectionFinding = Static<ReturnType<typeof injectionEntry>>;
 export type XssFinding = Static<ReturnType<typeof xssEntry>>;
 export type AuthFinding = Static<ReturnType<typeof authEntry>>;
@@ -144,23 +125,18 @@ const VULN_AGENT_QUEUE_FILENAMES: Partial<Record<AgentName, string>> = {
   'authz-vuln': 'authz_exploitation_queue.json',
 };
 
-/** Build the TypeBox submit-tool parameters for a vuln agent, or undefined for non-vuln agents. */
-function queueSchema(agentName: AgentName, exploit: boolean): TObject | undefined {
+function queueSchema(agentName: AgentName, safeDemonstration: boolean): TObject | undefined {
   const extra = PER_TYPE_FIELDS[agentName];
   if (!extra) return undefined;
-  return Type.Object({
-    vulnerabilities: Type.Array(Type.Object({ ...baseFields(exploit), ...extra })),
-  });
+  return Type.Object({ vulnerabilities: Type.Array(Type.Object({ ...baseFields(safeDemonstration), ...extra })) });
 }
 
-/** Returns the queue filename for a vuln agent, or undefined for non-vuln agents. */
 export function getQueueFilename(agentName: AgentName): string | undefined {
   return VULN_AGENT_QUEUE_FILENAMES[agentName];
 }
 
-/** Build the pi submit tool that captures the exploitation queue for vuln agents. */
-export function createQueueSubmitTool(agentName: AgentName, exploit = true): CapturedSubmitTool | undefined {
-  const schema = queueSchema(agentName, exploit);
+export function createQueueSubmitTool(agentName: AgentName, safeDemonstration = true): CapturedSubmitTool | undefined {
+  const schema = queueSchema(agentName, safeDemonstration);
   if (!schema) return undefined;
 
   let captured: unknown | undefined;

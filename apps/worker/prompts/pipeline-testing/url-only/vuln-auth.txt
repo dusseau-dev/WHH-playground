@@ -1,0 +1,8 @@
+@include(shared/_filesystem.txt)
+
+Run:
+save-deliverable --type AUTH_ANALYSIS --content '# Authentication Analysis
+
+Dynamic pipeline test complete; no candidates.'
+Then return structured output {"vulnerabilities":[]}.
+Your final action must be one call to submit_exploitation_queue.

@@ -31,3 +31,4 @@ Run this only when login_success is true. Skip it on failure.
 - Submit each field (username, password, captcha, TOTP) exactly once.
 - Any rejection = auth error: return `login_success: false` and stop. Do not retry.
 </critical>
+Your final action must be one call to submit_auth_result.

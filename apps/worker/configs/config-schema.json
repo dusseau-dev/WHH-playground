@@ -102,6 +102,22 @@
       "required": ["login_type", "login_url", "credentials", "success_condition"],
       "additionalProperties": false
     },
+    "pipeline": {
+      "type": "object",
+      "description": "Pipeline execution settings for retry behavior and concurrency",
+      "properties": {
+        "retry_preset": {
+          "type": "string",
+          "enum": ["default", "subscription"],
+          "description": "Retry preset. 'subscription' extends timeouts for Anthropic subscription rate limit windows (5h+)."
+        },
+        "max_concurrent_pipelines": {
+          "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 5 }, { "type": "string", "pattern": "^[1-5]$" }],
+          "description": "Max concurrent vulnerability pipelines (1-5, default: 5)"
+        }
+      },
+      "additionalProperties": false
+    },
     "rules": {
       "type": "object",
       "description": "Testing rules that define what to focus on or avoid during penetration testing",
@@ -137,9 +153,12 @@
       "uniqueItems": true
     },
     "exploit": {
-      "type": "string",
-      "enum": ["true", "false"],
-      "description": "Whether to run the exploitation phase (default true). Set false to run only analysis."
+      "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+      "description": "Deprecated: use safe_demonstration. Whether to run safe demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
+    },
+    "safe_demonstration": {
+      "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+      "description": "Whether to run safe, authorized demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
     },
     "report": {
       "type": "object",
@@ -162,9 +181,8 @@
           "description": "Free-text guidance to the report agent (e.g., 'Drop findings about missing security headers')."
         },
         "sarif": {
-          "type": "string",
-          "enum": ["true", "false"],
-          "description": "Emit a SARIF 2.1.0 log (report.sarif) beside the report. On by default for exploit runs; set \"false\" to opt out. Ignored when exploit=false."
+          "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+          "description": "Emit report.sarif for safe-demonstration runs with fully validated triage. Natural YAML booleans and legacy quoted strings are accepted."
         }
       },
       "additionalProperties": false
@@ -193,7 +211,9 @@
     { "required": ["rules"] },
     { "required": ["authentication", "rules"] },
     { "required": ["description"] },
+    { "required": ["pipeline"] },
     { "required": ["vuln_classes"] },
+    { "required": ["safe_demonstration"] },
     { "required": ["exploit"] },
     { "required": ["report"] },
     { "required": ["rules_of_engagement"] }
@@ -206,6 +226,7 @@
       "properties": {
         "description": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 200,
           "description": "Human-readable description of the rule"
         },
@@ -221,7 +242,7 @@
           "description": "Value to match"
         }
       },
-      "required": ["type", "value"],
+      "required": ["description", "type", "value"],
       "additionalProperties": false
     }
   }

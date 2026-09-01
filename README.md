@@ -1,286 +1,935 @@
-> [!NOTE]
-> **[Shannon 2.0 is officially here](https://github.com/KeygraphHQ/shannon/discussions/405)**
+>[!NOTE]
+> **[📢 Sunsetting Router Mode (claude-code-router)`. →](https://github.com/KeygraphHQ/shannon/discussions/301)**
 
 <div align="center">
 
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="./assets/github-banner-dark.png">
-<source media="(prefers-color-scheme: light)" srcset="./assets/github-banner-light.png">
-<img src="./assets/github-banner-light.png" alt="Shannon, AI Pentester for Web Apps and APIs, by Keygraph" width="100%">
-</picture>
+<img src="./assets/github-banner.png" alt="Shannon — AI Pentester for Web Applications and APIs" width="100%">
+
+# Shannon — AI Pentester by Keygraph
 
 <a href="https://trendshift.io/repositories/15604" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15604" alt="KeygraphHQ%2Fshannon | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-### Shannon is an autonomous, AI pentester for web applications and APIs. 
-
-It analyzes your source code, identifies attack paths, and executes real exploits to prove vulnerabilities before they reach production.
-
-**This repository is Shannon Open Source: the full agent, run locally from your command line.**
+Shannon is an autonomous security assessment system for web applications and APIs. <br />
+Run URL-only dynamic testing, or add a repository for source-assisted coverage and code-location context.
 
 ---
 
-<a href="https://discord.gg/9ZqQPuhJB7"><picture><source media="(prefers-color-scheme: dark)" srcset="./assets/discord_button_dark.png"><source media="(prefers-color-scheme: light)" srcset="./assets/discord_button_light.png"><img src="./assets/discord_button_light.png" height="40" alt="Join Discord"></picture></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://keygraph.io/"><picture><source media="(prefers-color-scheme: dark)" srcset="./assets/keygraph_button_dark.png"><source media="(prefers-color-scheme: light)" srcset="./assets/keygraph_button_light.png"><img src="./assets/keygraph_button_light.png" height="40" alt="Visit Keygraph.io"></picture></a>
+<a href="https://discord.gg/9ZqQPuhJB7"><img src="./assets/discord.png" height="40" alt="Join Discord"></a>
+<a href="https://keygraph.io/"><img src="./assets/Keygraph_Button.png" height="40" alt="Visit Keygraph.io"></a>
 
 ---
-
 </div>
-
-> [!TIP]
-> **AI agents and LLMs:** start with [llms.txt](llms.txt) for a concise map of this repository, or use [llms-full.txt](llms-full.txt) for the README and docs combined into one file.
-
-## Table of Contents
-
-- [What is Shannon?](#what-is-shannon)
-- [Shannon in Action](#shannon-in-action)
-- [Quick Start](#quick-start)
-- [Key Capabilities](#key-capabilities)
-- [Editions](#editions)
-- [Architecture](#architecture)
-- [Documentation](#documentation)
-- [Safety, Scope, and Limitations](#safety-scope-and-limitations)
-- [License](#license)
-- [About Keygraph](#about-keygraph)
-- [Community and Support](#community-and-support)
-- [Common Questions](#common-questions)
 
 ## What is Shannon?
 
-Shannon is an autonomous AI pentester developed by [Keygraph](https://keygraph.io). It performs security testing of web applications and their underlying APIs by combining source-code analysis with live exploitation.
+Shannon is an AI security testing system developed by [Keygraph](https://keygraph.io). It combines live browser and API testing with an evidence triage gate. A repository is optional: source-assisted assessments use code to guide the live test, while URL-only assessments operate exclusively through behavior observable at the authorized target.
 
-Shannon analyzes your web application's source code to identify potential attack vectors, then uses browser automation and command-line tools to execute real exploits against the running application and its APIs. Only vulnerabilities with a working proof-of-concept are included in the final report.
+Both modes run preflight, authentication validation, live reconnaissance, selected security test categories, optional safe demonstrations, triage, and reporting. URL-only reports explicitly disclose that implementation analysis and code-location coverage were unavailable.
 
-Shannon is the agent. This repository is Shannon Open Source, the standalone pentester you run yourself. The same Shannon also powers the [Keygraph platform](https://keygraph.io), Keygraph's commercial pentesting product. See [Editions](#editions) for how the two compare.
+**Why Shannon Exists**
 
-### Why Shannon Exists
-
-Thanks to tools like Claude Code and Cursor, your team ships code non-stop. But your penetration test? That happens once a year. This creates a massive security gap. For the other 364 days, you could be unknowingly shipping vulnerabilities to production.
+Thanks to tools like Claude Code and Cursor, your team ships code non-stop. But your penetration test? That happens once a year. This creates a *massive* security gap. For the other 364 days, you could be unknowingly shipping vulnerabilities to production.
 
 Shannon closes that gap by providing on-demand, automated penetration testing that can run against every build or release.
 
 ## Shannon in Action
 
-<p align="center">
-  <img src="assets/shannon-action.gif" alt="Shannon running an autonomous pentest" width="100%">
-</p>
+Shannon identified 20+ vulnerabilities in OWASP Juice Shop, including authentication bypass and database exfiltration. [Full report →](sample-reports/shannon-report-juice-shop.md)
 
-Sample penetration test reports from intentionally vulnerable applications, produced by Shannon Open Source:
+![Demo](assets/shannon-action.gif)
 
-| Target | Summary | Report |
+## Features
+
+- **Two Assessment Modes**: Run against a URL alone, or provide a repository for source-assisted analysis and code-location context.
+- **Local Operator UI**: Create reusable profiles, select security test categories, start/cancel/resume runs, follow live activity, triage findings, and download reports or evidence from a localhost-only interface.
+- **Fully Autonomous Operation**: A single command launches the full assessment. Shannon handles 2FA/TOTP logins (including SSO), browser navigation, safe demonstrations, triage, and report generation without manual intervention.
+- **Evidence-First Results**: Triage distinguishes confirmed, downgraded, ruled-out, chain-dependent, and unvalidated candidates before reporting.
+- **OWASP Vulnerability Coverage**: Identifies and validates Injection, XSS, SSRF, and Broken Authentication/Authorization, with additional categories in development.
+- **Code-Aware Dynamic Testing**: In source-assisted mode, source analysis guides live browser and API validation against the running application.
+- **Parallel Processing**: Analysis and safe-demonstration pipelines run concurrently across selected categories.
+
+## Product Line
+
+Shannon is developed by [Keygraph](https://keygraph.io) and available in two editions:
+
+| Edition | License | Best For |
+|---------|---------|----------|
+| **Shannon Lite** | AGPL-3.0 | Local testing of your own applications. |
+| **Shannon Pro** | Commercial | Organizations needing a single AppSec platform (SAST, SCA, secrets, business logic testing, autonomous pentesting) with CI/CD integration and self-hosted deployment. |
+
+> **This repository contains Shannon Lite,** the core autonomous AI pentesting framework. **Shannon Pro** is Keygraph's all-in-one AppSec platform, combining SAST, SCA, secrets scanning, business logic security testing, and autonomous AI pentesting in a single correlated workflow. Every finding is validated with a working proof-of-concept exploit.
+
+> [!IMPORTANT]
+> **URL-only mode has lower coverage than source-assisted mode.** It cannot inspect implementation-only attack surfaces, attribute findings to code locations, or prove that unobserved routes are absent. Shannon discloses these limits in the UI and every URL-only report.
+
+### Shannon Pro: Architecture Overview
+
+Shannon Pro is an all-in-one application security platform that replaces the need to stitch together separate SAST, SCA, secrets scanning, and pentesting tools. It operates as a two-stage pipeline: agentic static analysis of the codebase, followed by autonomous AI penetration testing. Findings from both stages are cross-referenced and correlated, so every reported vulnerability has a working proof-of-concept exploit and a precise source code location.
+
+**Stage 1: Agentic Static Analysis**
+
+Shannon Pro transforms the codebase into a Code Property Graph (CPG) combining the AST, control flow graph, and program dependence graph. It then runs five analysis capabilities:
+
+- **Data Flow Analysis (SAST)**: Identifies sources (user input, API requests) and sinks (SQL queries, command execution), then traces paths between them. At each node, an LLM evaluates whether the specific sanitization applied is sufficient for the specific vulnerability in context, rather than relying on a hard-coded allowlist of safe functions.
+- **Point Issue Detection (SAST)**: LLM-based detection of single-location vulnerabilities: weak cryptography, hardcoded credentials, insecure configuration, missing security headers, weak RNG, disabled certificate validation, and overly permissive CORS.
+- **Business Logic Security Testing (SAST)**: LLM agents analyze the codebase to discover application-specific invariants (e.g., "document access must verify organizational ownership"), generate targeted fuzzers to violate those invariants, and synthesize full PoC exploits. This catches authorization failures and domain-specific logic errors that pattern-based scanners cannot detect.
+- **SCA with Reachability Analysis**: Goes beyond flagging CVEs by tracing whether the vulnerable function is actually reachable from application entry points via the CPG. Unreachable vulnerabilities are deprioritized.
+- **Secrets Detection**: Combines regex pattern matching with LLM-based detection (for dynamically constructed credentials, custom formats, obfuscated tokens) and performs liveness validation against the corresponding service using read-only API calls.
+
+**Stage 2: Autonomous Dynamic Penetration Testing**
+
+The same multi-agent pentest pipeline as Shannon Lite (reconnaissance, parallel vulnerability analysis, parallel exploitation, reporting), enhanced with static findings injected into the exploitation queue. Static findings are mapped to Shannon's five attack domains (Injection, XSS, SSRF, Auth, Authz), and exploit agents attempt real proof-of-concept attacks against the running application for each finding.
+
+**Static-Dynamic Correlation**
+
+This is the core differentiator. A data flow vulnerability identified in static analysis (e.g., unsanitized input reaching a SQL query) is not reported as a theoretical risk. It is fed to the corresponding exploit agent, which attempts to exploit it against the live application. Confirmed exploits are traced back to the exact source code location, giving developers both proof of exploitability and the line of code to fix.
+
+**Deployment Model**
+
+Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-hosted runners). The data plane, which handles code access and all LLM API calls, runs entirely within the customer's infrastructure using the customer's own API keys. Source code never leaves the customer's network. The Keygraph control plane handles job orchestration, scan scheduling, and the reporting UI, receiving only aggregate findings.
+
+| Capability | Shannon Lite | Shannon Pro (All-in-One AppSec) |
 | --- | --- | --- |
-| OWASP Juice Shop | 20+ vulnerabilities, including authentication bypass, SQL injection, IDOR, and SSRF. | [View report](sample-reports/shannon-report-juice-shop.md) |
-| c{api}tal API | Approximately 15 critical and high-severity API findings, including command injection, auth bypass, and mass assignment. | [View report](sample-reports/shannon-report-capital-api.md) |
-| OWASP crAPI | 15+ critical and high-severity findings across JWT, injection, SSRF, and API authorization paths. | [View report](sample-reports/shannon-report-crapi.md) |
+| **Licensing** | AGPL-3.0 | Commercial |
+| **Static Analysis** | Code review prompting | Full agentic SAST, SCA, secrets, business logic testing |
+| **Dynamic Testing** | Autonomous AI pentesting | Autonomous AI pentesting with static-dynamic correlation |
+| **Analysis Engine** | Code review prompting | CPG-based data flow with LLM reasoning at every node |
+| **Business Logic** | None | Automated invariant discovery, fuzzer generation, exploit synthesis |
+| **CI/CD Integration** | Manual / CLI | Native CI/CD, GitHub PR scanning |
+| **Deployment** | CLI | Managed cloud or self-hosted runner |
+| **Boundary Analysis** | None | Automatic service boundary detection with team routing |
 
-## Quick Start
+[Full technical details →](./SHANNON-PRO.md)
+
+## Table of Contents
+
+- [What is Shannon?](#what-is-shannon)
+- [Shannon in Action](#shannon-in-action)
+- [Features](#features)
+- [Product Line](#product-line)
+- [Setup & Usage Instructions](#setup--usage-instructions)
+  - [Prerequisites](#prerequisites)
+  - [Quick Start (Recommended: npx)](#quick-start-recommended-npx)
+  - [Clone and Build](#clone-and-build)
+  - [Choose an Assessment Mode](#choose-an-assessment-mode)
+  - [Common Commands](#common-commands)
+  - [Workspaces and Resuming](#workspaces-and-resuming)
+  - [Credentials and Configuration](#credentials-and-configuration)
+  - [AWS Bedrock](#aws-bedrock)
+  - [Vertex AI Migration](#vertex-ai-migration)
+  - [Custom Base URL](#custom-base-url)
+  - [Platform-Specific Instructions](#platform-specific-instructions)
+  - [Output and Results](#output-and-results)
+- [Sample Reports](#sample-reports)
+- [Benchmark](#benchmark)
+- [Architecture](#architecture)
+- [Coverage and Roadmap](#coverage-and-roadmap)
+- [Disclaimers](#disclaimers)
+- [License](#license)
+- [Community & Support](#community--support)
+- [Get in Touch](#get-in-touch)
+
+---
+
+## Setup & Usage Instructions
 
 ### Prerequisites
 
-- **Docker**: required for the worker container.
-- **Node.js 18+**: required for the recommended `npx` workflow.
-- **AI provider credentials**: Shannon runs on Anthropic, OpenAI, xAI, AWS Bedrock, [any other provider](docs/ai-providers.md#any-other-provider) in the harness catalogue, and any endpoint that speaks the Anthropic Messages API or the OpenAI Chat Completions or Responses API through a [custom base URL](docs/ai-providers.md#custom-base-url). You bring your own key, and Keygraph never proxies your model traffic. Shannon is provider-agnostic. See [AI providers](docs/ai-providers.md#suggested-models) for suggested model IDs.
-- **Cyber safeguards cleared with your provider**: Anthropic and OpenAI apply real-time safeguards to cyber-security workloads, which can interrupt a scan mid-run. Complete their guidance for legitimate security testers before your first run - see [AI providers](docs/ai-providers.md#cyber-safeguards-do-this-before-your-first-scan).
+- **Docker** - Container runtime ([Install Docker](https://docs.docker.com/get-docker/))
+- **Node.js 20.19+** - Required for `npx` usage and the local UI ([Install Node.js](https://nodejs.org/))
+- **pnpm** - Required for Clone and Build mode ([Install pnpm](https://pnpm.io/installation))
+- **AI Provider Credentials** (choose one):
+  - **Anthropic API key** (recommended) - Get from [Anthropic Console](https://console.anthropic.com)
+  - **Claude Code OAuth token**
+  - **OpenAI API key**
+  - **xAI API key**
+  - **AWS Bedrock** - Route through Amazon Bedrock with AWS credentials (see [AWS Bedrock](#aws-bedrock))
+  - **Custom or catalog provider** - Use a provider supported by the model runtime, optionally through a compatible gateway
 
-### Run Shannon
+> [!NOTE]
+> Docker is still required to run assessments through `npx`. The CLI pulls a prebuilt Shannon worker image. In source-assisted mode the repository is mounted read-only with workspace-backed writable overlays; URL-only mode instead mounts an isolated writable target workspace. The local UI itself binds only to `127.0.0.1`.
+
+### Quick Start (Recommended: npx)
 
 > [!WARNING]
-> Shannon actively executes exploits. Run it only against applications and environments you own or have explicit written authorization to test. Do not run Shannon against production systems.
+> **Please read the [Disclaimers](#disclaimers) before running Shannon.** Shannon is **not** a passive scanner — it actively executes exploits against the target. You must have **explicit, written authorization** from the system owner.
 
 ```bash
-# Configure credentials with the interactive wizard.
+# 1. Configure credentials (interactive wizard — one-time setup)
 npx @keygraph/shannon setup
 
-# Run a pentest against a source-available target.
+# Or export env vars directly
+export SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+# Load ANTHROPIC_API_KEY from your shell or secret manager.
+
+# 2a. Run a URL-only assessment
+npx @keygraph/shannon start -u https://your-app.com
+
+# 2b. Or add a repository for source-assisted coverage
+npx @keygraph/shannon start -u https://your-app.com -r /path/to/your-repo
+
+# Open the local operator UI
+npx @keygraph/shannon ui
+```
+
+Shannon will pull the worker image from Docker Hub, start the infrastructure, and launch an ephemeral worker container for the scan.
+
+### Clone and Build
+
+Use this if you want to run Shannon from a local clone, modify Shannon itself, or keep the worker image built locally.
+
+```bash
+# 1. Clone Shannon
+git clone https://github.com/KeygraphHQ/shannon.git
+cd shannon
+
+# 2. Configure credentials (choose one method)
+
+# Option A: Create a .env file
+cat > .env << 'EOF'
+SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+ANTHROPIC_API_KEY=your-api-key
+CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
+EOF
+
+# Option B: Export environment variables
+export SHANNON_AI_MODEL="anthropic:claude-sonnet-4-6"
+export ANTHROPIC_API_KEY="your-api-key"              # or CLAUDE_CODE_OAUTH_TOKEN
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000           # recommended
+
+# 3. Install dependencies and build
+pnpm install
+pnpm build
+
+# 4. Run an assessment, with or without a repository
+./shannon start -u https://your-app.com
+./shannon start -u https://your-app.com -r /path/to/your-repo
+
+# Open the local operator UI
+./shannon ui
+```
+
+Shannon will build the worker image locally, start the infrastructure, and launch an ephemeral worker container for the scan.
+
+### Choose an Assessment Mode
+
+Omit `-r` for URL-only dynamic testing. Pass an absolute or relative repository path with `-r` for source-assisted coverage.
+
+Examples:
+
+```bash
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo
+npx @keygraph/shannon start -u https://example.com
+```
+
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+./shannon start -u https://example.com -r ./relative/path
+./shannon start -u https://example.com
+```
+
+</details>
+
+### Common Commands
+
+#### Monitoring Progress
+
+```bash
+npx @keygraph/shannon logs <workspace>
+npx @keygraph/shannon status
+npx @keygraph/shannon ui
+```
+
+Open the Temporal Web UI for detailed monitoring:
+
+```bash
+open http://localhost:8233
+```
+
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+./shannon logs <workspace>
+./shannon status
+./shannon ui
+```
+
+</details>
+
+#### Stopping Shannon
+
+```bash
+npx @keygraph/shannon stop
+npx @keygraph/shannon stop --clean
+npx @keygraph/shannon uninstall
+```
+
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+./shannon stop
+./shannon stop --clean
+```
+
+</details>
+
+#### Usage Examples
+
+```bash
+# Basic pentest
+npx @keygraph/shannon start -u https://example.com
+
+# Source-assisted assessment
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo
+
+# With a configuration file
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo -c /path/to/my-config.yaml
+
+# Custom output directory
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo -o ./my-reports
+
+# Named workspace
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w q1-audit
+
+# List all workspaces
+npx @keygraph/shannon workspaces
+
+# Cancel or resume by immutable workspace snapshot
+npx @keygraph/shannon cancel q1-audit
+npx @keygraph/shannon resume q1-audit
+```
+
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+# URL-only assessment
+./shannon start -u https://example.com
+
+# Source-assisted assessment
+./shannon start -u https://example.com -r /path/to/repo
+
+# With a configuration file
+./shannon start -u https://example.com -r /path/to/repo -c /path/to/my-config.yaml
+
+# Custom output directory
+./shannon start -u https://example.com -r /path/to/repo -o ./my-reports
+
+# Named workspace
+./shannon start -u https://example.com -r /path/to/repo -w q1-audit
+
+# List all workspaces
+./shannon workspaces
+
+# Rebuild worker image
+./shannon build --no-cache
+```
+
+</details>
+
+### Workspaces and Resuming
+
+Shannon supports **workspaces** that allow failed or cancelled runs to resume without changing their original target, source mode, repository, or normalized configuration.
+
+**How it works:**
+
+- Every run creates a workspace (auto-named by default, for example `example-com_shannon-1771007534808`)
+- Workspaces are stored in `./workspaces/` (local mode) or `~/.shannon/workspaces/` (npx mode)
+- Use `-w <name>` to give your run a custom name for easier reference
+- Resume with `shannon resume <workspace>`; completed agents and checkpoint artifacts are reused
+- Target secrets are never stored in `.shannon/run.json` and must be resolved from stored references or supplied again on resume
+- Each agent's progress is checkpointed via git commits, so resumed runs start from a clean, validated state
+
+```bash
+# Start with a named workspace
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w my-audit
+
+# Resume the same workspace (skips completed agents)
+npx @keygraph/shannon resume my-audit
+
+# Cancel an active workspace
+npx @keygraph/shannon cancel my-audit
+
+# List all workspaces and their status
+npx @keygraph/shannon workspaces
+```
+
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+./shannon start -u https://example.com -r /path/to/repo -w my-audit
+./shannon start -u https://example.com -r /path/to/repo -w my-audit
+./shannon start -u https://example.com -r /path/to/repo -w example-com_shannon-1771007534808
+./shannon workspaces
+```
+
+</details>
+
+> [!NOTE]
+> Resumes always use the immutable non-secret run snapshot. The target, source mode, repository, and normalized configuration cannot be changed during resume.
+
+### Credentials and Configuration
+
+#### Credential Precedence
+
+**Local mode** resolves credentials from:
+
+1. **Environment variables** - `SHANNON_AI_MODEL` and the selected provider's credential variable
+2. **`.env` file** - `./.env`
+
+**npx mode** uses TOML instead of `.env`:
+
+1. **Environment variables** - `SHANNON_AI_MODEL` and the selected provider's credential variable
+2. **`~/.shannon/config.toml`** - created by `npx @keygraph/shannon setup`
+
+Environment variables always win, so you can override saved config for a single session without editing files.
+
+#### Model and Provider Selection
+
+`SHANNON_AI_MODEL` selects one model using the format `<provider>:<model-id>`. The provider is separated on the first colon, so model IDs may contain additional colons. The setup wizard writes this selection to `~/.shannon/config.toml` using a masked credential prompt and mode `0600` permissions.
+
+| Setup option | `SHANNON_AI_MODEL` example | Accepted credential source |
+| --- | --- | --- |
+| Anthropic | `anthropic:claude-sonnet-4-6` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `SHANNON_AI_API_KEY` |
+| OpenAI | `openai:gpt-5.6-sol` | `OPENAI_API_KEY` or `SHANNON_AI_API_KEY` |
+| xAI | `xai:grok-4.5` | `XAI_API_KEY` or `SHANNON_AI_API_KEY` |
+| Amazon Bedrock | `amazon-bedrock:us.anthropic.claude-sonnet-4-6` | The standard AWS credential chain or `AWS_BEARER_TOKEN_BEDROCK` |
+| Other catalog provider | `<provider>:<model-id>` | `SHANNON_AI_API_KEY` |
+
+Run `npx @keygraph/shannon setup` for the recommended configuration flow. If you configure the environment directly, load the credential variable through your shell, CI, or secret manager; never put a credential in `SHANNON_AI_MODEL` or commit it to the repository.
+
+```bash
+export SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+# Inject ANTHROPIC_API_KEY through your secret manager before starting Shannon.
+```
+
+#### Configuration (Optional)
+
+While you can run without a config file, creating one enables authenticated testing and customized analysis. Pass any configuration file path with `-c`.
+
+##### Create Configuration File
+
+Copy and modify the example configuration:
+
+```bash
+cp configs/example-config.yaml ./my-app-config.yaml
+```
+
+##### Basic Configuration Structure
+
+```yaml
+# Describe your target environment (optional, max 500 chars)
+description: "Next.js e-commerce app on PostgreSQL. Local dev environment — .env files contain local-only credentials, not deployed to production."
+
+# Limit which security test categories run end-to-end (optional, default: all five)
+# test_categories: [injection, xss, auth, authz, ssrf]
+
+# Disable safe demonstrations (optional, default: true)
+# demonstrate: false
+
+# Free-form rules of engagement (optional)
+# rules_of_engagement: |
+#   - No password brute-force; cap login attempts at 5 per account.
+#   - Throttle to under 5 requests per second per endpoint; back off 60s on any 429.
+#   - Use placeholders like [order_id] in deliverables — no real data values.
+
+authentication:
+  login_type: form
+  login_url: "https://your-app.com/login"
+  credentials:
+    username: "test@example.com"
+    password: "yourpassword"
+    totp_secret: "LB2E2RX7XFHSTGCK"  # Optional for 2FA
+
+    # Optional mailbox credentials for magic-link / email-OTP flows.
+    # email_login:
+    #   address: "inbox@example.com"
+    #   password: "mailbox-password"
+    #   totp_secret: "JBSWY3DPEHPK3PXP"
+
+  # Natural language instructions for login flow
+  login_flow:
+    - "Type $username into the email field"
+    - "Type $password into the password field"
+    - "Click the 'Sign In' button"
+
+  success_condition:
+    type: url_contains
+    value: "/dashboard"
+
+rules:
+  # Supported types: url_path, subdomain, domain, method, header, parameter.
+  # code_path is additionally available in source-assisted mode.
+  avoid:
+    - description: "AI should avoid testing logout functionality"
+      type: url_path
+      value: "/logout"
+
+    # code_path values are repo-relative file paths or globs (e.g. "src/auth.ts", "src/vendor/**").
+    # - description: "Out-of-scope vendored libraries"
+    #   type: code_path
+    #   value: "src/vendor/**"
+
+  focus:
+    - description: "AI should emphasize testing API endpoints"
+      type: url_path
+      value: "/api"
+
+# Filters applied by the report agent when assembling the final report (optional).
+# report:
+#   min_severity: low                   # drop findings below this severity (low | medium | high | critical)
+#   min_confidence: low                 # drop findings below this confidence (low | medium | high)
+#   guidance: |
+#     Drop findings about missing security headers and rate-limit gaps.
+```
+
+Run with:
+
+```bash
+npx @keygraph/shannon start -u https://example.com -c ./my-app-config.yaml
+npx @keygraph/shannon start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
+```
+
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+./shannon start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
+```
+
+</details>
+
+#### Writing Login Flow
+
+Log in once in a fresh incognito/private window. Write the steps in the same order you perform them:
+- When you type into a field, reference the field by its exact label or placeholder.
+- When you click a button, reference the exact button text.
+
+Supported placeholders:
+
+- `$username`
+- `$password`
+- `$totp`
+- `$email_address`
+- `$email_password`
+- `$email_totp`
+
+At runtime, Shannon replaces these placeholders with the credentials passed in the config.
+
+```yaml
+login_flow:
+  - "Type $username in <exact email field label or placeholder>"
+  - "Click <exact button text>"
+  - "Type $password in <exact password field label or placeholder>"
+  - "Click <exact button text>"
+  - "If prompted for 2FA, type $totp in <exact code field label or placeholder>"
+  - "Click <exact button text>"
+```
+
+#### Adaptive Thinking (Opus 4.6/4.7)
+
+Claude decides when and how deeply to reason on Opus 4.6 and 4.7. Enabled by default whenever a tier resolves to one of these models.
+
+- **npx mode** — `npx @keygraph/shannon setup` prompts you during the wizard.
+- **Local mode** — set `CLAUDE_ADAPTIVE_THINKING=false` in `.env` (or as an exported env var) to disable.
+
+#### Subscription Plan Rate Limits
+
+Anthropic subscription plans reset usage on a **rolling 5-hour window**. The default retry strategy (30-min max backoff) will exhaust retries before the window resets. Add this to your config:
+
+```yaml
+pipeline:
+  retry_preset: subscription          # Extends max backoff to 6h, 100 retries
+  max_concurrent_pipelines: 2         # Run 2 of 5 pipelines at a time (reduces burst API usage)
+```
+
+`max_concurrent_pipelines` controls how many vulnerability pipelines run simultaneously (1-5, default: 5). Lower values reduce the chance of hitting rate limits but increase wall-clock time.
+
+### AWS Bedrock
+
+Shannon also supports [Amazon Bedrock](https://aws.amazon.com/bedrock/) instead of using an Anthropic API key.
+
+#### Quick Setup
+
+Run `npx @keygraph/shannon setup` and select **AWS Bedrock**. The wizard will prompt for your region, bearer token, and one model ID.
+
+Or export env vars directly:
+
+```bash
+export SHANNON_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
+export AWS_REGION=us-east-1
+# Load one supported AWS credential mechanism, such as AWS_PROFILE,
+# workload identity, or AWS_BEARER_TOKEN_BEDROCK.
+```
+
+<details>
+<summary>Clone and Build: add to .env instead</summary>
+
+```bash
+SHANNON_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
+AWS_REGION=us-east-1
+# Load credentials from outside the repository before starting Shannon.
+```
+
+</details>
+
+The model ID must be available in the selected AWS region. Standard AWS profiles, access keys, container credentials, and web identity credentials are supported in addition to Bedrock bearer tokens.
+
+### Vertex AI Migration
+
+Google Vertex AI is not supported by Shannon's current model compatibility layer. It is no longer offered by `npx @keygraph/shannon setup`.
+
+Legacy Vertex settings are rejected. The CLI and worker return migration guidance instead of forwarding Vertex credentials. Migrate to one of the supported provider setups above:
+
+1. Remove the legacy Vertex variables or `[vertex]` section.
+2. Run `npx @keygraph/shannon setup` and choose Anthropic, OpenAI, xAI, AWS Bedrock, or a compatible gateway.
+3. For environment-based configuration, set `SHANNON_AI_MODEL=<provider>:<model-id>` and load the matching credential variable from a secret manager. For a gateway, also set `SHANNON_AI_BASE_URL`.
+
+### Custom Base URL
+
+Shannon supports custom gateways through `SHANNON_AI_BASE_URL`. Gateways may expose Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses. For proxy-based routing, one option is an LLM proxy such as [LiteLLM](https://github.com/BerriAI/litellm) configured for the matching API format.
+
+> [!IMPORTANT]
+> **Only Claude models are officially supported.** Shannon's evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Shannon's instructions or tool-use constraints, and are not officially supported. Use them at your own risk; results may be incomplete, inaccurate, or unstable.
+>
+> The previously experimental `claude-code-router` integration is being removed in an upcoming release. If you currently rely on it, migrate to an Anthropic-compatible proxy such as LiteLLM before upgrading.
+
+Run `npx @keygraph/shannon setup` and select **Custom Base URL**. The wizard will prompt for the API format, endpoint URL, API key, and one model ID. It supports Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses gateways.
+
+Or export env vars directly:
+
+```bash
+export SHANNON_AI_MODEL=openai:gateway-model-id
+export SHANNON_AI_BASE_URL=https://your-proxy.example.com
+export SHANNON_AI_OPENAI_FORMAT=chat-completions  # or responses
+# Inject SHANNON_AI_API_KEY through your secret manager.
+```
+
+<details>
+<summary>Clone and Build: add to .env instead</summary>
+
+```bash
+SHANNON_AI_MODEL=openai:gateway-model-id
+SHANNON_AI_BASE_URL=https://your-proxy.example.com
+SHANNON_AI_OPENAI_FORMAT=chat-completions
+# Load SHANNON_AI_API_KEY from outside the repository before starting Shannon.
+```
+
+</details>
+
+For an Anthropic Messages gateway, use an `anthropic:<model-id>` selection and omit `SHANNON_AI_OPENAI_FORMAT`.
+
+### Platform-Specific Instructions
+
+**For Windows:**
+
+Shannon on Windows is only supported via **WSL2**. Native Windows (including Git Bash) is not supported.
+
+**Step 1: Ensure WSL 2**
+
+```powershell
+wsl --install
+wsl --set-default-version 2
+
+# Check installed distros
+wsl --list --verbose
+
+# If you don't have a distro, install one (Ubuntu 24.04 recommended)
+wsl --list --online
+wsl --install Ubuntu-24.04
+
+# If your distro shows VERSION 1, convert it to WSL 2:
+wsl --set-version <distro-name> 2
+```
+
+See [WSL basic commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands) for reference.
+
+**Step 2: Install Docker Desktop on Windows** and enable **WSL2 backend** under *Settings > General > Use the WSL 2 based engine*.
+
+**Step 3: Run Shannon inside WSL** using either flow.
+
+**npx inside WSL:**
+
+```bash
+npx @keygraph/shannon setup
 npx @keygraph/shannon start -u https://your-app.com -r /path/to/your-repo
 ```
 
-Shannon pulls the worker image from Docker Hub, starts the required local infrastructure, mounts the target repository read-only inside an ephemeral worker container, and writes results to a local workspace.
+<details>
+<summary>Clone and Build command equivalents</summary>
 
-For source builds, authenticated scans, provider-specific setup, and platform notes, see [Documentation](#documentation).
+```bash
+git clone https://github.com/KeygraphHQ/shannon.git
+cd shannon
+cp .env.example .env  # Edit with your API key
+./shannon start -u https://your-app.com -r /path/to/your-repo
+```
 
-> [!TIP]
-> **Prefer to use a subscription instead of API credits?**
->
-> - **OpenAI Codex:** The latest version of Shannon supports ChatGPT Plus and Pro subscriptions. Follow the [OpenAI Codex subscription setup guide](docs/ai-providers.md#openai-codex-chatgpt-pluspro-subscription) to get started.
-> - **xAI (Grok):** The latest version of Shannon supports xAI subscriptions. Follow the [xAI subscription setup guide](docs/ai-providers.md#xai-grok-subscription) to get started.
-> - **Claude Code:** The latest version of Shannon does not support Claude Code subscriptions. Follow the [Claude Code subscription setup guide](docs/ai-providers.md#claude-code-subscription) to use version `1.9.0`, which is the final release built on the Claude Agent SDK.
+</details>
 
-## Key Capabilities
+To access the Temporal Web UI, run `ip addr` inside WSL to find your WSL IP address, then navigate to `http://<wsl-ip>:8233` in your Windows browser.
 
-- **Proof-by-exploitation reports**: Shannon reports validated findings with reproducible proof-of-concept steps instead of speculative warnings.
-- **White-box attack planning**: Shannon uses source-code analysis to guide dynamic testing and focus on realistic attack paths.
-- **Autonomous execution**: Shannon launches reconnaissance, vulnerability analysis, exploitation, and report generation from a single command.
-- **Authenticated testing**: configuration files can describe login flows, test credentials, TOTP, email-based login flows, focus areas, and rules of engagement.
-- **OWASP-focused coverage**: Shannon targets exploitable Injection, XSS, SSRF, Broken Authentication, and Broken Authorization issues.
-- **Resumable workspaces**: Shannon can resume interrupted runs without re-running completed agents.
-- **Machine-readable output**: Shannon emits findings as structured JSON, and as SARIF 2.1.0 by default on exploit-mode scans (opt out with `report.sarif: "false"`). SARIF is the OASIS standard for static analysis results, so findings flow into any code scanning service, vulnerability management platform, security dashboard, or CI/CD pipeline that reads it.
-- **Bring your own key, provider-agnostic**: Shannon runs on Anthropic, OpenAI, xAI, AWS Bedrock, and any endpoint speaking the Anthropic Messages API or the OpenAI Chat Completions or Responses API, including self-hosted models served through Ollama, vLLM, or LM Studio and gateways such as OpenRouter and LiteLLM. You supply the credentials, so source code and model traffic stay inside your infrastructure. Local and self-hosted models are technically supported but not recommended: they may not follow Shannon's instructions or tool-use constraints as reliably as frontier models, so take that path only if you know how your chosen model behaves.
+Windows Defender may flag exploit code in reports as false positives; see [Antivirus False Positives](#6-windows-antivirus-false-positives) below.
 
-## Editions
+**For Linux (Native Docker):**
 
-Shannon ships in two ways: **Shannon Open Source**, the pentester you run yourself, and the **Keygraph platform**, the commercial pentesting product that runs Shannon continuously and closes the full AppSec lifecycle around it.
+You may need to run commands with `sudo` depending on your Docker setup. If you encounter permission issues with output files, ensure your user has access to the Docker socket.
 
-**Shannon Open Source** (this repository) is the standalone pentester: a CLI agent for white-box, proof-by-exploitation testing of web applications and APIs you own or are authorized to test. It reads your source, plans attacks, executes real exploits, and reports only what it can prove. It runs on demand and is complete in that lane. You point it at a target, it pentests, it reports.
+**For macOS:**
 
-The **Keygraph platform** is the enterprise-ready, continuous pentesting product powered by Shannon. In the Keygraph platform, an enhanced build of Shannon runs continuously in a hardened, orchestrated environment fed by Keygraph's full code-analysis stack. Around that engine, the platform closes the entire vulnerability lifecycle, from analysis to a verified fix:
+Works out of the box with Docker Desktop installed.
 
-- **Analyze**: Code Property Graph SAST, SCA with reachability, secrets, IaC, and container scanning. First-class detection in their own right, and context that sharpens Shannon's attacks.
-- **Prove**: autonomous black-box and source-aware white-box pentests turn candidate findings into proven, exploited vulnerabilities rather than speculative alerts.
-- **Manage**: one canonical record per vulnerability per repository, deduplicated across every source, with ownership, status, SLA tracking, dashboards, and bidirectional Jira sync.
-- **Remediate and verify**: patches written automatically and re-tested against the patched code before delivery, landing in your existing review workflow rather than auto-applied.
-- **Deploy**: self-hosted and air-gapped environments, strict bring-your-own-key model access, and customer-controlled LLM gateway patterns, so source, results, and model traffic stay inside your perimeter.
+**Testing Local Applications:**
 
-Shannon is the proof engine at the center of the Keygraph platform. Shannon Open Source gives you that engine to run yourself. The Keygraph platform surrounds Shannon with continuous analysis, finding management, remediation, verification, and enterprise deployment.
+Docker containers cannot reach `localhost` on your host machine. Use `host.docker.internal` in place of `localhost`:
 
-| AppSec lifecycle stage | Shannon Open Source | Keygraph platform |
-| --- | --- | --- |
-| Analyze | Basic LLM pass-through of source to plan attacks | Actual code-base parsing, plus Code Property Graph, SAST, SCA with reachability, secrets, IaC, and containers |
-| Pentest and prove | White-box only, proof by exploitation | Enhanced white-box, plus black-box and grey-box modes, run continuously |
-| Manage findings | Local Markdown report | Canonical findings system: deduplication across sources, ownership, SLA, dashboards, Jira sync, and professional pentest-grade PDF reports |
-| Remediate and verify | Fix manually from the report, then re-run the full scan to verify | Automated remediation: opens a PR with the fix, verified by point re-test without re-running the full scan |
-| Deploy and operate | Local CLI and Docker worker | Self-hosted, air-gapped, BYOK, continuous, enterprise integrations |
-| License and support | AGPL-3.0, community | Commercial, supported |
+```bash
+npx @keygraph/shannon start -u http://host.docker.internal:3000 -r /path/to/repo
+```
 
-Learn more on the [Keygraph website](https://keygraph.io), read the [Keygraph platform technical overview](docs/keygraph-platform.md), start a free trial or book a [demo](https://cal.com/team/keygraph/shannon-pro), or contact [shannon@keygraph.io](mailto:shannon@keygraph.io).
+<details>
+<summary>Clone and Build command equivalents</summary>
+
+```bash
+./shannon start -u http://host.docker.internal:3000 -r /path/to/repo
+```
+
+</details>
+
+**Custom hostnames in `/etc/hosts`:**
+
+If your local stack uses custom hostnames mapped in `/etc/hosts`, Shannon forwards those entries into the worker container at scan start:
+
+To disable, add `SHANNON_FORWARD_HOSTS=false` to `.env` (local mode) or export it in your shell: `export SHANNON_FORWARD_HOSTS=false`. In npx mode, the shell export is the only option since there's no `.env`.
+
+### Output and Results
+
+All results are saved to the workspaces directory: `./workspaces/` (local mode) or `~/.shannon/workspaces/` (npx mode). Use `-o <path>` to copy deliverables to a custom output directory after the run completes.
+
+Output structure:
+
+```text
+workspaces/{hostname}_{sessionId}/
+├── session.json          # Metrics and session data
+├── workflow.log          # Human-readable workflow log
+├── agents/               # Per-agent execution logs
+├── prompts/              # Prompt snapshots for reproducibility
+└── deliverables/
+    └── comprehensive_security_assessment_report.md   # Final comprehensive security report
+```
+
+---
+
+## Sample Reports
+
+Sample penetration test reports from industry-standard vulnerable applications:
+
+#### **OWASP Juice Shop** • [GitHub](https://github.com/juice-shop/juice-shop)
+
+*A notoriously insecure web application maintained by OWASP, designed to test a tool's ability to uncover a wide range of modern vulnerabilities.*
+
+**Results**: Identified over 20 vulnerabilities across targeted OWASP categories in a single automated run.
+
+**Notable findings**:
+
+- Authentication bypass and full user database exfiltration via SQL injection
+- Privilege escalation to administrator through registration workflow bypass
+- IDOR vulnerabilities enabling access to other users' data and shopping carts
+- SSRF enabling internal network reconnaissance
+
+[View Complete Report →](sample-reports/shannon-report-juice-shop.md)
+
+---
+
+#### **c{api}tal API** • [GitHub](https://github.com/Checkmarx/capital)
+
+*An intentionally vulnerable API from Checkmarx, designed to test a tool's ability to uncover the OWASP API Security Top 10.*
+
+**Results**: Identified approximately 15 critical and high-severity vulnerabilities.
+
+**Notable findings**:
+
+- Root-level command injection via denylist bypass in a hidden debug endpoint
+- Authentication bypass through a legacy, unpatched v1 API endpoint
+- Privilege escalation via Mass Assignment in the user profile update function
+- Zero false positives for XSS (correctly confirmed robust XSS defenses)
+
+[View Complete Report →](sample-reports/shannon-report-capital-api.md)
+
+---
+
+#### **OWASP crAPI** • [GitHub](https://github.com/OWASP/crAPI)
+
+*A modern, intentionally vulnerable API from OWASP, designed to benchmark a tool's effectiveness against the OWASP API Security Top 10.*
+
+**Results**: Identified over 15 critical and high-severity vulnerabilities.
+
+**Notable findings**:
+
+- Authentication bypass via multiple JWT attacks (Algorithm Confusion, alg:none, weak key injection)
+- Full PostgreSQL database compromise via injection, exfiltrating user credentials
+- SSRF attack forwarding internal authentication tokens to an external service
+- Zero false positives for XSS (correctly identified robust XSS defenses)
+
+[View Complete Report →](sample-reports/shannon-report-crapi.md)
+
+---
+
+## Benchmark
+
+Shannon Lite scored **96.15% (100/104 exploits)** on a hint-free, source-aware variant of the XBOW security benchmark.
+
+**[Full results with detailed agent logs and per-challenge pentest reports →](https://github.com/KeygraphHQ/xbow-validation-benchmarks/blob/main/xben-benchmark-results/)**
+
+---
 
 ## Architecture
 
-Shannon uses a multi-agent workflow that combines source-code analysis with live exploitation:
+Shannon uses one dynamic pipeline with a source-mode branch:
 
-```text
-        ┌──────────────────────┐
-        │   Pre-Reconnaissance │
-        │   (source code scan) │
-        └──────────┬───────────┘
-                   │
-                   ▼
-        ┌──────────────────────┐
-        │   Reconnaissance     │
-        │  (attack surface     │
-        │   mapping)           │
-        └──────────┬───────────┘
-                   │
-                   ▼
-        ┌──────────┴───────────┐
-        │          │           │
-        ▼          ▼           ▼
-  ┌───────────┐ ┌───────────┐ ┌───────────┐
-  │ Vuln      │ │ Vuln      │ │   ...     │
-  │(Injection)│ │  (XSS)    │ │           │
-  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
-        │              │             │
-        ▼              ▼             ▼
-  ┌───────────┐ ┌───────────┐ ┌───────────┐
-  │ Exploit   │ │ Exploit   │ │   ...     │
-  │(Injection)│ │  (XSS)    │ │           │
-  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
-        │              │             │
-        └──────┬───────┴─────────────┘
-               │
-               ▼
-        ┌──────────────────────┐
-        │      Reporting       │
-        └──────────────────────┘
+```mermaid
+flowchart LR
+  Input{Repository provided?}
+  Input -->|Yes| Source[Source pre-recon]
+  Input -->|No| UrlOnly[URL-only coverage scope]
+  Source --> Recon[Live reconnaissance]
+  UrlOnly --> Recon
+  Recon --> Tests[Parallel security test categories]
+  Tests --> Demo[Optional safe demonstrations]
+  Demo --> Triage[Evidence triage]
+  Triage --> Report[Sanitized report]
 ```
 
-At a high level:
+- **Preflight and authentication** run in both modes. URL-only mode validates a writable workspace and rejects `code_path` rules; source-assisted mode also validates the repository.
+- **Source pre-recon** runs only in source-assisted mode. URL-only prompts are isolated from source prompts and cannot claim implementation paths or code locations.
+- **Live reconnaissance** maps behavior observable through the authorized target and supplied identities.
+- **Parallel category pipelines** cover Injection, XSS, Authentication, Authorization, and SSRF according to the selected scope and concurrency.
+- **Safe demonstrations** are optional. They gather the minimum reversible evidence needed to prove or disprove candidates.
+- **Triage** emits PASS, DOWNGRADE, KILL, or CHAIN_REQUIRED verdicts. If triage fails open, candidates remain visible but are labeled unvalidated.
+- **Reporting** sanitizes Markdown and deterministically discloses URL-only coverage limits.
 
-- **Pre-reconnaissance** identifies frameworks, entry points, data flows, and likely attack surfaces from the repository.
-- **Reconnaissance** explores the live application and correlates runtime behavior with code-level context.
-- **Vulnerability analysis** runs specialized agents for Injection, XSS, SSRF, Authentication, and Authorization.
-- **Exploitation** attempts real proof-of-concept attacks and discards hypotheses that cannot be proven.
-- **Reporting** compiles validated findings, evidence, and remediation guidance into a final Markdown report.
+The CLI and localhost Hono API share a scan controller. Each run has an atomic `.shannon/run.json` with an immutable non-secret snapshot, attempt history, Docker labels, lifecycle timestamps, and source mode. Target secrets are materialized only in a mode-`0600` runtime file and deleted on terminal states. Provider credentials remain managed by the existing environment and CLI setup.
 
-Each scan runs in an ephemeral Docker container with an isolated workspace and per-invocation orchestration.
+The React operator UI is bundled into the published package and binds only to `127.0.0.1`. Session cookies, CSRF checks, Host/Origin validation, CSP, realpath containment, and a triage-derived artifact allowlist protect the local control plane.
 
-## Documentation
+See [Architecture and Local Control Plane](docs/architecture.md) for API, persistence, resume, and packaging details.
 
-Use these guides for operational detail:
 
-| Guide | Use it for |
-| --- | --- |
-| [Source build and CLI commands](docs/development.md) | Cloning, building, common commands, output paths, and local development. |
-| [Configuration](docs/configuration.md) | Authenticated testing, login flows, rules of engagement, and report filters. |
-| [AI providers](docs/ai-providers.md) | Selecting the model, the supported providers (Anthropic, OpenAI, xAI, AWS Bedrock, and any other Pi-supported provider), and custom gateways. |
-| [Platforms and networking](docs/platforms.md) | Windows/WSL2, Linux, macOS, Docker networking, local apps, and custom hostnames. |
-| [Workspaces and resuming](docs/workspaces.md) | Naming workspaces, resuming interrupted scans, and workspace storage. |
-| [Safety and limitations](docs/safety.md) | Authorized-use requirements, non-production guidance, mutative effects, cost, and model caveats. |
-| [Coverage and roadmap](docs/coverage-roadmap.md) | Current vulnerability coverage and planned work. |
-| [Keygraph platform](docs/keygraph-platform.md) | The continuous, agentic pentesting platform: code analysis, black-box and white-box testing, finding management, remediation, verification, and enterprise deployment. |
+## Coverage and Roadmap
 
-## Safety, Scope, and Limitations
+For detailed information about Shannon's security testing coverage and development roadmap, see our [Coverage and Roadmap](./COVERAGE.md) documentation.
 
-Shannon is not a passive scanner. Its exploitation agents can create users, submit forms, mutate application state, trigger outbound requests, and otherwise affect the target system. Use sandboxed, staging, or local development environments with disposable data.
+## Disclaimers
 
-You are responsible for using Shannon legally and ethically. Do not point Shannon at systems, repositories, or applications you do not own or do not have explicit authorization to test.
+### Important Usage Guidelines & Disclaimers
 
-Important limitations:
+Please review the following guidelines carefully before using Shannon (Lite). As a user, you are responsible for your actions and assume all liability.
 
-- Shannon Open Source focuses on actively exploitable issues such as Injection, XSS, SSRF, Broken Authentication, and Broken Authorization. Broader static-analysis coverage, including vulnerable dependencies and insecure configurations, is delivered through the Keygraph platform.
-- Findings still require human review. LLM-generated reports can contain weakly supported or incorrect details.
-- Anthropic, OpenAI, xAI, and AWS Bedrock are built-in providers, and any Anthropic Messages API or OpenAI Chat Completions or Responses API endpoint works through a custom base URL. Model capability varies, and a model that does not follow Shannon's instructions or tool-use constraints reliably will produce weaker results.
-- A full run can take roughly 1 to 1.5 hours and may incur LLM API costs depending on model pricing and application complexity.
-- Do not scan untrusted or adversarial codebases. AI-powered tools that read source code can be exposed to prompt injection.
+#### **1. Potential for Mutative Effects & Environment Selection**
 
-Read the full [Safety and limitations](docs/safety.md) guide before running Shannon in a new environment.
+This is not a passive scanner. The exploitation agents are designed to **actively execute attacks** to confirm vulnerabilities. This process can have mutative effects on the target application and its data.
+
+> [!WARNING]
+> **DO NOT run Shannon on production environments.**
+>
+> - It is intended exclusively for use on sandboxed, staging, or local development environments where data integrity is not a concern.
+> - Potential mutative effects include, but are not limited to: creating new users, modifying or deleting data, compromising test accounts, and triggering unintended side effects from injection attacks.
+> - **For maximum security and isolation, run Shannon inside a virtual machine (VM).** This confines any side effects from exploitation — including unexpected outbound traffic, file writes from agent tooling, or interactions with local services — to a disposable environment.
+
+#### **2. Legal & Ethical Use**
+
+Shannon is designed for legitimate security auditing purposes only.
+
+> [!CAUTION]
+> **You must have explicit, written authorization** from the owner of the target system before running Shannon.
+>
+> Unauthorized scanning and exploitation of systems you do not own is illegal and can be prosecuted under laws such as the Computer Fraud and Abuse Act (CFAA). Keygraph is not responsible for any misuse of Shannon.
+
+#### **3. LLM & Automation Caveats**
+
+- **Verification is Required**: While significant engineering has gone into our "proof-by-exploitation" methodology to eliminate false positives, the underlying LLMs can still generate hallucinated or weakly-supported content in the final report. **Human oversight is essential** to validate the legitimacy and severity of all reported findings.
+- **Model Support**: Shannon is officially supported only with **Claude models**. Our evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Shannon's instructions or tool-use constraints, and are not officially supported.
+- **Comprehensiveness**: The analysis in Shannon Lite may not be exhaustive due to the inherent limitations of LLM context windows. For a more comprehensive, graph-based analysis of your entire codebase, **Shannon Pro** leverages its advanced data flow analysis engine to ensure deeper and more thorough coverage.
+
+#### **4. Scope of Analysis**
+
+- **Targeted Vulnerabilities**: The current version of Shannon Lite specifically targets the following classes of *exploitable* vulnerabilities:
+  - Broken Authentication & Authorization
+  - Injection
+  - Cross-Site Scripting (XSS)
+  - Server-Side Request Forgery (SSRF)
+- **What Shannon Lite Does Not Cover**: This list is not exhaustive of all potential security risks. Shannon Lite's "proof-by-exploitation" model means it will not report on issues it cannot actively exploit, such as vulnerable third-party libraries or insecure configurations. These types of deep static-analysis findings are a core focus of the advanced analysis engine in **Shannon Pro**.
+
+#### **5. Cost & Performance**
+
+- **Time**: As of the current version, a full test run typically takes **1 to 1.5 hours** to complete.
+- **Cost**: Running the full test using Anthropic's Claude 4.5 Sonnet model may incur costs of approximately **$50 USD**. Costs vary based on model pricing and application complexity.
+
+#### **6. Windows Antivirus False Positives**
+
+Windows Defender may flag files in `xben-benchmark-results/` or `deliverables/` as malware. These are false positives caused by exploit code in the reports. Add an exclusion for the Shannon directory in Windows Defender, or use Docker/WSL2.
+
+#### **7. Security Considerations**
+
+Shannon Lite is designed for scanning repositories and applications you own or have explicit permission to test. Do not point it at untrusted or adversarial codebases. Like any AI-powered tool that reads source code, Shannon Lite is susceptible to prompt injection from content in the scanned repository.
+
 
 ## License
 
-Shannon Open Source is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Shannon Lite is released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
 
-Commercial and enterprise licensing is available for organizations that need different license terms, commercial support, private redistribution, managed-service use, or broader deployment options, including the Keygraph platform.
+Shannon is open source (AGPL v3). This license allows you to:
+- Use it freely for all internal security testing.
+- Modify the code privately for internal use without sharing your changes.
 
-For commercial licensing, contact [shannon@keygraph.io](mailto:shannon@keygraph.io).
+The AGPL's sharing requirements primarily apply to organizations offering Shannon as a public or managed service (such as a SaaS platform). In those specific cases, any modifications made to the core software must be open-sourced.
 
-## About Keygraph
 
-**Keygraph** is the company behind Shannon. It also builds the **Keygraph platform**, the commercial agentic pentesting product that closes the full AppSec lifecycle and runs an enhanced build of Shannon as its pentesting engine.
+## Community & Support
 
-## Community and Support
+### Community Resources
 
-**Community office hours** are available for hands-on help with bugs, deployments, and configuration questions.
+**1:1 Office Hours** — Thursdays, two time zones
+Book a free 15-min session for hands-on help with bugs, deployments, or config questions.
+→ US/EU: 10:00 AM PT  |  Asia: 2:00 PM IST
+→ [Book a slot](https://cal.com/george-flores-keygraph/shannon-community-office-hours)
 
-- US/EU: Thursday, 10:00 AM PT
-- Asia: Thursday, 2:00 PM IST
-- [Book a slot](https://cal.com/george-flores-keygraph/shannon-community-office-hours)
+[Join our Discord](https://discord.gg/cmctpMBXwE) to ask questions, share feedback, and connect with other Shannon users.
 
-[Join Discord](https://discord.gg/cmctpMBXwE) to ask questions, share feedback, and connect with other Shannon users.
+**Contributing:** At this time, we're not accepting external code contributions (PRs).  
+Issues are welcome for bug reports and feature requests.
 
-At this time, Keygraph is not accepting external code contributions. Issues are welcome for bug reports and feature requests:
+- **Report bugs** via [GitHub Issues](https://github.com/KeygraphHQ/shannon/issues)
+- **Suggest features** in [Discussions](https://github.com/KeygraphHQ/shannon/discussions)
 
-- [Report bugs](https://github.com/KeygraphHQ/shannon/issues)
-- [Suggest features](https://github.com/KeygraphHQ/shannon/discussions)
+### Stay Connected
 
-Stay connected:
+- **Twitter**: [@KeygraphHQ](https://twitter.com/KeygraphHQ)
+- **LinkedIn**: [Keygraph](https://linkedin.com/company/keygraph)
+- **Website**: [keygraph.io](https://keygraph.io)
 
-- [Keygraph website](https://keygraph.io)
-- [Twitter/X: @KeygraphHQ](https://twitter.com/KeygraphHQ)
-- [LinkedIn: Keygraph](https://linkedin.com/company/keygraph)
 
-## Common Questions
 
-### Can I self-host Shannon?
+## Get in Touch
 
-Yes. Shannon Open Source runs entirely on your own infrastructure in an ephemeral Docker container. Your source code is mounted read-only and never leaves your environment.
+### Shannon Pro
 
-### Does Shannon support bring your own key (BYOK)?
+Shannon Pro is Keygraph's all-in-one AppSec platform. For organizations that need unified SAST, SCA, and autonomous pentesting with static-dynamic correlation, CI/CD integration, or self-hosted deployment, see the [Shannon Pro technical overview](./SHANNON-PRO.md).
 
-Yes, always. You provide the LLM credentials Shannon uses to run a pentest, in every deployment, open source and commercial. Keygraph never proxies your model traffic.
+<p align="center">
+  <a href="https://cal.com/team/keygraph/shannon-pro" target="_blank">
+    <img src="./assets/Demo_Button.png" height="40" alt="Shannon Pro Inquiry">
+  </a>
+</p>
 
-### Does Shannon output SARIF?
+**Email**: [shannon@keygraph.io](mailto:shannon@keygraph.io)
 
-Yes. Shannon emits SARIF 2.1.0, the OASIS standard format for static analysis results, alongside structured JSON. Any SARIF consumer reads it: code scanning services, vulnerability management platforms, security dashboards, and CI/CD pipelines. It is written by default on exploit-mode scans; set `report.sarif` to `"false"` in your configuration file to opt out.
-
-### Which AI providers does Shannon support?
-
-Anthropic, OpenAI, xAI, and AWS Bedrock are built in and configured directly by provider ID. Beyond those, Shannon runs on any endpoint that implements the Anthropic Messages API or the OpenAI Chat Completions or Responses API, reached through a custom base URL. The rule is the API format, not the vendor. Shannon uses a single unified model setting throughout a pentest.
-
-### Can I run Shannon on a local or self-hosted model?
-
-Technically yes, but it is not recommended. Shannon works with local models served through Ollama, vLLM, or LM Studio, which expose an OpenAI-compatible endpoint, as well as routers such as OpenRouter and gateways such as LiteLLM. Point Shannon at the endpoint with a custom base URL. Capability varies, and a model that does not follow Shannon's instructions or tool-use constraints reliably will produce weaker pentests than a frontier model, so take this path only if you know how your chosen model behaves. See [AI providers](docs/ai-providers.md#custom-base-url).
-
-### Does Shannon actually exploit vulnerabilities, or just scan?
-
-Shannon executes real exploits. It reports a finding only when it has produced a working proof-of-concept, and discards hypotheses it cannot prove. It is a pentester, not a scanner.
+---
 
 <p align="center">
   <b>Built by <a href="https://keygraph.io">Keygraph</a></b>

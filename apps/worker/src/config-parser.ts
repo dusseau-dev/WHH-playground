@@ -16,6 +16,7 @@ import {
   type Config,
   type DistributedConfig,
   type Rule,
+  type SourceMode,
 } from './types/config.js';
 import { ErrorCode } from './types/errors.js';
 
@@ -49,6 +50,90 @@ const DANGEROUS_PATTERNS: RegExp[] = [
   /data:/i, // Data URLs
   /file:/i, // File URLs
 ];
+
+type BooleanLike = boolean | 'true' | 'false';
+type SafeDemonstrationInput = {
+  safe_demonstration?: BooleanLike;
+  safeDemonstration?: boolean;
+  exploit?: BooleanLike;
+};
+
+function toBooleanFlag(value: BooleanLike, fieldName: string): boolean {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  throw new PentestError(
+    `${fieldName} must be a boolean value`,
+    'config',
+    false,
+    { field: fieldName },
+    ErrorCode.CONFIG_VALIDATION_FAILED,
+  );
+}
+
+/**
+ * Resolve the canonical safe-demonstration flag from current and legacy names.
+ *
+ * `safe_demonstration` is the YAML field, `safeDemonstration` is the normalized
+ * worker field, and `exploit` is retained as a deprecated compatibility alias.
+ */
+export function resolveSafeDemonstrationFlag(input: SafeDemonstrationInput | null | undefined): boolean {
+  if (!input) return true;
+
+  const camelValue = input.safeDemonstration;
+  const snakeValue =
+    input.safe_demonstration !== undefined ? toBooleanFlag(input.safe_demonstration, 'safe_demonstration') : undefined;
+  if (camelValue !== undefined && snakeValue !== undefined && camelValue !== snakeValue) {
+    throw new PentestError(
+      'Configuration provides conflicting safeDemonstration and safe_demonstration values',
+      'config',
+      false,
+      { fields: ['safeDemonstration', 'safe_demonstration'] },
+      ErrorCode.CONFIG_VALIDATION_FAILED,
+    );
+  }
+  const currentValue = camelValue ?? snakeValue;
+  const legacyValue = input.exploit !== undefined ? toBooleanFlag(input.exploit, 'exploit') : undefined;
+
+  if (currentValue !== undefined && legacyValue !== undefined && currentValue !== legacyValue) {
+    throw new PentestError(
+      'Configuration provides conflicting safe_demonstration and legacy exploit values',
+      'config',
+      false,
+      { fields: ['safe_demonstration', 'exploit'] },
+      ErrorCode.CONFIG_VALIDATION_FAILED,
+    );
+  }
+
+  return currentValue ?? legacyValue ?? true;
+}
+
+/**
+ * Normalize pre-parsed distributed config from workflow callers.
+ *
+ * Older callers may still provide `exploit`; the returned object only uses the
+ * canonical `safeDemonstration` property so config hashing is stable.
+ */
+export function normalizeDistributedConfig(
+  config: (DistributedConfig & SafeDemonstrationInput) | null,
+): DistributedConfig | null {
+  if (!config) return null;
+  const {
+    exploit: _legacyExploit,
+    safeDemonstration: _current,
+    safe_demonstration: _yamlField,
+    report,
+    ...rest
+  } = config;
+  const sarif = report?.sarif as BooleanLike | undefined;
+  return {
+    ...rest,
+    safeDemonstration: resolveSafeDemonstrationFlag(config),
+    report: {
+      ...report,
+      sarif: sarif === undefined ? false : toBooleanFlag(sarif, 'report.sarif'),
+    },
+  };
+}
 
 /**
  * Format a single AJV error into a human-readable message.
@@ -218,7 +303,7 @@ export const parseConfig = async (configPath: string): Promise<Config> => {
     let config: unknown;
     try {
       config = yaml.load(configContent, {
-        schema: yaml.FAILSAFE_SCHEMA, // Only basic YAML types, no JS evaluation
+        schema: yaml.JSON_SCHEMA, // JSON-compatible scalars only; no custom tag evaluation
         json: false, // Don't allow JSON-specific syntax
         filename: configPath,
       });
@@ -247,7 +332,7 @@ export const parseConfig = async (configPath: string): Promise<Config> => {
     // 6. Validate schema, security rules, and return
     validateConfig(config as Config);
 
-    return config as Config;
+    return normalizeConfigScalars(config as Config);
   } catch (error) {
     // PentestError instances are already well-formatted, re-throw as-is
     if (error instanceof PentestError) {
@@ -284,7 +369,7 @@ export const parseConfigYAML = (yamlContent: string): Config => {
   let config: unknown;
   try {
     config = yaml.load(yamlContent, {
-      schema: yaml.FAILSAFE_SCHEMA,
+      schema: yaml.JSON_SCHEMA,
       json: false,
     });
   } catch (yamlError) {
@@ -309,8 +394,31 @@ export const parseConfigYAML = (yamlContent: string): Config => {
   }
 
   validateConfig(config as Config);
-  return config as Config;
+  return normalizeConfigScalars(config as Config);
 };
+
+function normalizeConfigScalars(config: Config): Config {
+  const concurrency = config.pipeline?.max_concurrent_pipelines;
+  const sarif = config.report?.sarif;
+  const normalizedSarif = sarif === undefined ? undefined : toBooleanFlag(sarif, 'report.sarif');
+
+  if (typeof concurrency !== 'string' && sarif === normalizedSarif) return config;
+  return {
+    ...config,
+    ...(config.pipeline && {
+      pipeline: {
+        ...config.pipeline,
+        ...(typeof concurrency === 'string' && { max_concurrent_pipelines: Number(concurrency) }),
+      },
+    }),
+    ...(config.report && {
+      report: {
+        ...config.report,
+        ...(normalizedSarif !== undefined && { sarif: normalizedSarif }),
+      },
+    }),
+  };
+}
 
 function checkDeprecatedFields(config: Config): void {
   const messages: string[] = [];
@@ -381,6 +489,7 @@ const validateConfig = (config: Config): void => {
     );
   }
 
+  resolveSafeDemonstrationFlag(config);
   performSecurityValidation(config);
 
   const hasAnySteering =
@@ -388,6 +497,7 @@ const validateConfig = (config: Config): void => {
     !!config.authentication ||
     !!config.description ||
     !!config.vuln_classes ||
+    config.safe_demonstration !== undefined ||
     config.exploit !== undefined ||
     !!config.report ||
     !!config.rules_of_engagement;
@@ -514,7 +624,7 @@ const validateRulesSecurity = (rules: Rule[] | undefined, ruleType: string): voi
           ErrorCode.CONFIG_VALIDATION_FAILED,
         );
       }
-      if (rule.description !== undefined && pattern.test(rule.description)) {
+      if (pattern.test(rule.description)) {
         throw new PentestError(
           `rules.${ruleType}[${index}].description contains potentially dangerous pattern: ${pattern.source}`,
           'config',
@@ -656,15 +766,11 @@ const checkForConflicts = (avoidRules: Rule[] = [], focusRules: Rule[] = []): vo
 };
 
 const sanitizeRule = (rule: Rule): Rule => {
-  const sanitized: Rule = {
+  return {
+    description: rule.description.trim(),
     type: rule.type.toLowerCase().trim() as Rule['type'],
     value: rule.value.trim(),
   };
-  const description = rule.description?.trim();
-  if (description) {
-    sanitized.description = description;
-  }
-  return sanitized;
 };
 
 export const distributeConfig = (config: Config | null): DistributedConfig => {
@@ -676,14 +782,13 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
   const vuln_classes =
     config?.vuln_classes && config.vuln_classes.length > 0 ? [...config.vuln_classes] : [...ALL_VULN_CLASSES];
 
-  const exploit = config?.exploit !== undefined ? config.exploit === 'true' : true;
+  const safeDemonstration = resolveSafeDemonstrationFlag(config);
 
   const report = {
-    // Default on; only an explicit "false" opts out.
-    sarif: config?.report?.sarif !== 'false',
     ...(config?.report?.min_severity && { min_severity: config.report.min_severity }),
     ...(config?.report?.min_confidence && { min_confidence: config.report.min_confidence }),
     ...(config?.report?.guidance && { guidance: config.report.guidance.trim() }),
+    sarif: config?.report?.sarif === undefined ? false : toBooleanFlag(config.report.sarif, 'report.sarif'),
   };
 
   const rules_of_engagement = config?.rules_of_engagement?.trim() ?? '';
@@ -694,7 +799,7 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
     authentication: authentication ? sanitizeAuthentication(authentication) : null,
     description,
     vuln_classes,
-    exploit,
+    safeDemonstration,
     report,
     rules_of_engagement,
   };
@@ -707,15 +812,13 @@ const sanitizeAuthentication = (auth: Authentication): Authentication => {
     credentials: {
       username: auth.credentials.username.trim(),
       ...(auth.credentials.password && { password: auth.credentials.password }),
-      ...(auth.credentials.totp_secret && {
-        totp_secret: auth.credentials.totp_secret.replace(/\s/g, ''),
-      }),
+      ...(auth.credentials.totp_secret && { totp_secret: auth.credentials.totp_secret.trim() }),
       ...(auth.credentials.email_login && {
         email_login: {
           address: auth.credentials.email_login.address.trim(),
           password: auth.credentials.email_login.password,
           ...(auth.credentials.email_login.totp_secret && {
-            totp_secret: auth.credentials.email_login.totp_secret.replace(/\s/g, ''),
+            totp_secret: auth.credentials.email_login.totp_secret.trim(),
           }),
         },
       }),
@@ -727,3 +830,39 @@ const sanitizeAuthentication = (auth: Authentication): Authentication => {
     },
   };
 };
+
+type ConfigWithRules = Config | DistributedConfig;
+
+function rulesFromConfig(config: ConfigWithRules): { avoid: Rule[]; focus: Rule[] } {
+  if ('avoid' in config || 'focus' in config) {
+    const distributed = config as DistributedConfig;
+    return { avoid: distributed.avoid ?? [], focus: distributed.focus ?? [] };
+  }
+  return { avoid: config.rules?.avoid ?? [], focus: config.rules?.focus ?? [] };
+}
+
+/**
+ * Validate source-mode compatibility after config parsing/distribution.
+ *
+ * URL-only runs cannot honor code_path rules because no source repository is
+ * available. Source-assisted runs keep their existing repository-backed checks.
+ */
+export function validateConfigForSourceMode(config: ConfigWithRules | null, sourceMode: SourceMode): void {
+  if (!config || sourceMode !== 'url-only') return;
+
+  const rules = rulesFromConfig(config);
+  const codePathRules = [
+    ...rules.avoid.map((rule) => ({ kind: 'avoid' as const, rule })),
+    ...rules.focus.map((rule) => ({ kind: 'focus' as const, rule })),
+  ].filter(({ rule }) => rule.type === 'code_path');
+
+  if (codePathRules.length === 0) return;
+
+  throw new PentestError(
+    'URL-only assessments cannot use code_path rules because no source repository is available. Remove the code_path rules or provide a repository.',
+    'config',
+    false,
+    { rules: codePathRules.map(({ kind, rule }) => ({ kind, value: rule.value })) },
+    ErrorCode.CONFIG_VALIDATION_FAILED,
+  );
+}

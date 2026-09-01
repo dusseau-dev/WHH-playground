@@ -11,65 +11,90 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { resolveConfig } from './config/resolver.js';
 import { getMode } from './mode.js';
-import {
-  CURATED_PROVIDERS,
-  type CuratedProviderId,
-  GENERIC_API_KEY_ENV,
-  isCuratedProvider,
-  PROVIDER_API_KEY_ENV,
-  PROVIDER_CREDENTIAL_HINT,
-  PROVIDER_EXTRA_ENV,
-  resolveModelSpec,
-} from './model-spec.js';
+import { resolveCliModelSelection, selectedProviderEnvNames } from './model-spec.js';
 
-/**
- * Variables forwarded to every worker container regardless of provider. Each is
- * forwarded only when set, so an unused one never appears in the container.
- * SHANNON_AI_API_KEY rides along because it is provider-neutral.
- */
-const COMMON_FORWARD_VARS = [
-  'SHANNON_AI_MODEL',
-  'SHANNON_AI_BASE_URL',
-  'SHANNON_AI_OPENAI_FORMAT',
-  GENERIC_API_KEY_ENV,
-] as const;
+/** Non-provider runtime tuning retained for compatibility. */
+const RUNTIME_FORWARD_VARS = ['CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_ADAPTIVE_THINKING'] as const;
 
-/**
- * Credential variables for one provider. Only the selected provider's entries are
- * forwarded, so a key for an unused provider never enters the scan container. An
- * uncurated provider has none — it relies on the common SHANNON_AI_API_KEY.
- */
-function providerForwardVars(providerId: string): readonly string[] {
-  if (!isCuratedProvider(providerId)) return [];
-  return [...PROVIDER_API_KEY_ENV[providerId], ...PROVIDER_EXTRA_ENV[providerId]];
+export interface ProviderCredentialFile {
+  readonly environmentName: 'AWS_SHARED_CREDENTIALS_FILE' | 'AWS_CONFIG_FILE' | 'AWS_WEB_IDENTITY_TOKEN_FILE';
+  readonly hostPath: string;
+  readonly containerPath: string;
 }
 
-/** Parse a user-facing boolean env var: `1`/`true` (any case) true, `0`/`false`/empty false, else the default. */
-export function envBool(name: string, defaultValue: boolean): boolean {
-  const raw = process.env[name]?.trim().toLowerCase();
-  if (raw === undefined || raw === '') return defaultValue;
-  if (raw === '1' || raw === 'true') return true;
-  if (raw === '0' || raw === 'false') return false;
-  return defaultValue;
+function credentialFile(candidate: string, environmentName: ProviderCredentialFile['environmentName']): string {
+  const resolved = path.resolve(candidate);
+  let canonical: string;
+  try {
+    canonical = fs.realpathSync(resolved);
+  } catch {
+    throw new Error(`${environmentName} does not point to an existing file: ${resolved}`);
+  }
+  if (!fs.statSync(canonical).isFile()) {
+    throw new Error(`${environmentName} must point to a regular file: ${resolved}`);
+  }
+  return canonical;
 }
 
-const USE_PI_AUTH_ENV = 'SHANNON_USE_PI_AUTH';
-
-/** Where the host's auth.json is mounted: pi's standard location (worker HOME is /tmp), read natively. */
-export const PI_AUTH_CONTAINER_PATH = '/tmp/.pi/agent/auth.json';
-
-/** Host path to pi's credential file. */
-export function resolveHostPiAuthPath(): string {
-  return path.join(os.homedir(), '.pi', 'agent', 'auth.json');
+function optionalDefaultCredentialFile(
+  hostPath: string,
+  environmentName: ProviderCredentialFile['environmentName'],
+  containerPath: string,
+): ProviderCredentialFile | undefined {
+  if (!fs.existsSync(hostPath)) return undefined;
+  return { environmentName, hostPath: credentialFile(hostPath, environmentName), containerPath };
 }
 
-export function piAuthFlagEnabled(): boolean {
-  return envBool(USE_PI_AUTH_ENV, false);
-}
+/** Resolve selected Bedrock credential files to fixed read-only container paths. */
+export function resolveProviderCredentialFiles(): ProviderCredentialFile[] {
+  const selection = resolveCliModelSelection();
+  if (selection.providerId !== 'amazon-bedrock') return [];
 
-/** Opted into pi auth via the flag, and the auth file exists to mount. */
-export function shouldUsePiAuth(): boolean {
-  return piAuthFlagEnabled() && fs.existsSync(resolveHostPiAuthPath());
+  if (selection.credentialName === 'AWS_PROFILE') {
+    const awsHome = path.join(os.homedir(), '.aws');
+    const credentialsPath = process.env.AWS_SHARED_CREDENTIALS_FILE?.trim();
+    const configPath = process.env.AWS_CONFIG_FILE?.trim();
+    const files = [
+      credentialsPath
+        ? {
+            environmentName: 'AWS_SHARED_CREDENTIALS_FILE',
+            hostPath: credentialFile(credentialsPath, 'AWS_SHARED_CREDENTIALS_FILE'),
+            containerPath: '/tmp/.aws/credentials',
+          }
+        : optionalDefaultCredentialFile(
+            path.join(awsHome, 'credentials'),
+            'AWS_SHARED_CREDENTIALS_FILE',
+            '/tmp/.aws/credentials',
+          ),
+      configPath
+        ? {
+            environmentName: 'AWS_CONFIG_FILE',
+            hostPath: credentialFile(configPath, 'AWS_CONFIG_FILE'),
+            containerPath: '/tmp/.aws/config',
+          }
+        : optionalDefaultCredentialFile(path.join(awsHome, 'config'), 'AWS_CONFIG_FILE', '/tmp/.aws/config'),
+    ].filter((file): file is ProviderCredentialFile => file !== undefined);
+    if (files.length === 0) {
+      throw new Error(
+        `AWS_PROFILE "${process.env.AWS_PROFILE}" requires a readable ~/.aws/config or ~/.aws/credentials file.`,
+      );
+    }
+    return files;
+  }
+
+  if (selection.credentialName === 'AWS_WEB_IDENTITY_TOKEN_FILE') {
+    const tokenPath = process.env.AWS_WEB_IDENTITY_TOKEN_FILE?.trim();
+    if (!tokenPath) return [];
+    return [
+      {
+        environmentName: 'AWS_WEB_IDENTITY_TOKEN_FILE',
+        hostPath: credentialFile(tokenPath, 'AWS_WEB_IDENTITY_TOKEN_FILE'),
+        containerPath: '/tmp/shannon-aws-web-identity-token',
+      },
+    ];
+  }
+
+  return [];
 }
 
 /**
@@ -87,20 +112,14 @@ export function loadEnv(): void {
 }
 
 /**
- * Build `-e` flags for docker run. Forwards the common vars plus only the
- * selected provider's credentials, passed by name (`-e KEY`) so secret values
- * stay out of the `docker run` argv; docker inherits them from this process's env.
+ * Build Docker environment flags using names only. Docker reads each value from
+ * its own environment, keeping credentials out of process argv and diagnostics.
  */
 export function buildEnvFlags(): string[] {
   const flags: string[] = ['-e', 'TEMPORAL_ADDRESS=shannon-temporal:7233'];
 
-  const spec = resolveModelSpec();
-  const providerVars = typeof spec === 'string' ? [] : providerForwardVars(spec.providerId);
-
-  for (const key of [...COMMON_FORWARD_VARS, ...providerVars]) {
-    if (process.env[key]) {
-      flags.push('-e', key);
-    }
+  for (const key of [...selectedProviderEnvNames(), ...RUNTIME_FORWARD_VARS]) {
+    if (process.env[key]) flags.push('-e', key);
   }
 
   return flags;
@@ -109,91 +128,53 @@ export function buildEnvFlags(): string[] {
 interface CredentialValidation {
   valid: boolean;
   error?: string;
-}
-
-/** Whether a curated provider has its own named credential set (API key plus any extra var). */
-function hasNamedCredential(providerId: CuratedProviderId): boolean {
-  const apiKeys = PROVIDER_API_KEY_ENV[providerId];
-  if (!apiKeys.some((name) => Boolean(process.env[name]))) return false;
-  return PROVIDER_EXTRA_ENV[providerId].every((name) => Boolean(process.env[name]));
-}
-
-/** Whether the selected provider has a credential. Bedrock needs its AWS_ vars; the generic key never stands in for it. */
-function hasCredential(providerId: string): boolean {
-  if (providerId === 'amazon-bedrock') return hasNamedCredential('amazon-bedrock');
-  if (isCuratedProvider(providerId) && hasNamedCredential(providerId)) return true;
-  return Boolean(process.env[GENERIC_API_KEY_ENV]);
-}
-
-/** Curated providers with a named credential. The generic key is neutral, so it never counts toward ambiguity. */
-function configuredProviders(): CuratedProviderId[] {
-  return CURATED_PROVIDERS.filter((providerId) => hasNamedCredential(providerId));
+  mode?: 'api-key' | 'oauth' | 'custom-base-url' | 'bedrock' | 'generic';
 }
 
 /**
- * Validate that the model selection parses and its provider has a credential.
- * Runs before any Docker work so mistakes fail immediately.
+ * Validate the selected provider only. Credentials for unrelated providers are
+ * ignored and are not forwarded to the worker container.
  */
 export function validateCredentials(): CredentialValidation {
-  // 1. Model selection must parse into a provider and model id
-  const spec = resolveModelSpec();
-  if (typeof spec === 'string') {
-    return { valid: false, error: spec };
-  }
-
-  // Pi-auth: skip the API-key checks, but the host auth file must exist to mount.
-  if (piAuthFlagEnabled()) {
-    const authPath = resolveHostPiAuthPath();
-    if (!fs.existsSync(authPath)) {
-      return {
-        valid: false,
-        error: `${USE_PI_AUTH_ENV} is set but no pi credentials were found at ${authPath}. Authenticate with pi first.`,
-      };
-    }
-    return { valid: true };
-  }
-
-  // 2. The selected provider must have a credential
-  if (!hasCredential(spec.providerId)) {
-    const requirement = isCuratedProvider(spec.providerId)
-      ? PROVIDER_CREDENTIAL_HINT[spec.providerId]
-      : GENERIC_API_KEY_ENV;
-    const hint =
-      getMode() === 'local'
-        ? `Set ${requirement} in .env or export it.`
-        : `Export the variables or run 'npx @keygraph/shannon setup'.`;
+  let selection: ReturnType<typeof resolveCliModelSelection>;
+  try {
+    selection = resolveCliModelSelection();
+  } catch (error) {
     return {
       valid: false,
-      error: `No credentials found for provider "${spec.providerId}". ${hint}`,
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 
-  // 3. Exactly one provider may be configured. Several complete credentials make
-  //    the scan's provider depend on SHANNON_AI_MODEL alone, which is too easy to
-  //    misread as "both are in play" and too easy to redirect by editing one line.
-  const configured = configuredProviders();
-  if (configured.length > 1) {
-    const setKeys = (id: CuratedProviderId): string[] =>
-      PROVIDER_API_KEY_ENV[id].filter((name) => Boolean(process.env[name]));
-    const list = configured.map((id) => `${id} (${setKeys(id).join(', ')})`).join(' and ');
-    const others = configured.filter((id) => id !== spec.providerId);
-    const extraVars = others.flatMap(setKeys);
-
-    const dropHint =
-      getMode() === 'local'
-        ? 'remove them from .env or unset them in your shell:'
-        : "unset them in your shell, or reconfigure with 'npx @keygraph/shannon setup':";
-
-    const lines = [`Credentials for more than one provider are set: ${list}.`];
-    if (extraVars.length > 0) {
-      lines.push(
-        `Shannon runs one provider per scan, selected by SHANNON_AI_MODEL ("${spec.providerId}:...").`,
-        `Keep ${spec.providerId} and drop the rest — ${dropHint}`,
-        `  unset ${extraVars.join(' ')}`,
-      );
+  if (selection.providerId === 'amazon-bedrock' && selection.source === 'legacy') {
+    const missing = ['ANTHROPIC_SMALL_MODEL', 'ANTHROPIC_MEDIUM_MODEL', 'ANTHROPIC_LARGE_MODEL'].filter(
+      (name) => !process.env[name],
+    );
+    if (missing.length > 0) {
+      return { valid: false, mode: 'bedrock', error: `Bedrock mode requires: ${missing.join(', ')}` };
     }
-    return { valid: false, error: lines.join('\n') };
   }
 
-  return { valid: true };
+  if (selection.credentialConfigured) {
+    const mode =
+      selection.providerId === 'amazon-bedrock'
+        ? 'bedrock'
+        : selection.credentialName === 'CLAUDE_CODE_OAUTH_TOKEN'
+          ? 'oauth'
+          : selection.credentialName === 'ANTHROPIC_AUTH_TOKEN'
+            ? 'custom-base-url'
+            : selection.providerMode === 'generic'
+              ? 'generic'
+              : 'api-key';
+    return { valid: true, mode };
+  }
+
+  const hint =
+    getMode() === 'local'
+      ? 'Set the selected provider credential or SHANNON_AI_API_KEY in .env (Bedrock accepts a bearer token or the AWS credential chain).'
+      : `Authentication not configured. Export variables or run 'npx @keygraph/shannon setup'.`;
+  return {
+    valid: false,
+    error: `No credentials found for provider "${selection.providerId}". ${hint}`,
+  };
 }

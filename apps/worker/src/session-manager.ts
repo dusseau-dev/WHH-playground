@@ -6,6 +6,8 @@
 
 import { fs, path } from 'zx';
 
+import { validateQueueAndDeliverable } from './services/queue-validation.js';
+import { validateStructuredReportFiles } from './services/structured-report.js';
 import { validateTriageVerdicts } from './services/triage-validation.js';
 import type { ActivityLogger } from './types/activity-logger.js';
 import type { AgentDefinition, AgentName, AgentValidator, PlaywrightSession, VulnType } from './types/index.js';
@@ -19,6 +21,7 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
     prerequisites: [],
     promptTemplate: 'pre-recon-code',
     deliverableFilename: 'pre_recon_deliverable.md',
+    modelTier: 'large',
   },
   recon: {
     name: 'recon',
@@ -64,35 +67,35 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
   },
   'injection-exploit': {
     name: 'injection-exploit',
-    displayName: 'Injection exploit agent',
+    displayName: 'Injection safe demonstration agent',
     prerequisites: ['injection-vuln'],
     promptTemplate: 'exploit-injection',
     deliverableFilename: 'injection_exploitation_evidence.md',
   },
   'xss-exploit': {
     name: 'xss-exploit',
-    displayName: 'XSS exploit agent',
+    displayName: 'XSS safe demonstration agent',
     prerequisites: ['xss-vuln'],
     promptTemplate: 'exploit-xss',
     deliverableFilename: 'xss_exploitation_evidence.md',
   },
   'auth-exploit': {
     name: 'auth-exploit',
-    displayName: 'Auth exploit agent',
+    displayName: 'Auth safe demonstration agent',
     prerequisites: ['auth-vuln'],
     promptTemplate: 'exploit-auth',
     deliverableFilename: 'auth_exploitation_evidence.md',
   },
   'ssrf-exploit': {
     name: 'ssrf-exploit',
-    displayName: 'SSRF exploit agent',
+    displayName: 'SSRF safe demonstration agent',
     prerequisites: ['ssrf-vuln'],
     promptTemplate: 'exploit-ssrf',
     deliverableFilename: 'ssrf_exploitation_evidence.md',
   },
   'authz-exploit': {
     name: 'authz-exploit',
-    displayName: 'Authz exploit agent',
+    displayName: 'Authz safe demonstration agent',
     prerequisites: ['authz-vuln'],
     promptTemplate: 'exploit-authz',
     deliverableFilename: 'authz_exploitation_evidence.md',
@@ -135,33 +138,26 @@ export const AGENT_PHASE_MAP: Readonly<Record<AgentName, PhaseName>> = Object.fr
   report: 'reporting',
 });
 
-// Factory function for vulnerability queue validators.
-//
-// The analysis_deliverable.md is rendered via the writeDeliverable hook, which
-// AgentExecutionService runs after validateAgentOutput but before the success
-// commit — so a "both files exist" check here would race the renderer. The
-// validator only checks queue.json, written by the submit-tool path in
-// agent-execution.ts before this validator runs.
+// Factory function for vulnerability queue validators
 function createVulnValidator(vulnType: VulnType): AgentValidator {
   return async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
-    const queueFile = path.join(sourceDir, `${vulnType}_exploitation_queue.json`);
-    const queueExists = await fs.pathExists(queueFile);
-    if (!queueExists) {
-      logger.warn(`Queue validation failed for ${vulnType}: ${vulnType}_exploitation_queue.json missing`);
+    try {
+      await validateQueueAndDeliverable(vulnType, sourceDir);
+      return true;
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(`Queue validation failed for ${vulnType}: ${errMsg}`);
       return false;
     }
-    return true;
   };
 }
 
-// Exploitation agents — the evidence deliverable is rendered via the writeDeliverable
-// hook after the agent succeeds (before the success commit), so a file-existence check
-// here would race the renderer.
-//
-// VulnType is kept in the import surface for createVulnValidator above; this factory
-// returns a no-op validator parameterized only for symmetry with the vuln-side factory.
-function createExploitValidator(_vulnType: VulnType): AgentValidator {
-  return async (): Promise<boolean> => true;
+// Factory function for exploit deliverable validators
+function createExploitValidator(vulnType: VulnType): AgentValidator {
+  return async (sourceDir: string): Promise<boolean> => {
+    const evidenceFile = path.join(sourceDir, `${vulnType}_exploitation_evidence.md`);
+    return await fs.pathExists(evidenceFile);
+  };
 }
 
 // Playwright session mapping - assigns each agent to a specific session for browser isolation
@@ -197,15 +193,17 @@ export const PLAYWRIGHT_SESSION_MAPPING: Record<string, PlaywrightSession> = Obj
 
 // Direct agent-to-validator mapping - much simpler than pattern matching
 export const AGENT_VALIDATORS: Record<AgentName, AgentValidator> = Object.freeze({
-  // Pre-reconnaissance agent — skipped tools surface as renderer placeholders, not
-  // activity failures. The deliverable file is written by the renderer after the agent
-  // succeeds, so a file-existence check here would race the renderer.
-  'pre-recon': async (): Promise<boolean> => true,
+  // Pre-reconnaissance agent - validates the code analysis deliverable created by the agent
+  'pre-recon': async (sourceDir: string): Promise<boolean> => {
+    const codeAnalysisFile = path.join(sourceDir, 'pre_recon_deliverable.md');
+    return await fs.pathExists(codeAnalysisFile);
+  },
 
-  // Reconnaissance agent — validation lives in runReconAgent post-processing.
-  // The deliverable file is written by the renderer after the agent succeeds, so a
-  // file-existence check here would race the renderer.
-  recon: async (): Promise<boolean> => true,
+  // Reconnaissance agent
+  recon: async (sourceDir: string): Promise<boolean> => {
+    const reconFile = path.join(sourceDir, 'recon_deliverable.md');
+    return await fs.pathExists(reconFile);
+  },
 
   // Vulnerability analysis agents
   'injection-vuln': createVulnValidator('injection'),
@@ -243,15 +241,5 @@ export const AGENT_VALIDATORS: Record<AgentName, AgentValidator> = Object.freeze
   },
 
   // Executive report agent
-  report: async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
-    const reportFile = path.join(sourceDir, 'comprehensive_security_assessment_report.md');
-
-    const reportExists = await fs.pathExists(reportFile);
-
-    if (!reportExists) {
-      logger.error('Missing required deliverable: comprehensive_security_assessment_report.md');
-    }
-
-    return reportExists;
-  },
+  report: validateStructuredReportFiles,
 });

@@ -280,3 +280,4 @@ The harness injects each tool's complete description and per-field guidance into
 
 **CRITICAL:** After announcing completion, STOP IMMEDIATELY. Do NOT output summaries, recaps, or explanations of your work — the deliverable contains everything needed.
 </conclusion_trigger>
+Your final action must be one call to submit_exploitation_queue.

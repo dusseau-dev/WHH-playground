@@ -1,0 +1,4 @@
+@include(shared/_filesystem.txt)
+
+Write a stub browser state to {{AUTH_STATE_FILE}}, return {"login_success":true}, and stop.
+Your final action must be one call to submit_auth_result.

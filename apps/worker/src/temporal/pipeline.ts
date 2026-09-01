@@ -6,12 +6,23 @@
  */
 
 export type { ActivityInput } from './activities.js';
+export { type ProtectedPipelineInput, protectPipelineInput } from './pipeline-secrets.js';
 export type {
   AgentMetrics,
+  NormalizedPipelineInput,
   PipelineInput,
+  PipelineProgress,
   PipelineState,
   PipelineSummary,
   ResumeState,
+  SourceMode,
   VulnExploitPipelineResult,
+} from './shared.js';
+export {
+  computeExpectedAgents,
+  DEFAULT_URL_ONLY_WORKING_DIRECTORY,
+  normalizeCliPipelineInput,
+  normalizeSourceContext,
+  resolveSafeDemonstrationInput,
 } from './shared.js';
 export { pentestPipeline } from './workflows.js';
