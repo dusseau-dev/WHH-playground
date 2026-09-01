@@ -6,6 +6,7 @@ import { type AddFindingInput, createFindingCollector } from '../src/collectors/
 import { attachQueueCodeLocations } from '../src/services/code-location-join.js';
 import { reconcileReportFindings } from '../src/services/report-reconciliation.js';
 import { type ReportData, renderReport } from '../src/services/report-renderer.js';
+import { buildScopeCoverage } from '../src/types/scopes.js';
 
 function finding(id: string, severity: AddFindingInput['severity'] = 'high'): AddFindingInput {
   return {
@@ -199,6 +200,7 @@ describe('deterministic markdown report', () => {
         },
       ],
       not_assessed: ['ssrf'],
+      scope_coverage: buildScopeCoverage(['csrf', 'ssrf', 'xxe'], ['ssrf']),
       triage_status: 'unvalidated',
       validation_issues: ['Missing verdict for INFO-1'],
     };
@@ -207,6 +209,11 @@ describe('deterministic markdown report', () => {
     expect(rendered).toContain('## Mode');
     expect(rendered).toContain('URL-Only');
     expect(rendered).toContain('## Coverage');
+    expect(rendered).toContain('## OWASP Coverage');
+    expect(rendered).toContain(
+      '| A01:2025 Broken Access Control | Available | Cross-site request forgery, Server-side request forgery | Incomplete |',
+    );
+    expect(rendered).toContain('| A03:2025 Software Supply Chain Failures | Coming soon | — | Coming soon |');
     expect(rendered).toMatch(/UNVALIDATED/);
     expect(rendered).toContain('Exploitation was not run');
     expect(rendered).toContain('## Not Assessed');

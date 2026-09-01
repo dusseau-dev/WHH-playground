@@ -8,6 +8,8 @@
  * Configuration type definitions
  */
 
+import type { AssessmentScope, AssessmentSurface } from './scopes.js';
+
 export type RuleType = 'url_path' | 'subdomain' | 'domain' | 'method' | 'header' | 'parameter' | 'code_path';
 
 export interface Rule {
@@ -75,6 +77,10 @@ export interface Config {
   pipeline?: PipelineConfig;
   description?: string;
   vuln_classes?: VulnClass[];
+  /** Granular checks selected for this assessment. */
+  test_scopes?: AssessmentScope[];
+  /** Target interaction surfaces selected for this assessment. */
+  test_surfaces?: AssessmentSurface[];
   /** Whether to run safe, authorized demonstrations of confirmed findings. */
   safe_demonstration?: boolean | 'true' | 'false';
   /** @deprecated Use safe_demonstration. */
@@ -96,6 +102,8 @@ export interface DistributedConfig {
   authentication: Authentication | null;
   description: string;
   vuln_classes: VulnClass[];
+  test_scopes: AssessmentScope[];
+  test_surfaces: AssessmentSurface[];
   /** Whether to run safe, authorized demonstrations of confirmed findings. */
   safeDemonstration: boolean;
   report: DistributedReportConfig;

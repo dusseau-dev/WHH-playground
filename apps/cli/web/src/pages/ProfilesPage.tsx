@@ -13,7 +13,13 @@ import { Button, EmptyState, ErrorState, LoadingRows, PageHeader } from "../comp
 import { ModeBadge } from "../components/RunStatus";
 import { api } from "../lib/api";
 import { formatTimestamp } from "../lib/presentation";
-import type { Profile, SaveProfileRequest, SecurityTestCategory } from "../types/api";
+import {
+  deriveTestCategories,
+  type AssessmentTestScope,
+  type AssessmentTestSurface,
+  type Profile,
+  type SaveProfileRequest,
+} from "../types/api";
 
 function list(value: string): string[] {
   return value
@@ -23,23 +29,35 @@ function list(value: string): string[] {
 }
 
 function selected<T extends string>(values: Record<T, boolean>): T[] {
-  return (Object.entries(values) as Array<[T, boolean]>).filter(([, enabled]) => enabled).map(([key]) => key);
+  const result: T[] = [];
+  for (const [key, enabled] of Object.entries(values) as Array<[T, boolean]>) {
+    if (enabled) result.push(key);
+  }
+  return result;
 }
 
 function profileValues(profile: Profile): AssessmentFormValues {
   const defaults = structuredClone(assessmentDefaults);
+  const selectedScopes = new Set(profile.scope.testScopes);
+  const selectedSurfaces = new Set(profile.scope.testSurfaces);
   return {
     ...defaults,
     name: profile.name,
     targetUrl: profile.targetUrl,
     sourceMode: profile.sourceMode,
     repoPath: profile.repoPath ?? "",
-    testCategories: Object.fromEntries(
-      Object.keys(defaults.testCategories).map((key) => [
+    testScopes: Object.fromEntries(
+      Object.keys(defaults.testScopes).map((key) => [
         key,
-        profile.scope.testCategories.includes(key as SecurityTestCategory),
+        selectedScopes.has(key as AssessmentTestScope),
       ]),
-    ) as AssessmentFormValues["testCategories"],
+    ) as AssessmentFormValues["testScopes"],
+    testSurfaces: Object.fromEntries(
+      Object.keys(defaults.testSurfaces).map((key) => [
+        key,
+        selectedSurfaces.has(key as AssessmentTestSurface),
+      ]),
+    ) as AssessmentFormValues["testSurfaces"],
     safeDemonstration: profile.scope.safeDemonstration,
     concurrency: profile.scope.concurrency,
     authenticationEnabled: profile.authentication?.enabled ?? false,
@@ -61,6 +79,8 @@ function profileValues(profile: Profile): AssessmentFormValues {
 }
 
 function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
+  const testScopes = selected<AssessmentTestScope>(values.testScopes);
+  const testSurfaces = selected<AssessmentTestSurface>(values.testSurfaces);
   const authentication = values.authenticationEnabled
     ? {
         enabled: true,
@@ -83,7 +103,9 @@ function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
     sourceMode: values.sourceMode,
     ...(values.sourceMode === "source-assisted" ? { repoPath: values.repoPath } : {}),
     scope: {
-      testCategories: selected<SecurityTestCategory>(values.testCategories),
+      testCategories: deriveTestCategories(testScopes),
+      testScopes,
+      testSurfaces,
       safeDemonstration: values.safeDemonstration,
       concurrency: values.concurrency,
     },

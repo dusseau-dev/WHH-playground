@@ -1,7 +1,9 @@
+import crypto from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { distributeConfig, parseConfigYAML } from '../src/config-parser.js';
 import { removeContainer } from '../src/services/container.js';
 import { type ActivityInput, loadResumeState, persistOrValidateRunScope } from '../src/temporal/activities.js';
 
@@ -43,6 +45,8 @@ async function readSession(outputPath: string): Promise<{
       sourceMode?: string;
       configHash?: string;
       vulnClasses: string[];
+      testScopes?: string[];
+      testSurfaces?: string[];
       safeDemonstration?: boolean;
       exploit?: boolean;
     };
@@ -54,11 +58,38 @@ async function readSession(outputPath: string): Promise<{
         sourceMode?: string;
         configHash?: string;
         vulnClasses: string[];
+        testScopes?: string[];
+        testSurfaces?: string[];
         safeDemonstration?: boolean;
         exploit?: boolean;
       };
     };
   };
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortJson(nested)]),
+    );
+  }
+  return value;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function legacyConfigHash(yaml: string): string {
+  const {
+    test_scopes: _testScopes,
+    test_surfaces: _testSurfaces,
+    ...legacyConfig
+  } = distributeConfig(parseConfigYAML(yaml));
+  return crypto.createHash('sha256').update(stableJson(legacyConfig)).digest('hex');
 }
 
 afterEach(async () => {
@@ -133,6 +164,8 @@ describe('persistOrValidateRunScope', () => {
     expect(firstSession.session.scope).toMatchObject({
       sourceMode: 'url-only',
       vulnClasses: ['xss'],
+      testScopes: ['security-headers', 'reflected-xss', 'stored-xss', 'dom-xss'],
+      testSurfaces: ['browser', 'api-graphql'],
       safeDemonstration: true,
     });
     expect(firstSession.session.scope?.configHash).toMatch(/^[a-f0-9]{64}$/);
@@ -140,6 +173,66 @@ describe('persistOrValidateRunScope', () => {
     await expect(
       persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-second' }), ['xss'], true),
     ).resolves.toBeUndefined();
+  });
+
+  it('validates and upgrades the pre-granular config hash projection', async () => {
+    const outputPath = await makeTempRoot();
+    await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-original' }), ['xss'], true);
+
+    const sessionPath = path.join(outputPath, 'workspace-a', '.shannon', 'session.json');
+    const session = await readSession(outputPath);
+    if (!session.session.scope) throw new Error('Missing scope');
+    const { testScopes: _testScopes, testSurfaces: _testSurfaces, ...legacyScope } = session.session.scope;
+    session.session.scope = {
+      ...legacyScope,
+      configHash: legacyConfigHash('description: first config'),
+    };
+    await writeFile(sessionPath, JSON.stringify(session, null, 2));
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-resume' }), ['xss'], true),
+    ).resolves.toBeUndefined();
+    const upgraded = await readSession(outputPath);
+    expect(upgraded.session.scope?.testScopes).toEqual(['security-headers', 'reflected-xss', 'stored-xss', 'dom-xss']);
+    expect(upgraded.session.scope?.testSurfaces).toEqual(['browser', 'api-graphql']);
+    expect(upgraded.session.scope?.configHash).not.toBe(legacyConfigHash('description: first config'));
+  });
+
+  it('rejects changed granular checks or surfaces even when execution lanes match', async () => {
+    const outputPath = await makeTempRoot();
+    await persistOrValidateRunScope(
+      inputFor(outputPath, {
+        workflowId: 'workflow-original',
+        testScopes: ['object-access'],
+        testSurfaces: ['browser'],
+      }),
+      ['authz'],
+      true,
+    );
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-scope-change',
+          testScopes: ['csrf'],
+          testSurfaces: ['browser'],
+        }),
+        ['authz'],
+        true,
+      ),
+    ).rejects.toThrow(/test_scopes/);
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-surface-change',
+          testScopes: ['object-access'],
+          testSurfaces: ['api-graphql'],
+        }),
+        ['authz'],
+        true,
+      ),
+    ).rejects.toThrow(/test_surfaces/);
   });
 
   it('backfills legacy scope.exploit on resume', async () => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assessmentTestScopeIds, assessmentTestSurfaceIds, normalizeTestScopeSelection } from './security-scopes.js';
 
 export const SOURCE_MODES = ['source-assisted', 'url-only'] as const;
 export const SourceModeSchema = z.enum(SOURCE_MODES);
@@ -128,6 +129,8 @@ const AssessmentConfigBaseSchema = z
   .object({
     description: z.string().trim().min(1).max(500).optional(),
     testCategories: z.array(VulnerabilityClassSchema).min(1).max(5).optional(),
+    testScopes: z.array(z.enum(assessmentTestScopeIds)).min(1).optional(),
+    testSurfaces: z.array(z.enum(assessmentTestSurfaceIds)).min(1).optional(),
     safeDemonstration: z.boolean().optional(),
     /** @deprecated Use safeDemonstration. */
     demonstrate: z.boolean().optional(),
@@ -168,13 +171,25 @@ const AssessmentConfigBaseSchema = z
       ['demonstrate', value.demonstrate],
       ['exploit', value.exploit],
     ].filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
-    if (provided.length < 2) return;
     const expected = provided[0]?.[1];
-    if (provided.some(([, current]) => current !== expected)) {
+    if (provided.length >= 2 && provided.some(([, current]) => current !== expected)) {
       context.addIssue({
         code: 'custom',
         path: ['safeDemonstration'],
         message: 'safeDemonstration conflicts with legacy demonstration flags',
+      });
+    }
+    try {
+      normalizeTestScopeSelection({
+        ...(value.testScopes && { testScopes: value.testScopes }),
+        ...(value.testSurfaces && { testSurfaces: value.testSurfaces }),
+        ...(value.testCategories && { testCategories: value.testCategories }),
+      });
+    } catch (error) {
+      context.addIssue({
+        code: 'custom',
+        path: ['testScopes'],
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   });
@@ -182,8 +197,16 @@ const AssessmentConfigBaseSchema = z
 export const AssessmentConfigSchema = AssessmentConfigBaseSchema.transform(
   ({ safeDemonstration, demonstrate, exploit, ...config }) => {
     const resolvedSafeDemonstration = safeDemonstration ?? demonstrate ?? exploit;
+    const scope = normalizeTestScopeSelection({
+      ...(config.testScopes && { testScopes: config.testScopes }),
+      ...(config.testSurfaces && { testSurfaces: config.testSurfaces }),
+      ...(config.testCategories && { testCategories: config.testCategories }),
+    });
     return {
       ...config,
+      testCategories: scope.testCategories,
+      testScopes: scope.testScopes,
+      testSurfaces: scope.testSurfaces,
       ...(resolvedSafeDemonstration !== undefined && { safeDemonstration: resolvedSafeDemonstration }),
     };
   },

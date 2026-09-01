@@ -34,7 +34,8 @@ import {
 } from '@temporalio/workflow';
 import type { AgentName, VulnType } from '../types/agents.js';
 import { ALL_AGENTS } from '../types/agents.js';
-import { ALL_VULN_CLASSES, type VulnClass } from '../types/config.js';
+import type { VulnClass } from '../types/config.js';
+import { type NormalizedAssessmentScope, normalizeAssessmentScope } from '../types/scopes.js';
 import { redactLogText, redactSecrets } from '../utils/redactSecrets.js';
 import type * as activities from './activities.js';
 import type { ActivityInput } from './activities.js';
@@ -206,8 +207,17 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
 
   const a = selectActivityProxy(input);
 
-  const selectedVulnClasses: readonly VulnClass[] =
-    input.vulnClasses && input.vulnClasses.length > 0 ? input.vulnClasses : ALL_VULN_CLASSES;
+  let assessmentScope: NormalizedAssessmentScope;
+  try {
+    assessmentScope = normalizeAssessmentScope({
+      ...(input.testScopes && { testScopes: input.testScopes }),
+      ...(input.testSurfaces && { testSurfaces: input.testSurfaces }),
+      ...(input.vulnClasses && { vulnClasses: input.vulnClasses }),
+    });
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  const selectedVulnClasses: readonly VulnClass[] = assessmentScope.vulnClasses;
   const selectedClassSet = new Set<VulnClass>(selectedVulnClasses);
   let safeDemonstration: boolean;
   try {
@@ -270,6 +280,8 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     ...(input.skipGitCheck !== undefined && { skipGitCheck: input.skipGitCheck }),
     ...(safeProviderConfig !== undefined && { providerConfig: safeProviderConfig }),
     vulnClasses: [...selectedVulnClasses],
+    testScopes: assessmentScope.testScopes,
+    testSurfaces: assessmentScope.testSurfaces,
   };
 
   await preflightActs.prepareWorkingDirectory(activityInput);

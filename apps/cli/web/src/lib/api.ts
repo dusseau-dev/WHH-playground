@@ -1,6 +1,8 @@
 import type {
   ActivityEntry,
   ApiErrorBody,
+  AssessmentTestScope,
+  AssessmentTestSurface,
   BootstrapResponse,
   CreateRunRequest,
   Finding,
@@ -21,12 +23,14 @@ import type {
   TargetSecretField,
   TargetSecrets,
 } from '../types/api';
-import { securityTestCategories } from '../types/api';
+import { normalizeTestScopeSelection, securityTestCategories } from '../types/api';
 
 const API_ROOT = '/api/v1';
 
 interface RawConfig {
   testCategories?: SecurityTestCategory[];
+  testScopes?: AssessmentTestScope[];
+  testSurfaces?: AssessmentTestSurface[];
   safeDemonstration?: boolean;
   /** @deprecated Use safeDemonstration. */
   demonstrate?: boolean;
@@ -249,7 +253,7 @@ function jsonBody(value: unknown): RequestInit {
 
 function expectedAgents(run: RawRunRecord): string[] {
   const spec = runSpec(run);
-  const categories = spec.config.testCategories ?? [...securityTestCategories];
+  const categories = normalizedRunScope(spec.config).testCategories;
   const agents = spec.sourceMode === 'source-assisted' ? ['pre-recon', 'recon'] : ['recon'];
   const safeDemonstration = spec.config.safeDemonstration ?? spec.config.demonstrate ?? true;
   for (const category of categories) {
@@ -258,6 +262,14 @@ function expectedAgents(run: RawRunRecord): string[] {
   }
   agents.push('triage', 'report');
   return agents;
+}
+
+function normalizedRunScope(config: RawConfig) {
+  return normalizeTestScopeSelection({
+    ...(config.testCategories && { testCategories: config.testCategories }),
+    ...(config.testScopes && { testScopes: config.testScopes }),
+    ...(config.testSurfaces && { testSurfaces: config.testSurfaces }),
+  });
 }
 
 function runSpec(run: RawRunRecord): RawRunSnapshot {
@@ -359,6 +371,7 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
   const activeAgents = progress?.activeAgents ?? [];
   const elapsedMs = progress?.elapsedMs ?? detail?.metrics?.total_duration_ms;
   const costUsd = progress?.summary?.totalCostUsd ?? detail?.metrics?.total_cost_usd;
+  const normalizedScope = normalizedRunScope(spec.config);
   const result: RunDetail = {
     id: run.runId,
     workspaceId: run.runId,
@@ -367,7 +380,9 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
     sourceMode: spec.sourceMode,
     ...(spec.repoPath && { repoPath: spec.repoPath }),
     scope: {
-      testCategories: spec.config.testCategories ?? [...securityTestCategories],
+      testCategories: normalizedScope.testCategories,
+      testScopes: normalizedScope.testScopes,
+      testSurfaces: normalizedScope.testSurfaces,
       safeDemonstration: spec.config.safeDemonstration ?? spec.config.demonstrate ?? true,
       concurrency: spec.config.pipeline?.maxConcurrentPipelines ?? 5,
     },
@@ -424,6 +439,7 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
 function toProfile(raw: RawProfile): Profile {
   const secretPersistence = bootstrapValue?.secretStore.persistence ?? 'session';
   const auth = raw.config.authentication;
+  const normalizedScope = normalizedRunScope(raw.config);
   return {
     version: 1,
     id: raw.id,
@@ -437,7 +453,9 @@ function toProfile(raw: RawProfile): Profile {
       totp: { present: raw.hasSecret.totpSecret === true, persistence: secretPersistence },
     },
     scope: {
-      testCategories: raw.config.testCategories ?? [...securityTestCategories],
+      testCategories: normalizedScope.testCategories,
+      testScopes: normalizedScope.testScopes,
+      testSurfaces: normalizedScope.testSurfaces,
       safeDemonstration: raw.config.safeDemonstration ?? raw.config.demonstrate ?? true,
       concurrency: raw.config.pipeline?.maxConcurrentPipelines ?? 5,
     },
@@ -473,6 +491,8 @@ function configBody(input: CreateRunRequest | SaveProfileRequest): RawConfig {
   const rule = (value: string): RawRule => ({ description: value, type: 'url_path', value });
   return {
     testCategories: input.scope.testCategories,
+    testScopes: input.scope.testScopes,
+    testSurfaces: input.scope.testSurfaces,
     safeDemonstration: input.scope.safeDemonstration,
     pipeline: { maxConcurrentPipelines: input.scope.concurrency },
     rules: { focus: input.rules.focus.map(rule), avoid: input.rules.avoid.map(rule) },

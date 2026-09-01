@@ -53,6 +53,8 @@ export interface AgentExecutionInput {
   configPath?: string | undefined;
   configData?: import('../types/config.js').DistributedConfig | undefined;
   configYAML?: string | undefined;
+  testScopes?: import('../types/scopes.js').AssessmentScope[] | undefined;
+  testSurfaces?: import('../types/scopes.js').AssessmentSurface[] | undefined;
   pipelineTestingMode?: boolean | undefined;
   attemptNumber: number;
   apiKey?: string | undefined;
@@ -175,6 +177,8 @@ export class AgentExecutionService {
           workingDirectory,
           ...(repoPath !== undefined && { repoPath }),
           AUTH_STATE_FILE: authStateFile(auditSession.sessionMetadata),
+          ...(input.testScopes !== undefined && { testScopes: input.testScopes }),
+          ...(input.testSurfaces !== undefined && { testSurfaces: input.testSurfaces }),
         },
         distributedConfig,
         pipelineTestingMode,

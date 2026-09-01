@@ -161,6 +161,8 @@ describe('profiles and run lifecycle', () => {
         sourceMode: 'url-only',
         workspace: 'api-run',
         config: {
+          testScopes: ['csrf'],
+          testSurfaces: ['api-graphql'],
           authentication: {
             loginType: 'form',
             loginUrl: 'https://target.test/login',
@@ -173,7 +175,18 @@ describe('profiles and run lifecycle', () => {
       }),
     });
     expect(start.status).toBe(202);
-    expect((await start.json()).data.snapshot).not.toHaveProperty('repoPath');
+    const startedBody = await start.json();
+    expect(startedBody.data.snapshot).not.toHaveProperty('repoPath');
+    expect(startedBody.data.snapshot.config).toMatchObject({
+      testCategories: ['authz'],
+      testScopes: ['csrf'],
+      testSurfaces: ['api-graphql'],
+    });
+    expect(harness.temporal.starts[0]?.input).toMatchObject({
+      vulnClasses: ['authz'],
+      testScopes: ['csrf'],
+      testSurfaces: ['api-graphql'],
+    });
 
     const cancel = await request(harness.app, '/api/v1/runs/api-run/cancel', {
       method: 'POST',

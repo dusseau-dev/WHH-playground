@@ -96,6 +96,20 @@ describe('CLI pipeline normalization', () => {
     expect(resolveSafeDemonstrationInput({ safeDemonstration: true, exploit: true })).toBe(true);
     expect(() => resolveSafeDemonstrationInput({ safeDemonstration: true, exploit: false })).toThrow(/conflicts/);
   });
+
+  it('normalizes granular checks into the durable execution lanes', () => {
+    expect(
+      normalizeCliPipelineInput({
+        webUrl: 'https://example.test',
+        testScopes: ['csrf', 'reflected-xss'],
+        testSurfaces: ['api-graphql'],
+      }),
+    ).toMatchObject({
+      testScopes: ['csrf', 'reflected-xss'],
+      testSurfaces: ['api-graphql'],
+      vulnClasses: ['xss', 'authz'],
+    });
+  });
 });
 
 describe('execution plans', () => {

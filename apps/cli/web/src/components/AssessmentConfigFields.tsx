@@ -2,8 +2,20 @@ import { Eye, EyeOff, KeyRound, Minus, Plus, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { z } from "zod";
+import { AssessmentScopeSelector } from "./AssessmentScopeSelector";
 import { FieldError, IconButton, InlineNotice } from "./Primitives";
-import { securityTestCategories, severities, type SecretState } from "../types/api";
+import {
+  assessmentScopeDefinitions,
+  assessmentTestScopeIds,
+  assessmentTestSurfaceIds,
+  availableTestScopes,
+  availableTestSurfaces,
+  severities,
+  testSurfaceDefinitions,
+  type AssessmentTestScope,
+  type AssessmentTestSurface,
+  type SecretState,
+} from "../types/api";
 
 const isHttpUrl = (value: string) => {
   if (!URL.canParse(value)) return false;
@@ -24,13 +36,8 @@ export const assessmentFormSchema = z
     customProviderId: z.string().trim(),
     customBaseUrl: optionalUrl,
     customOpenAIFormat: z.enum(["chat-completions", "responses"]),
-    testCategories: z.object({
-      injection: z.boolean(),
-      xss: z.boolean(),
-      auth: z.boolean(),
-      authz: z.boolean(),
-      ssrf: z.boolean(),
-    }),
+    testScopes: z.record(z.enum(assessmentTestScopeIds), z.boolean()),
+    testSurfaces: z.record(z.enum(assessmentTestSurfaceIds), z.boolean()),
     safeDemonstration: z.boolean(),
     concurrency: z.number().int().min(1).max(5),
     authenticationEnabled: z.boolean(),
@@ -74,8 +81,11 @@ export const assessmentFormSchema = z
         context.addIssue({ code: "custom", path: ["customBaseUrl"], message: "Base URL is required" });
       }
     }
-    if (!Object.values(value.testCategories).some(Boolean)) {
-      context.addIssue({ code: "custom", path: ["testCategories"], message: "Select at least one category" });
+    if (!availableTestScopes.some((scope) => value.testScopes[scope])) {
+      context.addIssue({ code: "custom", path: ["testScopes"], message: "Select at least one available check" });
+    }
+    if (!availableTestSurfaces.some((surface) => value.testSurfaces[surface])) {
+      context.addIssue({ code: "custom", path: ["testSurfaces"], message: "Select at least one available surface" });
     }
     if (value.authenticationEnabled) {
       if (!value.loginUrl) context.addIssue({ code: "custom", path: ["loginUrl"], message: "Login URL is required" });
@@ -91,6 +101,11 @@ export const assessmentFormSchema = z
 
 export type AssessmentFormValues = z.infer<typeof assessmentFormSchema>;
 
+function selectionRecord<T extends string>(all: readonly T[], selected: readonly T[]): Record<T, boolean> {
+  const selectedSet = new Set(selected);
+  return Object.fromEntries(all.map((value) => [value, selectedSet.has(value)])) as Record<T, boolean>;
+}
+
 export const assessmentDefaults: AssessmentFormValues = {
   name: "",
   targetUrl: "",
@@ -102,7 +117,14 @@ export const assessmentDefaults: AssessmentFormValues = {
   customProviderId: "",
   customBaseUrl: "",
   customOpenAIFormat: "chat-completions",
-  testCategories: { injection: true, xss: true, auth: true, authz: true, ssrf: true },
+  testScopes: selectionRecord(
+    assessmentScopeDefinitions.map(({ id }) => id),
+    availableTestScopes,
+  ),
+  testSurfaces: selectionRecord(
+    testSurfaceDefinitions.map(({ id }) => id),
+    availableTestSurfaces,
+  ),
   safeDemonstration: true,
   concurrency: 3,
   authenticationEnabled: false,
@@ -128,14 +150,6 @@ export const assessmentDefaults: AssessmentFormValues = {
   profileName: "",
   authorizedTesting: false,
 };
-
-const categoryLabels = {
-  injection: "Injection",
-  xss: "Cross-site scripting",
-  auth: "Authentication",
-  authz: "Authorization",
-  ssrf: "Server-side request forgery",
-} as const;
 
 interface Props {
   form: UseFormReturn<AssessmentFormValues>;
@@ -165,6 +179,16 @@ export function AssessmentConfigFields({
   const authEnabled = watch("authenticationEnabled");
   const saveProfile = watch("saveProfile");
   const concurrency = watch("concurrency");
+  const scopeValues = watch("testScopes");
+  const surfaceValues = watch("testSurfaces");
+  const selectedScopes: AssessmentTestScope[] = [];
+  for (const { id } of assessmentScopeDefinitions) {
+    if (scopeValues[id]) selectedScopes.push(id);
+  }
+  const selectedSurfaces: AssessmentTestSurface[] = [];
+  for (const { id } of testSurfaceDefinitions) {
+    if (surfaceValues[id]) selectedSurfaces.push(id);
+  }
   const indexOffset = showProfileName ? 1 : 0;
   const sectionIndex = (index: number) => String(index + indexOffset).padStart(2, "0");
   const scopeSectionIndex = sectionIndex(showModelConfig ? 3 : 2);
@@ -338,19 +362,32 @@ export function AssessmentConfigFields({
           <span className="section-index">{scopeSectionIndex}</span>
           <h2 id="scope-heading">Assessment scope</h2>
         </div>
-        <fieldset className="field field--wide">
-          <legend className="field-label">Security test categories</legend>
-          <div className="toggle-grid">
-            {securityTestCategories.map((category) => (
-              <label className="check-tile" key={category}>
-                <input type="checkbox" {...register(`testCategories.${category}`)} />
-                <span className="check-mark" aria-hidden="true" />
-                <span>{categoryLabels[category]}</span>
-              </label>
-            ))}
-          </div>
-          <FieldError message={formState.errors.testCategories?.root?.message} />
-        </fieldset>
+        <AssessmentScopeSelector
+          selectedScopes={selectedScopes}
+          selectedSurfaces={selectedSurfaces}
+          onScopesChange={(scopes) =>
+            setValue(
+              "testScopes",
+              selectionRecord<AssessmentTestScope>(
+                assessmentScopeDefinitions.map(({ id }) => id),
+                scopes,
+              ),
+              { shouldDirty: true, shouldValidate: true },
+            )
+          }
+          onSurfacesChange={(surfaces) =>
+            setValue(
+              "testSurfaces",
+              selectionRecord<AssessmentTestSurface>(
+                testSurfaceDefinitions.map(({ id }) => id),
+                surfaces,
+              ),
+              { shouldDirty: true, shouldValidate: true },
+            )
+          }
+          scopeError={formState.errors.testScopes?.root?.message}
+          surfaceError={formState.errors.testSurfaces?.root?.message}
+        />
         <div className="control-row">
           <label className="switch-row">
             <span>

@@ -5,6 +5,12 @@
  * within their own workflow context.
  */
 
+export type {
+  AssessmentScope,
+  AssessmentSurface,
+  OwaspCategory,
+  OwaspCategoryId,
+} from '../types/scopes.js';
 export type { ActivityInput } from './activities.js';
 export { type ProtectedPipelineInput, protectPipelineInput } from './pipeline-secrets.js';
 export type {

@@ -152,6 +152,63 @@
       "maxItems": 5,
       "uniqueItems": true
     },
+    "test_scopes": {
+      "type": "array",
+      "description": "Granular security checks to run. Omit to expand the selected legacy vulnerability classes.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "object-access",
+          "privilege-boundaries",
+          "tenant-isolation",
+          "csrf",
+          "ssrf",
+          "cors",
+          "security-headers",
+          "open-redirects",
+          "dependency-risk",
+          "package-provenance",
+          "build-pipeline-integrity",
+          "sensitive-data-exposure",
+          "transport-session-protection",
+          "sql-nosql-injection",
+          "command-injection",
+          "template-injection",
+          "xxe",
+          "path-traversal-file-inclusion",
+          "reflected-xss",
+          "stored-xss",
+          "dom-xss",
+          "business-logic",
+          "workflow-bypass",
+          "file-upload",
+          "rate-limiting",
+          "account-enumeration",
+          "login-controls",
+          "account-recovery-mfa",
+          "session-lifecycle",
+          "unsafe-deserialization",
+          "upload-integrity",
+          "security-event-logging",
+          "alerting-effectiveness",
+          "audit-trail-integrity",
+          "verbose-errors",
+          "fail-open"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "test_surfaces": {
+      "type": "array",
+      "description": "Interaction surfaces to exercise during the assessment.",
+      "items": {
+        "type": "string",
+        "enum": ["browser", "api-graphql", "websockets"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
     "exploit": {
       "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
       "description": "Deprecated: use safe_demonstration. Whether to run safe demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
@@ -213,6 +270,8 @@
     { "required": ["description"] },
     { "required": ["pipeline"] },
     { "required": ["vuln_classes"] },
+    { "required": ["test_scopes"] },
+    { "required": ["test_surfaces"] },
     { "required": ["safe_demonstration"] },
     { "required": ["exploit"] },
     { "required": ["report"] },
