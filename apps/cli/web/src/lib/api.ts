@@ -58,6 +58,7 @@ interface RawRunSnapshot {
   sourceMode: SourceMode;
   repoPath?: string;
   config: RawConfig;
+  providerConfig?: Record<string, unknown>;
   requiredSecretFields: TargetSecretField[];
 }
 
@@ -528,6 +529,7 @@ async function createRun(input: CreateRunRequest): Promise<RunDetail> {
       ...(input.repoPath && { repoPath: input.repoPath }),
       config: configBody(input),
       secrets: targetSecrets(input),
+      ...(input.providerConfig && { providerConfig: input.providerConfig }),
       authorizationConfirmed: true,
     }),
   });

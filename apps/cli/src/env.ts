@@ -115,10 +115,11 @@ export function loadEnv(): void {
  * Build Docker environment flags using names only. Docker reads each value from
  * its own environment, keeping credentials out of process argv and diagnostics.
  */
-export function buildEnvFlags(): string[] {
+export function buildEnvFlags(options: { includeProvider?: boolean } = {}): string[] {
   const flags: string[] = ['-e', 'TEMPORAL_ADDRESS=shannon-temporal:7233'];
+  const providerNames = options.includeProvider === false ? [] : selectedProviderEnvNames();
 
-  for (const key of [...selectedProviderEnvNames(), ...RUNTIME_FORWARD_VARS]) {
+  for (const key of [...providerNames, ...RUNTIME_FORWARD_VARS]) {
     if (process.env[key]) flags.push('-e', key);
   }
 

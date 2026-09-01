@@ -199,6 +199,42 @@ describe('profiles and run lifecycle', () => {
     expect((await resumed.json()).data.attempts).toHaveLength(2);
   });
 
+  it('accepts an OpenRouter model override without exposing its key in the run snapshot', async () => {
+    const providerApiKey = 'sk-or-v1-runtime-only-provider-key';
+    const start = await request(harness.app, '/api/v1/runs', {
+      method: 'POST',
+      headers: mutationHeaders(),
+      body: JSON.stringify({
+        targetUrl: 'https://target.test',
+        sourceMode: 'url-only',
+        workspace: 'openrouter-run',
+        config: {},
+        providerConfig: {
+          providerType: 'openai',
+          model: '~anthropic/claude-sonnet-latest',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          openAIFormat: 'chat-completions',
+          apiKey: providerApiKey,
+        },
+        authorizationConfirmed: true,
+      }),
+    });
+
+    expect(start.status).toBe(202);
+    const body = await start.json();
+    expect(body.data.snapshot.providerConfig).toEqual({
+      providerType: 'openai',
+      model: '~anthropic/claude-sonnet-latest',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      openAIFormat: 'chat-completions',
+    });
+    expect(JSON.stringify(body)).not.toContain(providerApiKey);
+    expect(harness.temporal.starts[0]?.input.providerConfig).toMatchObject({
+      apiKey: providerApiKey,
+      model: '~anthropic/claude-sonnet-latest',
+    });
+  });
+
   it('detects profile references whose session-only secret has been lost', async () => {
     await harness.profiles.create({
       name: 'Lost secret',

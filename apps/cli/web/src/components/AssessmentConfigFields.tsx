@@ -10,6 +10,7 @@ const isHttpUrl = (value: string) => {
   return ["http:", "https:"].includes(new URL(value).protocol);
 };
 const optionalUrl = z.string().trim().refine((value) => !value || isHttpUrl(value), "Enter an HTTP(S) URL");
+const modelSources = ["environment", "openrouter", "anthropic", "openai", "xai", "custom"] as const;
 
 export const assessmentFormSchema = z
   .object({
@@ -17,6 +18,12 @@ export const assessmentFormSchema = z
     targetUrl: z.string().trim().refine(isHttpUrl, "Enter an HTTP(S) target URL"),
     sourceMode: z.enum(["source-assisted", "url-only"]),
     repoPath: z.string().trim(),
+    modelSource: z.enum(modelSources),
+    modelId: z.string().trim(),
+    providerApiKey: z.string(),
+    customProviderId: z.string().trim(),
+    customBaseUrl: optionalUrl,
+    customOpenAIFormat: z.enum(["chat-completions", "responses"]),
     testCategories: z.object({
       injection: z.boolean(),
       xss: z.boolean(),
@@ -53,6 +60,20 @@ export const assessmentFormSchema = z
     if (value.sourceMode === "source-assisted" && !value.repoPath) {
       context.addIssue({ code: "custom", path: ["repoPath"], message: "Repository path is required" });
     }
+    if (value.modelSource !== "environment") {
+      if (!value.modelId) context.addIssue({ code: "custom", path: ["modelId"], message: "Model ID is required" });
+      if (!value.providerApiKey) {
+        context.addIssue({ code: "custom", path: ["providerApiKey"], message: "Provider API key is required" });
+      }
+    }
+    if (value.modelSource === "custom") {
+      if (!value.customProviderId) {
+        context.addIssue({ code: "custom", path: ["customProviderId"], message: "Provider ID is required" });
+      }
+      if (!value.customBaseUrl) {
+        context.addIssue({ code: "custom", path: ["customBaseUrl"], message: "Base URL is required" });
+      }
+    }
     if (!Object.values(value.testCategories).some(Boolean)) {
       context.addIssue({ code: "custom", path: ["testCategories"], message: "Select at least one category" });
     }
@@ -75,6 +96,12 @@ export const assessmentDefaults: AssessmentFormValues = {
   targetUrl: "",
   sourceMode: "url-only",
   repoPath: "",
+  modelSource: "environment",
+  modelId: "",
+  providerApiKey: "",
+  customProviderId: "",
+  customBaseUrl: "",
+  customOpenAIFormat: "chat-completions",
   testCategories: { injection: true, xss: true, auth: true, authz: true, ssrf: true },
   safeDemonstration: true,
   concurrency: 3,
@@ -115,6 +142,7 @@ interface Props {
   showProfileName?: boolean;
   showSaveProfile?: boolean;
   showAuthorization?: boolean;
+  showModelConfig?: boolean;
   passwordState?: SecretState | undefined;
   totpState?: SecretState | undefined;
 }
@@ -124,16 +152,23 @@ export function AssessmentConfigFields({
   showProfileName = false,
   showSaveProfile = false,
   showAuthorization = false,
+  showModelConfig = false,
   passwordState,
   totpState,
 }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
+  const [showProviderApiKey, setShowProviderApiKey] = useState(false);
   const { register, watch, setValue, getValues, formState } = form;
   const mode = watch("sourceMode");
+  const modelSource = watch("modelSource");
   const authEnabled = watch("authenticationEnabled");
   const saveProfile = watch("saveProfile");
   const concurrency = watch("concurrency");
+  const indexOffset = showProfileName ? 1 : 0;
+  const sectionIndex = (index: number) => String(index + indexOffset).padStart(2, "0");
+  const scopeSectionIndex = sectionIndex(showModelConfig ? 3 : 2);
+  const accessSectionIndex = sectionIndex(showModelConfig ? 4 : 3);
 
   const stepConcurrency = (direction: number) => {
     const next = Math.min(5, Math.max(1, getValues("concurrency") + direction));
@@ -207,9 +242,100 @@ export function AssessmentConfigFields({
         </div>
       </section>
 
+      {showModelConfig ? (
+        <section className="form-section" aria-labelledby="model-heading">
+          <div className="section-heading">
+            <span className="section-index">{sectionIndex(2)}</span>
+            <h2 id="model-heading">Model</h2>
+          </div>
+          <div className="form-grid">
+            <label className="field">
+              <span className="field-label">Model source</span>
+              <select {...register("modelSource")}>
+                <option value="environment">Environment default</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="xai">xAI</option>
+                <option value="custom">Custom gateway</option>
+              </select>
+            </label>
+            {modelSource === "environment" ? (
+              <InlineNotice tone="neutral">Uses the provider and model configured for this Shannon runner.</InlineNotice>
+            ) : (
+              <>
+                <label className="field">
+                  <span className="field-label">Model ID</span>
+                  <input
+                    placeholder={modelSource === "openrouter" ? "~anthropic/claude-sonnet-latest" : "provider-model-id"}
+                    autoComplete="off"
+                    {...register("modelId")}
+                    aria-invalid={Boolean(formState.errors.modelId)}
+                  />
+                  <FieldError message={formState.errors.modelId?.message} />
+                </label>
+                <div className="field">
+                  <label className="field-label" htmlFor="provider-api-key">
+                    Provider API key
+                  </label>
+                  <span className="secret-input">
+                    <input
+                      id="provider-api-key"
+                      type={showProviderApiKey ? "text" : "password"}
+                      autoComplete="off"
+                      placeholder={modelSource === "openrouter" ? "sk-or-..." : "API key"}
+                      {...register("providerApiKey")}
+                      aria-invalid={Boolean(formState.errors.providerApiKey)}
+                    />
+                    <IconButton
+                      type="button"
+                      label={showProviderApiKey ? "Hide provider key" : "Show provider key"}
+                      icon={showProviderApiKey ? EyeOff : Eye}
+                      onClick={() => setShowProviderApiKey((value) => !value)}
+                    />
+                  </span>
+                  <FieldError message={formState.errors.providerApiKey?.message} />
+                </div>
+                {modelSource === "custom" ? (
+                  <>
+                    <label className="field">
+                      <span className="field-label">Provider ID</span>
+                      <input
+                        placeholder="gateway"
+                        autoComplete="off"
+                        {...register("customProviderId")}
+                        aria-invalid={Boolean(formState.errors.customProviderId)}
+                      />
+                      <FieldError message={formState.errors.customProviderId?.message} />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Base URL</span>
+                      <input
+                        type="url"
+                        placeholder="https://gateway.example.com/v1"
+                        {...register("customBaseUrl")}
+                        aria-invalid={Boolean(formState.errors.customBaseUrl)}
+                      />
+                      <FieldError message={formState.errors.customBaseUrl?.message} />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">API format</span>
+                      <select {...register("customOpenAIFormat")}>
+                        <option value="chat-completions">OpenAI chat completions</option>
+                        <option value="responses">OpenAI responses</option>
+                      </select>
+                    </label>
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       <section className="form-section" aria-labelledby="scope-heading">
         <div className="section-heading">
-          <span className="section-index">{showProfileName ? "03" : "02"}</span>
+          <span className="section-index">{scopeSectionIndex}</span>
           <h2 id="scope-heading">Assessment scope</h2>
         </div>
         <fieldset className="field field--wide">
@@ -264,7 +390,7 @@ export function AssessmentConfigFields({
 
       <section className="form-section" aria-labelledby="access-heading">
         <div className="section-heading">
-          <span className="section-index">{showProfileName ? "04" : "03"}</span>
+          <span className="section-index">{accessSectionIndex}</span>
           <h2 id="access-heading">Access</h2>
         </div>
         <label className="switch-row switch-row--standalone">

@@ -57,6 +57,73 @@ export const PublicAuthenticationSchema = z
   .strict();
 export type PublicAuthentication = z.infer<typeof PublicAuthenticationSchema>;
 
+const providerTextSchema = z.string().trim().min(1).max(500);
+const providerIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
+
+const ProviderConfigBaseSchema = z
+  .object({
+    providerType: providerIdSchema.optional(),
+    providerId: providerIdSchema.optional(),
+    model: providerTextSchema,
+    apiKey: z.string().trim().min(1).max(4096).optional(),
+    authToken: z.string().trim().min(1).max(4096).optional(),
+    awsRegion: z.string().trim().min(1).max(100).optional(),
+    awsAccessKeyId: z.string().trim().min(1).max(4096).optional(),
+    awsSecretAccessKey: z.string().trim().min(1).max(4096).optional(),
+    awsSessionToken: z.string().trim().min(1).max(4096).optional(),
+    baseUrl: httpUrlSchema.optional(),
+    openAIFormat: z.enum(['chat-completions', 'responses']).optional(),
+    supportsStructuredOutput: z.boolean().optional(),
+  })
+  .strict();
+
+function validateProviderConfig(value: z.infer<typeof ProviderConfigBaseSchema>, context: z.RefinementCtx): void {
+  if (value.apiKey && value.authToken) {
+    context.addIssue({
+      code: 'custom',
+      path: ['apiKey'],
+      message: 'Use either apiKey or authToken, not both',
+    });
+  }
+  if (Boolean(value.awsAccessKeyId) !== Boolean(value.awsSecretAccessKey)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['awsAccessKeyId'],
+      message: 'AWS access-key provider configs require both awsAccessKeyId and awsSecretAccessKey',
+    });
+  }
+  if (value.openAIFormat && !value.baseUrl) {
+    context.addIssue({
+      code: 'custom',
+      path: ['openAIFormat'],
+      message: 'openAIFormat requires baseUrl',
+    });
+  }
+  if ((value.providerType === 'generic' || value.providerType === 'custom') && !value.providerId) {
+    context.addIssue({
+      code: 'custom',
+      path: ['providerId'],
+      message: 'providerId is required for generic provider configs',
+    });
+  }
+}
+
+export const ProviderConfigSchema = ProviderConfigBaseSchema.superRefine(validateProviderConfig);
+export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+
+const SafeProviderConfigSchema = ProviderConfigBaseSchema.omit({
+  apiKey: true,
+  authToken: true,
+  awsAccessKeyId: true,
+  awsSecretAccessKey: true,
+  awsSessionToken: true,
+}).superRefine(validateProviderConfig);
+
 const AssessmentConfigBaseSchema = z
   .object({
     description: z.string().trim().min(1).max(500).optional(),
@@ -219,6 +286,7 @@ export const StartRunRequestSchema = z
     repoPath: z.string().trim().min(1).max(4096).optional(),
     config: AssessmentConfigSchema.optional(),
     secrets: TargetSecretsSchema.optional(),
+    providerConfig: ProviderConfigSchema.optional(),
     workspace: identifierSchema.optional(),
     outputPath: z.string().trim().min(1).max(4096).optional(),
     pipelineTesting: z.boolean().optional(),
@@ -240,6 +308,7 @@ export type StartRunRequest = z.infer<typeof StartRunRequestSchema>;
 export const ResumeRunRequestSchema = z
   .object({
     secrets: TargetSecretsSchema.optional(),
+    providerConfig: ProviderConfigSchema.optional(),
   })
   .strict();
 export type ResumeRunRequest = z.infer<typeof ResumeRunRequestSchema>;
@@ -262,6 +331,7 @@ const RunLaunchSpecBaseSchema = z
     config: AssessmentConfigSchema,
     secrets: TargetSecretsSchema.optional(),
     secretRefs: SecretReferencesSchema.optional(),
+    providerConfig: ProviderConfigSchema.optional(),
     workspace: identifierSchema.optional(),
     outputPath: z.string().trim().min(1).max(4096).optional(),
     pipelineTesting: z.boolean().optional(),
@@ -278,6 +348,7 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 
 export const RunSnapshotSchema = RunLaunchSpecBaseSchema.omit({ secrets: true, workspace: true, secretRefs: true })
   .extend({
+    providerConfig: SafeProviderConfigSchema.optional(),
     secretRefs: SecretReferencesSchema,
     requiredSecretFields: z.array(SecretFieldSchema),
   })

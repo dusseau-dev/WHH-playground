@@ -11,6 +11,7 @@ import {
   LegacySessionSchema,
   type ManagedRunRecord,
   ManagedRunRecordSchema,
+  type ProviderConfig,
   REPORT_ARTIFACT_KINDS,
   type ReportArtifact,
   type ReportArtifactKind,
@@ -148,8 +149,8 @@ export interface TemporalPipelineInput {
   safeDemonstration?: boolean;
   /** @deprecated Inline credentials are staged locally before Temporal submission. */
   apiKey?: string;
-  /** @deprecated Credential fields are staged locally before Temporal submission. */
-  providerConfig?: Record<string, unknown>;
+  /** Credential fields are staged locally before Temporal submission. */
+  providerConfig?: ProviderConfig;
   /** Opaque reference to locally staged provider credentials. */
   secretRef?: string;
   /** @deprecated Inline configuration is staged locally before Temporal submission. */
@@ -229,6 +230,8 @@ interface TemporalClientModule {
 type RunPatch = Partial<Pick<ManagedRunRecord, 'status' | 'attempts' | 'completedAt' | 'lastError'>>;
 type ClearableRunField = 'completedAt' | 'lastError';
 
+class ControlDeadlineExceededError extends Error {}
+
 function isTerminal(status: RunStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
 }
@@ -267,10 +270,72 @@ function requiredSecrets(secrets: TargetSecrets, references: SecretReferences): 
   return SECRET_FIELDS.filter((field) => Boolean(secrets[field] || references[field]));
 }
 
+const PROVIDER_CREDENTIAL_FIELDS = [
+  'apiKey',
+  'authToken',
+  'awsAccessKeyId',
+  'awsSecretAccessKey',
+  'awsSessionToken',
+] as const;
+
+function providerCredentialValues(providerConfig: ProviderConfig | undefined): string[] {
+  if (!providerConfig) return [];
+  return PROVIDER_CREDENTIAL_FIELDS.map((field) => providerConfig[field]).filter(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  );
+}
+
+function withoutProviderCredentials(providerConfig: ProviderConfig | undefined): ProviderConfig | undefined {
+  if (!providerConfig) return undefined;
+  const safe = Object.fromEntries(
+    Object.entries(providerConfig).filter(
+      ([key]) => !(PROVIDER_CREDENTIAL_FIELDS as readonly string[]).includes(key),
+    ),
+  );
+  return Object.keys(safe).length > 0 ? (safe as ProviderConfig) : undefined;
+}
+
+function sameProviderConfig(left: ProviderConfig, right: ProviderConfig): boolean {
+  return JSON.stringify(sortJsonValue(left)) === JSON.stringify(sortJsonValue(right));
+}
+
+function mergeAttemptProviderConfig(
+  snapshotProviderConfig: ProviderConfig | undefined,
+  runtimeProviderConfig: ProviderConfig | undefined,
+): ProviderConfig | undefined {
+  if (!snapshotProviderConfig && !runtimeProviderConfig) return undefined;
+  const safeRuntime = withoutProviderCredentials(runtimeProviderConfig);
+  if (snapshotProviderConfig && safeRuntime && !sameProviderConfig(snapshotProviderConfig, safeRuntime)) {
+    throw new Error('Provider configuration cannot be changed during resume');
+  }
+  const credentials = Object.fromEntries(
+    Object.entries(runtimeProviderConfig ?? {}).filter(([key]) =>
+      (PROVIDER_CREDENTIAL_FIELDS as readonly string[]).includes(key),
+    ),
+  );
+  return {
+    ...(snapshotProviderConfig ?? safeRuntime),
+    ...credentials,
+  } as ProviderConfig;
+}
+
+function requireProviderCredentials(providerConfig: ProviderConfig | undefined): void {
+  if (!providerConfig) return;
+  if (
+    !providerConfig.apiKey &&
+    !providerConfig.authToken &&
+    !(providerConfig.awsAccessKeyId && providerConfig.awsSecretAccessKey)
+  ) {
+    throw new Error('Provider credentials must be supplied again for this model selection');
+  }
+}
+
 function createRunSnapshot(spec: RunLaunchSpec): RunSnapshot {
   const { secrets = {}, secretRefs = {}, workspace: _workspace, ...safe } = spec;
+  const providerConfig = withoutProviderCredentials(spec.providerConfig);
   return RunSnapshotSchema.parse({
     ...safe,
+    ...(providerConfig && { providerConfig }),
     secretRefs,
     requiredSecretFields: requiredSecrets(secrets, secretRefs),
   });
@@ -379,6 +444,29 @@ function candidateText(value: unknown, fallback: string, maxLength = 500): strin
 
 function labelsMatch(container: ContainerState, attempt: RunAttempt): boolean {
   return Object.entries(attempt.dockerLabels).every(([key, value]) => container.labels[key] === value);
+}
+
+function callBeforeDeadline<T>(deadline: number, operation: (timeoutMs: number) => Promise<T>): Promise<T> {
+  const timeoutMs = Math.max(1, deadline - Date.now());
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(
+      () => finish(() => reject(new ControlDeadlineExceededError('Temporal control call exceeded its deadline'))),
+      timeoutMs,
+    );
+    Promise.resolve()
+      .then(() => operation(timeoutMs))
+      .then(
+        (value) => finish(() => resolve(value)),
+        (error: unknown) => finish(() => reject(error)),
+      );
+  });
 }
 
 async function waitForSpawn(process: SpawnProcess): Promise<void> {
@@ -565,7 +653,8 @@ export class ScanController {
       throw new Error(`Target secrets must be supplied again: ${missingReferences.join(', ')}`);
     }
 
-    this.credentialLoader();
+    requireProviderCredentials(parsed.providerConfig);
+    if (!parsed.providerConfig) this.credentialLoader();
     const repoPath = parsed.repoPath ? await this.resolveRepository(parsed.repoPath) : undefined;
     const normalized = RunLaunchSpecSchema.parse({
       ...parsed,
@@ -608,7 +697,7 @@ export class ScanController {
         });
         throw new Error(message);
       }
-      return this.launchAttempt(run, effectiveSecrets);
+      return this.launchAttempt(run, effectiveSecrets, normalized.providerConfig);
     });
   }
 
@@ -625,21 +714,29 @@ export class ScanController {
       }
 
       const deadline = Date.now() + this.cancelGraceMs;
+      let cancellationTimedOut = false;
       try {
-        await this.temporal.cancelWorkflow(attempt.workflowId, Math.max(1, deadline - Date.now()));
-      } catch {
+        await callBeforeDeadline(deadline, (timeoutMs) => this.temporal.cancelWorkflow(attempt.workflowId, timeoutMs));
+      } catch (error) {
+        cancellationTimedOut = error instanceof ControlDeadlineExceededError;
         // The labeled worker is the cancellation fallback when Temporal is unavailable.
       }
 
       let workflow: TemporalWorkflowState | null = null;
-      try {
-        workflow = await this.temporal.getWorkflow(attempt.workflowId, Math.max(1, deadline - Date.now()));
-        while (workflow?.status === 'running' && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
-          workflow = await this.temporal.getWorkflow(attempt.workflowId, Math.max(1, deadline - Date.now()));
+      if (!cancellationTimedOut) {
+        try {
+          workflow = await callBeforeDeadline(deadline, (timeoutMs) =>
+            this.temporal.getWorkflow(attempt.workflowId, timeoutMs),
+          );
+          while (workflow?.status === 'running' && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
+            workflow = await callBeforeDeadline(deadline, (timeoutMs) =>
+              this.temporal.getWorkflow(attempt.workflowId, timeoutMs),
+            );
+          }
+        } catch {
+          workflow = null;
         }
-      } catch {
-        workflow = null;
       }
 
       if (workflow && workflow.status !== 'running') {
@@ -655,7 +752,11 @@ export class ScanController {
     });
   }
 
-  async resumeRun(runId: string, suppliedSecrets: TargetSecrets = {}): Promise<ManagedRunRecord> {
+  async resumeRun(
+    runId: string,
+    suppliedSecrets: TargetSecrets = {},
+    suppliedProviderConfig?: ProviderConfig,
+  ): Promise<ManagedRunRecord> {
     return this.withMutation(runId, async () => {
       let run = await this.requireManagedRun(runId);
       if (run.status !== 'failed' && run.status !== 'cancelled') {
@@ -675,10 +776,12 @@ export class ScanController {
         }
       }
 
-      this.credentialLoader();
+      const providerConfig = mergeAttemptProviderConfig(run.snapshot.providerConfig, suppliedProviderConfig);
+      requireProviderCredentials(providerConfig);
+      if (!providerConfig) this.credentialLoader();
       await this.runtime.prepare(this.version);
       run = await this.updateRun(run, { status: 'pending' }, ['completedAt', 'lastError']);
-      return this.launchAttempt(run, secrets);
+      return this.launchAttempt(run, secrets, providerConfig);
     });
   }
 
@@ -814,7 +917,11 @@ export class ScanController {
     return filePath;
   }
 
-  private async launchAttempt(run: ManagedRunRecord, secrets: TargetSecrets): Promise<ManagedRunRecord> {
+  private async launchAttempt(
+    run: ManagedRunRecord,
+    secrets: TargetSecrets,
+    runtimeProviderConfig?: ProviderConfig,
+  ): Promise<ManagedRunRecord> {
     this.assertSnapshotIntegrity(run);
     const attemptNumber = run.attempts.length + 1;
     const suffix = this.suffix();
@@ -850,13 +957,14 @@ export class ScanController {
       const config = workerConfig(run.snapshot.config, secrets);
       const configPath = hasWorkerConfig(config) ? await this.materializeConfig(run.runId, config) : undefined;
       const containerConfigPath = configPath ? `/app/configs/${run.runId}.yaml` : undefined;
-      const providerCredentialFiles = resolveProviderCredentialFiles();
+      const providerConfig = mergeAttemptProviderConfig(run.snapshot.providerConfig, runtimeProviderConfig);
+      const providerCredentialFiles = providerConfig ? [] : resolveProviderCredentialFiles();
 
       const started = await this.temporal.startWorkflow(
         {
           workflowId,
           taskQueue,
-          input: this.temporalInput(run, attemptNumber, workflowId, containerRoot, containerConfigPath),
+          input: this.temporalInput(run, attemptNumber, workflowId, containerRoot, containerConfigPath, providerConfig),
         },
         CONTROL_CALL_TIMEOUT_MS,
       );
@@ -875,7 +983,7 @@ export class ScanController {
         taskQueue,
         workflowId,
         containerName,
-        envFlags: buildEnvFlags(),
+        envFlags: buildEnvFlags({ includeProvider: !providerConfig }),
         ...(providerCredentialFiles.length > 0 && { providerCredentialFiles }),
         workspace: run.runId,
         workingDirectory: containerRoot,
@@ -900,7 +1008,10 @@ export class ScanController {
         // The workflow may not have been created or Temporal may be unavailable.
       }
       await this.stopExpectedContainer(attempt);
-      const message = safeErrorMessage(error, new SecretRedactor(Object.values(secrets)));
+      const message = safeErrorMessage(
+        error,
+        new SecretRedactor([...Object.values(secrets), ...providerCredentialValues(runtimeProviderConfig)]),
+      );
       const failed = await this.updateRun(run, {
         status: 'failed',
         completedAt: this.now().toISOString(),
@@ -923,6 +1034,7 @@ export class ScanController {
     workflowId: string,
     containerRoot: string,
     configPath: string | undefined,
+    providerConfig: ProviderConfig | undefined,
   ): TemporalPipelineInput {
     const pipeline = run.snapshot.config.pipeline;
     return {
@@ -931,6 +1043,7 @@ export class ScanController {
       workingDirectory: containerRoot,
       ...(run.snapshot.sourceMode === 'source-assisted' && { repoPath: containerRoot }),
       ...(configPath && { configPath }),
+      ...(providerConfig && { providerConfig }),
       workflowId,
       sessionId: run.runId,
       ...(attemptNumber > 1 && { resumeFromWorkspace: run.runId }),

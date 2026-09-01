@@ -107,6 +107,106 @@ describe('managed run launch', () => {
     }
   });
 
+  it('passes run-scoped provider config to the worker without persisting provider credentials', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller, temporal } = testController(workspacesDir);
+    const providerApiKey = 'sk-or-v1-runtime-only-provider-key';
+    const run = await controller.startRun({
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      workspace: 'provider-run',
+      config: {},
+      providerConfig: {
+        providerType: 'openai',
+        model: '~anthropic/claude-sonnet-latest',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        openAIFormat: 'chat-completions',
+        apiKey: providerApiKey,
+      },
+    });
+
+    expect(run.snapshot.providerConfig).toEqual({
+      providerType: 'openai',
+      model: '~anthropic/claude-sonnet-latest',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      openAIFormat: 'chat-completions',
+    });
+    expect(temporal.starts[0]?.input.providerConfig).toMatchObject({
+      providerType: 'openai',
+      model: '~anthropic/claude-sonnet-latest',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      openAIFormat: 'chat-completions',
+      apiKey: providerApiKey,
+    });
+
+    const persisted = await fs.readFile(path.join(workspacesDir, 'provider-run', '.shannon', 'run.json'), 'utf8');
+    expect(persisted).toContain('~anthropic/claude-sonnet-latest');
+    expect(persisted).not.toContain(providerApiKey);
+  });
+
+  it('does not persist run-scoped AWS provider credentials', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller, temporal } = testController(workspacesDir);
+    const run = await controller.startRun({
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      workspace: 'provider-aws-run',
+      config: {},
+      providerConfig: {
+        providerType: 'amazon-bedrock',
+        model: 'us.anthropic.claude-sonnet-4-6',
+        awsRegion: 'us-east-1',
+        awsAccessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+        awsSecretAccessKey: 'aws-secret-provider-key',
+        awsSessionToken: 'aws-session-provider-token',
+      },
+    });
+
+    expect(run.snapshot.providerConfig).toEqual({
+      providerType: 'amazon-bedrock',
+      model: 'us.anthropic.claude-sonnet-4-6',
+      awsRegion: 'us-east-1',
+    });
+    expect(temporal.starts[0]?.input.providerConfig).toMatchObject({
+      awsAccessKeyId: 'AKIAIOSFODNN7EXAMPLE',
+      awsSecretAccessKey: 'aws-secret-provider-key',
+      awsSessionToken: 'aws-session-provider-token',
+    });
+
+    const persisted = await fs.readFile(path.join(workspacesDir, 'provider-aws-run', '.shannon', 'run.json'), 'utf8');
+    expect(persisted).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(persisted).not.toContain('aws-secret-provider-key');
+    expect(persisted).not.toContain('aws-session-provider-token');
+  });
+
+  it('does not inspect ambient provider env when a run-scoped provider config is supplied', async () => {
+    const previous = process.env.SHANNON_AI_MODEL;
+    process.env.SHANNON_AI_MODEL = 'malformed-model-spec';
+    try {
+      const workspacesDir = await temporaryDirectory();
+      const { controller, runtime } = testController(workspacesDir);
+      await expect(
+        controller.startRun({
+          targetUrl: 'https://target.test',
+          sourceMode: 'url-only',
+          workspace: 'provider-env-isolated-run',
+          config: {},
+          providerConfig: {
+            providerType: 'openai',
+            model: 'openrouter/model',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            openAIFormat: 'chat-completions',
+            apiKey: 'sk-or-v1-runtime-only-provider-key',
+          },
+        }),
+      ).resolves.toMatchObject({ runId: 'provider-env-isolated-run' });
+      expect(runtime.launches[0]?.envFlags).toEqual(['-e', 'TEMPORAL_ADDRESS=shannon-temporal:7233']);
+    } finally {
+      if (previous === undefined) delete process.env.SHANNON_AI_MODEL;
+      else process.env.SHANNON_AI_MODEL = previous;
+    }
+  });
+
   it('starts source-assisted mode with a read-only repository and rejects URL credentials', async () => {
     const root = await temporaryDirectory();
     const repo = path.join(root, 'repository');
@@ -219,6 +319,43 @@ describe('resume and cancellation', () => {
     );
   });
 
+  it('resumes run-scoped provider configs with runtime-only credentials', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller, temporal } = testController(workspacesDir);
+    const started = await controller.startRun({
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      workspace: 'provider-resume-run',
+      config: {},
+      providerConfig: {
+        providerType: 'openai',
+        model: '~anthropic/claude-sonnet-latest',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        openAIFormat: 'chat-completions',
+        apiKey: 'sk-or-v1-first-provider-key',
+      },
+    });
+    await controller.cancelRun(started.runId);
+
+    const resumed = await controller.resumeRun(started.runId, {}, {
+      model: '~anthropic/claude-sonnet-latest',
+      openAIFormat: 'chat-completions',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      providerType: 'openai',
+      apiKey: 'sk-or-v1-resume-provider-key',
+    });
+
+    expect(resumed.attempts).toHaveLength(2);
+    expect(temporal.starts[1]?.input.providerConfig).toMatchObject({
+      providerType: 'openai',
+      model: '~anthropic/claude-sonnet-latest',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      openAIFormat: 'chat-completions',
+      apiKey: 'sk-or-v1-resume-provider-key',
+    });
+    expect(JSON.stringify(resumed.snapshot)).not.toContain('sk-or-v1');
+  });
+
   it('requires re-entry when a required secret reference cannot be resolved', async () => {
     const workspacesDir = await temporaryDirectory();
     const { controller } = testController(workspacesDir);
@@ -265,6 +402,28 @@ describe('resume and cancellation', () => {
 
     const cancelled = await controller.cancelRun(started.runId);
     expect(cancelled.status).toBe('cancelled');
+    expect(runtime.stopped).toEqual([started.attempts[0]?.containerName]);
+  });
+
+  it('enforces the cancellation deadline when the Temporal gateway never responds', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const temporal = new FakeTemporal();
+    const { controller, runtime } = testController(workspacesDir, { temporal, cancelGraceMs: 10 });
+    const started = await controller.startRun({
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      workspace: 'unresponsive-cancel',
+      config: {},
+    });
+    temporal.cancelNeverResponds = true;
+
+    const outcome = await Promise.race([
+      controller.cancelRun(started.runId),
+      new Promise<'test-timeout'>((resolve) => setTimeout(() => resolve('test-timeout'), 100)),
+    ]);
+
+    expect(outcome).not.toBe('test-timeout');
+    expect(outcome).toMatchObject({ status: 'cancelled' });
     expect(runtime.stopped).toEqual([started.attempts[0]?.containerName]);
   });
 
