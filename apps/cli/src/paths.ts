@@ -14,6 +14,20 @@ export interface MountPair {
   containerPath: string;
 }
 
+/** Hidden internal state directory inside each workspace. */
+export const INTERNAL_DIR = '.shannon';
+
+/** Human-facing report name used by newer workspace layouts. */
+export const FINAL_REPORT_FILENAME = 'Security-Assessment-Report.md';
+
+/** Resolve an internal file while retaining read compatibility with flat legacy workspaces. */
+export function resolveRunFile(workspacePath: string, filename: string): string {
+  const current = path.join(workspacePath, INTERNAL_DIR, filename);
+  if (fs.existsSync(current)) return current;
+  const legacy = path.join(workspacePath, filename);
+  return fs.existsSync(legacy) ? legacy : current;
+}
+
 /**
  * Resolve --repo to absolute path and container mount.
  * Dev mode: bare names (no / or . prefix) check ./repos/<name> first.

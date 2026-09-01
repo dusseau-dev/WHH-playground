@@ -1,179 +1,90 @@
-/**
- * `shn setup` — interactive TUI wizard for one-time credential configuration.
- *
- * Walks the user through selecting a provider and entering credentials,
- * then persists everything to ~/.shannon/config.toml with 0o600 permissions.
- */
+/** Interactive one-model provider configuration for ~/.shannon/config.toml. */
 
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as p from '@clack/prompts';
 import { type ShannonConfig, saveConfig } from '../config/writer.js';
 
 const SHANNON_HOME = path.join(os.homedir(), '.shannon');
+const CURATED_PROVIDERS = ['anthropic', 'openai', 'xai', 'amazon-bedrock'] as const;
+type CuratedProvider = (typeof CURATED_PROVIDERS)[number];
+type OpenAiFormat = 'chat-completions' | 'responses';
 
-type Provider = 'anthropic' | 'custom_base_url' | 'bedrock' | 'vertex';
+const CUSTOM_MODEL = '__custom_model__';
+const CUSTOM_GATEWAY = '__custom_gateway__';
+const GENERIC_PROVIDER = '__generic_provider__';
+
+const MODEL_SUGGESTIONS: Readonly<Record<CuratedProvider, readonly string[]>> = {
+  anthropic: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-haiku-4-5-20251001'],
+  openai: ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4'],
+  xai: ['grok-4.5'],
+  'amazon-bedrock': ['us.anthropic.claude-sonnet-4-6', 'us.anthropic.claude-opus-4-8', 'us.anthropic.claude-opus-4-7'],
+};
+
+const MODEL_PLACEHOLDER: Readonly<Record<CuratedProvider, string>> = {
+  anthropic: 'claude-sonnet-4-6',
+  openai: 'gpt-5.6-sol',
+  xai: 'grok-4.5',
+  'amazon-bedrock': 'us.anthropic.claude-opus-4-8',
+};
+
+interface Selection {
+  provider: string;
+  config: ShannonConfig;
+  gateway?: { baseUrl: string; format?: OpenAiFormat };
+}
 
 export async function setup(): Promise<void> {
   p.intro('Shannon Setup');
 
-  // 1. Select provider
-  const provider = await p.select({
+  const selected = await p.select({
     message: 'Select your AI provider',
     options: [
-      { value: 'anthropic' as const, label: 'Claude Direct', hint: 'recommended' },
-      { value: 'custom_base_url' as const, label: 'Custom Base URL', hint: 'proxies, gateways' },
-      { value: 'bedrock' as const, label: 'Claude via AWS Bedrock' },
-      { value: 'vertex' as const, label: 'Claude via Google Vertex AI' },
+      { value: 'anthropic' as const, label: 'Anthropic', hint: 'Claude models - recommended' },
+      { value: 'openai' as const, label: 'OpenAI', hint: 'GPT models' },
+      { value: 'xai' as const, label: 'xAI', hint: 'Grok models' },
+      { value: 'amazon-bedrock' as const, label: 'AWS Bedrock', hint: 'Claude models via AWS' },
+      { value: CUSTOM_GATEWAY, label: 'Custom Base URL', hint: 'your own proxy or gateway' },
+      { value: GENERIC_PROVIDER, label: 'Other provider', hint: 'any other supported provider' },
     ],
   });
-  if (p.isCancel(provider)) return cancelAndExit();
+  if (p.isCancel(selected)) return cancelAndExit();
 
-  const config = await setupProvider(provider as Provider);
+  const selection = await setupSelection(selected as CuratedProvider | typeof CUSTOM_GATEWAY | typeof GENERIC_PROVIDER);
+  const modelId = await promptModel(selection.provider);
+  selection.config.core = {
+    model: `${selection.provider}:${modelId}`,
+    ...(selection.gateway && { base_url: selection.gateway.baseUrl }),
+  };
+  saveConfig(selection.config);
 
-  // 2. Adaptive thinking
-  await maybePromptAdaptiveThinking(config);
-
-  // 3. Save config
-  saveConfig(config);
-
-  const configPath = path.join(SHANNON_HOME, 'config.toml');
-  p.log.success(`Configuration saved to ${configPath}`);
+  const summary = [`Provider   ${selection.provider}`, `Model      ${modelId}`];
+  if (selection.gateway) summary.push(`Endpoint   ${selection.gateway.baseUrl}`);
+  if (selection.gateway?.format) summary.push(`API        ${selection.gateway.format}`);
+  p.log.success(`Configuration saved to ${path.join(SHANNON_HOME, 'config.toml')}`);
+  p.log.info(summary.join('\n'));
   p.outro('Run `npx @keygraph/shannon start` to begin a scan.');
 }
 
-async function setupProvider(provider: Provider): Promise<ShannonConfig> {
+async function setupSelection(
+  selected: CuratedProvider | typeof CUSTOM_GATEWAY | typeof GENERIC_PROVIDER,
+): Promise<Selection> {
+  if (selected === CUSTOM_GATEWAY) return setupGateway();
+  if (selected === GENERIC_PROVIDER) return setupGenericProvider();
+  return { provider: selected, config: await setupProvider(selected) };
+}
+
+async function setupProvider(provider: CuratedProvider): Promise<ShannonConfig> {
   switch (provider) {
     case 'anthropic':
-      return setupAnthropic();
-    case 'custom_base_url':
-      return setupCustomBaseUrl();
-    case 'bedrock':
+      return { anthropic: { api_key: await promptSecret('Enter your Anthropic API key') } };
+    case 'openai':
+      return { openai: { api_key: await promptSecret('Enter your OpenAI API key') } };
+    case 'xai':
+      return { xai: { api_key: await promptSecret('Enter your xAI API key') } };
+    case 'amazon-bedrock':
       return setupBedrock();
-    case 'vertex':
-      return setupVertex();
   }
-}
-
-// === Provider Setup Flows ===
-
-async function setupAnthropic(): Promise<ShannonConfig> {
-  const authMethod = await p.select({
-    message: 'Authentication method',
-    options: [
-      { value: 'api_key' as const, label: 'API Key' },
-      { value: 'oauth' as const, label: 'OAuth Token' },
-    ],
-  });
-  if (p.isCancel(authMethod)) return cancelAndExit();
-
-  const config: ShannonConfig = {};
-
-  if (authMethod === 'oauth') {
-    const token = await promptSecret('Enter your OAuth token');
-    config.anthropic = { oauth_token: token };
-  } else {
-    const apiKey = await promptSecret('Enter your Anthropic API key');
-    config.anthropic = { api_key: apiKey };
-  }
-
-  const customizeModels = await p.confirm({
-    message:
-      'Do you want to change the default models?\n' +
-      '    Small  - claude-haiku-4-5-20251001\n' +
-      '    Medium - claude-sonnet-4-6\n' +
-      '    Large  - claude-opus-4-7',
-    initialValue: false,
-  });
-  if (p.isCancel(customizeModels)) return cancelAndExit();
-
-  if (customizeModels) {
-    const small = await p.text({
-      message: 'Small model ID',
-      initialValue: 'claude-haiku-4-5-20251001',
-      validate: required('Small model ID is required'),
-    });
-    if (p.isCancel(small)) return cancelAndExit();
-
-    const medium = await p.text({
-      message: 'Medium model ID',
-      initialValue: 'claude-sonnet-4-6',
-      validate: required('Medium model ID is required'),
-    });
-    if (p.isCancel(medium)) return cancelAndExit();
-
-    const large = await p.text({
-      message: 'Large model ID',
-      initialValue: 'claude-opus-4-7',
-      validate: required('Large model ID is required'),
-    });
-    if (p.isCancel(large)) return cancelAndExit();
-
-    config.models = { small, medium, large };
-  }
-
-  return config;
-}
-
-async function setupCustomBaseUrl(): Promise<ShannonConfig> {
-  const baseUrl = await p.text({
-    message: 'Endpoint URL',
-    placeholder: 'https://your-proxy.example.com',
-    validate: (value) => {
-      if (!value) return 'Endpoint URL is required';
-      try {
-        new URL(value);
-      } catch {
-        return 'Must be a valid URL';
-      }
-      return undefined;
-    },
-  });
-  if (p.isCancel(baseUrl)) return cancelAndExit();
-
-  const authToken = await promptSecret('Enter the auth token for the custom endpoint');
-
-  const config: ShannonConfig = {
-    custom_base_url: { base_url: baseUrl, auth_token: authToken },
-  };
-
-  const customizeModels = await p.confirm({
-    message:
-      'Do you want to change the default models?\n' +
-      '    Small  - claude-haiku-4-5-20251001\n' +
-      '    Medium - claude-sonnet-4-6\n' +
-      '    Large  - claude-opus-4-7',
-    initialValue: false,
-  });
-  if (p.isCancel(customizeModels)) return cancelAndExit();
-
-  if (customizeModels) {
-    const small = await p.text({
-      message: 'Small model ID',
-      initialValue: 'claude-haiku-4-5-20251001',
-      validate: required('Small model ID is required'),
-    });
-    if (p.isCancel(small)) return cancelAndExit();
-
-    const medium = await p.text({
-      message: 'Medium model ID',
-      initialValue: 'claude-sonnet-4-6',
-      validate: required('Medium model ID is required'),
-    });
-    if (p.isCancel(medium)) return cancelAndExit();
-
-    const large = await p.text({
-      message: 'Large model ID',
-      initialValue: 'claude-opus-4-7',
-      validate: required('Large model ID is required'),
-    });
-    if (p.isCancel(large)) return cancelAndExit();
-
-    config.models = { small, medium, large };
-  }
-
-  return config;
 }
 
 async function setupBedrock(): Promise<ShannonConfig> {
@@ -183,119 +94,102 @@ async function setupBedrock(): Promise<ShannonConfig> {
     validate: required('AWS Region is required'),
   });
   if (p.isCancel(region)) return cancelAndExit();
-
   const token = await promptSecret('Enter your AWS Bearer Token');
-
-  const small = await p.text({
-    message: 'Small model ID',
-    placeholder: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-    validate: required('Small model ID is required'),
-  });
-  if (p.isCancel(small)) return cancelAndExit();
-
-  const medium = await p.text({
-    message: 'Medium model ID',
-    placeholder: 'us.anthropic.claude-sonnet-4-6',
-    validate: required('Medium model ID is required'),
-  });
-  if (p.isCancel(medium)) return cancelAndExit();
-
-  const large = await p.text({
-    message: 'Large model ID',
-    placeholder: 'us.anthropic.claude-opus-4-7',
-    validate: required('Large model ID is required'),
-  });
-  if (p.isCancel(large)) return cancelAndExit();
-
-  return {
-    bedrock: { use: true, region, token },
-    models: { small, medium, large },
-  };
+  return { bedrock: { region, token } };
 }
 
-async function setupVertex(): Promise<ShannonConfig> {
-  // 1. Collect region and project ID
-  const region = await p.text({
-    message: 'Google Cloud region',
-    placeholder: 'us-east5',
-    validate: required('Region is required'),
-  });
-  if (p.isCancel(region)) return cancelAndExit();
-
-  const projectId = await p.text({
-    message: 'GCP Project ID',
-    validate: required('Project ID is required'),
-  });
-  if (p.isCancel(projectId)) return cancelAndExit();
-
-  // 2. File picker for service account key
-  p.log.info('Select the path to your GCP Service Account JSON key file.');
-  const keySourcePath = await p.path({
-    message: 'Service Account JSON key file',
+async function setupGenericProvider(): Promise<Selection> {
+  const provider = await p.text({
+    message: 'Provider ID',
     validate: (value) => {
-      if (!value) return 'Path is required';
-      if (!fs.existsSync(value)) return 'File not found';
-      if (!value.endsWith('.json')) return 'Must be a .json file';
+      const id = value?.trim();
+      if (!id) return 'Provider ID is required';
+      if ((CURATED_PROVIDERS as readonly string[]).includes(id)) return `${id} has its own option.`;
+      if (id === 'vertex') return 'Vertex AI is no longer supported. Choose another provider or a custom gateway.';
       return undefined;
     },
   });
-  if (p.isCancel(keySourcePath)) return cancelAndExit();
+  if (p.isCancel(provider)) return cancelAndExit();
+  const apiKey = await promptSecret('Enter the API key');
+  return { provider: provider.trim(), config: { provider: { api_key: apiKey } } };
+}
 
-  // 3. Copy key to ~/.shannon/ and lock permissions
-  const destPath = path.join(SHANNON_HOME, 'google-sa-key.json');
-  fs.mkdirSync(SHANNON_HOME, { recursive: true });
-  fs.copyFileSync(keySourcePath, destPath);
-  fs.chmodSync(destPath, 0o600);
-  p.log.success(`Key copied to ${destPath} (permissions: 0600)`);
-
-  // 4. Model tiers
-  const models = await p.group({
-    small: () =>
-      p.text({
-        message: 'Small model ID',
-        placeholder: 'claude-haiku-4-5@20251001',
-        validate: required('Small model ID is required'),
-      }),
-    medium: () =>
-      p.text({
-        message: 'Medium model ID',
-        placeholder: 'claude-sonnet-4-6',
-        validate: required('Medium model ID is required'),
-      }),
-    large: () =>
-      p.text({
-        message: 'Large model ID',
-        placeholder: 'claude-opus-4-7',
-        validate: required('Large model ID is required'),
-      }),
+async function setupGateway(): Promise<Selection> {
+  const format = await p.select({
+    message: 'API format',
+    options: [
+      { value: 'anthropic' as const, label: 'Anthropic Messages' },
+      { value: 'chat-completions' as const, label: 'OpenAI Chat Completions' },
+      { value: 'responses' as const, label: 'OpenAI Responses' },
+    ],
   });
-  if (p.isCancel(models)) return cancelAndExit();
+  if (p.isCancel(format)) return cancelAndExit();
 
-  return {
-    vertex: {
-      use: true,
-      region,
-      project_id: projectId,
-      key_path: destPath,
+  const baseUrl = await p.text({
+    message: 'Endpoint URL',
+    placeholder: 'https://llm-gateway.example.com',
+    validate: (value) => {
+      if (!value) return 'Endpoint URL is required';
+      try {
+        new URL(value);
+        return undefined;
+      } catch {
+        return 'Must be a valid URL';
+      }
     },
-    models: { small: models.small, medium: models.medium, large: models.large },
+  });
+  if (p.isCancel(baseUrl)) return cancelAndExit();
+  const apiKey = await promptSecret('Enter the API key for the endpoint');
+
+  if (format === 'anthropic') {
+    return {
+      provider: 'anthropic',
+      config: { anthropic: { api_key: apiKey } },
+      gateway: { baseUrl },
+    };
+  }
+  return {
+    provider: 'openai',
+    config: { openai: { api_key: apiKey, format } },
+    gateway: { baseUrl, format },
   };
 }
 
-// === Helpers ===
+async function promptModel(provider: string): Promise<string> {
+  const curated = (CURATED_PROVIDERS as readonly string[]).includes(provider)
+    ? (provider as CuratedProvider)
+    : undefined;
+  if (!curated) return promptModelId(provider);
 
-async function maybePromptAdaptiveThinking(config: ShannonConfig): Promise<void> {
-  const m = config.models;
-  const hasOpus47 = !m || [m.small, m.medium, m.large].some((v) => v && /opus-4-[67]/.test(v));
-  if (!hasOpus47) return;
-
-  const enable = await p.confirm({
-    message: 'Enable adaptive thinking on Opus 4.6/4.7? Claude decides when and how deeply to reason.',
-    initialValue: true,
+  const choice = await p.select({
+    message: 'Model',
+    options: [
+      ...MODEL_SUGGESTIONS[curated].map((model) => ({ value: model, label: model })),
+      { value: CUSTOM_MODEL, label: 'Enter a model ID…' },
+    ],
   });
-  if (p.isCancel(enable)) return cancelAndExit();
+  if (p.isCancel(choice)) return cancelAndExit();
+  return choice === CUSTOM_MODEL ? promptModelId(provider, MODEL_PLACEHOLDER[curated]) : (choice as string);
+}
 
-  config.core = { ...config.core, adaptive_thinking: enable };
+async function promptModelId(provider: string, placeholder?: string): Promise<string> {
+  const value = await p.text({
+    message: 'Model ID',
+    ...(placeholder && { placeholder }),
+    validate: (candidate) => {
+      if (!candidate) return 'Model ID is required';
+      const separator = candidate.indexOf(':');
+      if (separator > 0) {
+        const prefix = candidate.slice(0, separator);
+        if (prefix !== provider && (CURATED_PROVIDERS as readonly string[]).includes(prefix)) {
+          return `That model ID is for ${prefix}, but you selected ${provider}.`;
+        }
+      }
+      return undefined;
+    },
+  });
+  if (p.isCancel(value)) return cancelAndExit();
+  return value.startsWith(`${provider}:`) ? value.slice(provider.length + 1) : value;
 }
 
 async function promptSecret(message: string): Promise<string> {
@@ -308,10 +202,7 @@ async function promptSecret(message: string): Promise<string> {
 }
 
 function required(errorMessage: string): (value: string | undefined) => string | undefined {
-  return (value) => {
-    if (!value) return errorMessage;
-    return undefined;
-  };
+  return (value) => (value ? undefined : errorMessage);
 }
 
 function cancelAndExit(): never {

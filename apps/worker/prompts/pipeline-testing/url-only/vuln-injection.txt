@@ -1,0 +1,8 @@
+@include(shared/_filesystem.txt)
+
+Run:
+save-deliverable --type INJECTION_ANALYSIS --content '# Injection Analysis
+
+Dynamic pipeline test complete; no candidates.'
+Then return structured output {"vulnerabilities":[]}.
+Your final action must be one call to submit_exploitation_queue.

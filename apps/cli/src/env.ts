@@ -5,29 +5,97 @@
  * NPX mode: fills gaps from ~/.shannon/config.toml (no .env).
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import { resolveConfig } from './config/resolver.js';
 import { getMode } from './mode.js';
+import { resolveCliModelSelection, selectedProviderEnvNames } from './model-spec.js';
 
-/** Environment variables forwarded to worker containers. */
-const FORWARD_VARS = [
-  'ANTHROPIC_API_KEY',
-  'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_AUTH_TOKEN',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'CLAUDE_CODE_USE_BEDROCK',
-  'AWS_REGION',
-  'AWS_BEARER_TOKEN_BEDROCK',
-  'CLAUDE_CODE_USE_VERTEX',
-  'CLOUD_ML_REGION',
-  'ANTHROPIC_VERTEX_PROJECT_ID',
-  'GOOGLE_APPLICATION_CREDENTIALS',
-  'ANTHROPIC_SMALL_MODEL',
-  'ANTHROPIC_MEDIUM_MODEL',
-  'ANTHROPIC_LARGE_MODEL',
-  'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
-  'CLAUDE_ADAPTIVE_THINKING',
-] as const;
+/** Non-provider runtime tuning retained for compatibility. */
+const RUNTIME_FORWARD_VARS = ['CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_ADAPTIVE_THINKING'] as const;
+
+export interface ProviderCredentialFile {
+  readonly environmentName: 'AWS_SHARED_CREDENTIALS_FILE' | 'AWS_CONFIG_FILE' | 'AWS_WEB_IDENTITY_TOKEN_FILE';
+  readonly hostPath: string;
+  readonly containerPath: string;
+}
+
+function credentialFile(candidate: string, environmentName: ProviderCredentialFile['environmentName']): string {
+  const resolved = path.resolve(candidate);
+  let canonical: string;
+  try {
+    canonical = fs.realpathSync(resolved);
+  } catch {
+    throw new Error(`${environmentName} does not point to an existing file: ${resolved}`);
+  }
+  if (!fs.statSync(canonical).isFile()) {
+    throw new Error(`${environmentName} must point to a regular file: ${resolved}`);
+  }
+  return canonical;
+}
+
+function optionalDefaultCredentialFile(
+  hostPath: string,
+  environmentName: ProviderCredentialFile['environmentName'],
+  containerPath: string,
+): ProviderCredentialFile | undefined {
+  if (!fs.existsSync(hostPath)) return undefined;
+  return { environmentName, hostPath: credentialFile(hostPath, environmentName), containerPath };
+}
+
+/** Resolve selected Bedrock credential files to fixed read-only container paths. */
+export function resolveProviderCredentialFiles(): ProviderCredentialFile[] {
+  const selection = resolveCliModelSelection();
+  if (selection.providerId !== 'amazon-bedrock') return [];
+
+  if (selection.credentialName === 'AWS_PROFILE') {
+    const awsHome = path.join(os.homedir(), '.aws');
+    const credentialsPath = process.env.AWS_SHARED_CREDENTIALS_FILE?.trim();
+    const configPath = process.env.AWS_CONFIG_FILE?.trim();
+    const files = [
+      credentialsPath
+        ? {
+            environmentName: 'AWS_SHARED_CREDENTIALS_FILE',
+            hostPath: credentialFile(credentialsPath, 'AWS_SHARED_CREDENTIALS_FILE'),
+            containerPath: '/tmp/.aws/credentials',
+          }
+        : optionalDefaultCredentialFile(
+            path.join(awsHome, 'credentials'),
+            'AWS_SHARED_CREDENTIALS_FILE',
+            '/tmp/.aws/credentials',
+          ),
+      configPath
+        ? {
+            environmentName: 'AWS_CONFIG_FILE',
+            hostPath: credentialFile(configPath, 'AWS_CONFIG_FILE'),
+            containerPath: '/tmp/.aws/config',
+          }
+        : optionalDefaultCredentialFile(path.join(awsHome, 'config'), 'AWS_CONFIG_FILE', '/tmp/.aws/config'),
+    ].filter((file): file is ProviderCredentialFile => file !== undefined);
+    if (files.length === 0) {
+      throw new Error(
+        `AWS_PROFILE "${process.env.AWS_PROFILE}" requires a readable ~/.aws/config or ~/.aws/credentials file.`,
+      );
+    }
+    return files;
+  }
+
+  if (selection.credentialName === 'AWS_WEB_IDENTITY_TOKEN_FILE') {
+    const tokenPath = process.env.AWS_WEB_IDENTITY_TOKEN_FILE?.trim();
+    if (!tokenPath) return [];
+    return [
+      {
+        environmentName: 'AWS_WEB_IDENTITY_TOKEN_FILE',
+        hostPath: credentialFile(tokenPath, 'AWS_WEB_IDENTITY_TOKEN_FILE'),
+        containerPath: '/tmp/shannon-aws-web-identity-token',
+      },
+    ];
+  }
+
+  return [];
+}
 
 /**
  * Load credentials into process.env.
@@ -44,16 +112,14 @@ export function loadEnv(): void {
 }
 
 /**
- * Build `-e KEY=VALUE` flags for docker run, only for set variables.
+ * Build Docker environment flags using names only. Docker reads each value from
+ * its own environment, keeping credentials out of process argv and diagnostics.
  */
 export function buildEnvFlags(): string[] {
   const flags: string[] = ['-e', 'TEMPORAL_ADDRESS=shannon-temporal:7233'];
 
-  for (const key of FORWARD_VARS) {
-    const value = process.env[key];
-    if (value) {
-      flags.push('-e', `${key}=${value}`);
-    }
+  for (const key of [...selectedProviderEnvNames(), ...RUNTIME_FORWARD_VARS]) {
+    if (process.env[key]) flags.push('-e', key);
   }
 
   return flags;
@@ -62,95 +128,53 @@ export function buildEnvFlags(): string[] {
 interface CredentialValidation {
   valid: boolean;
   error?: string;
-  mode: 'api-key' | 'oauth' | 'custom-base-url' | 'bedrock' | 'vertex';
-}
-
-/** Check if a custom Anthropic-compatible base URL is configured. */
-function isCustomBaseUrlConfigured(): boolean {
-  return !!(process.env.ANTHROPIC_BASE_URL && process.env.ANTHROPIC_AUTH_TOKEN);
-}
-
-/** Detect which providers are configured via environment variables. */
-function detectProviders(): string[] {
-  const providers: string[] = [];
-  if (process.env.ANTHROPIC_API_KEY) providers.push('Anthropic API key');
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) providers.push('Anthropic OAuth');
-  if (isCustomBaseUrlConfigured()) providers.push('Custom Base URL');
-  if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') providers.push('AWS Bedrock');
-  if (process.env.CLAUDE_CODE_USE_VERTEX === '1') providers.push('Google Vertex');
-  return providers;
+  mode?: 'api-key' | 'oauth' | 'custom-base-url' | 'bedrock' | 'generic';
 }
 
 /**
- * Validate that exactly one authentication method is configured.
+ * Validate the selected provider only. Credentials for unrelated providers are
+ * ignored and are not forwarded to the worker container.
  */
 export function validateCredentials(): CredentialValidation {
-  // Reject multiple providers
-  const providers = detectProviders();
-  if (providers.length > 1) {
+  let selection: ReturnType<typeof resolveCliModelSelection>;
+  try {
+    selection = resolveCliModelSelection();
+  } catch (error) {
     return {
       valid: false,
-      mode: 'api-key',
-      error: `Multiple providers detected: ${providers.join(', ')}. Only one provider can be active at a time.`,
+      error: error instanceof Error ? error.message : String(error),
     };
   }
 
-  if (process.env.ANTHROPIC_API_KEY) {
-    return { valid: true, mode: 'api-key' };
-  }
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-    return { valid: true, mode: 'oauth' };
-  }
-  if (isCustomBaseUrlConfigured()) {
-    return { valid: true, mode: 'custom-base-url' };
-  }
-  if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') {
-    const missing: string[] = [];
-    if (!process.env.AWS_REGION) missing.push('AWS_REGION');
-    if (!process.env.AWS_BEARER_TOKEN_BEDROCK) missing.push('AWS_BEARER_TOKEN_BEDROCK');
-    if (!process.env.ANTHROPIC_SMALL_MODEL) missing.push('ANTHROPIC_SMALL_MODEL');
-    if (!process.env.ANTHROPIC_MEDIUM_MODEL) missing.push('ANTHROPIC_MEDIUM_MODEL');
-    if (!process.env.ANTHROPIC_LARGE_MODEL) missing.push('ANTHROPIC_LARGE_MODEL');
+  if (selection.providerId === 'amazon-bedrock' && selection.source === 'legacy') {
+    const missing = ['ANTHROPIC_SMALL_MODEL', 'ANTHROPIC_MEDIUM_MODEL', 'ANTHROPIC_LARGE_MODEL'].filter(
+      (name) => !process.env[name],
+    );
     if (missing.length > 0) {
-      return {
-        valid: false,
-        mode: 'bedrock',
-        error: `Bedrock mode requires: ${missing.join(', ')}`,
-      };
+      return { valid: false, mode: 'bedrock', error: `Bedrock mode requires: ${missing.join(', ')}` };
     }
-    return { valid: true, mode: 'bedrock' };
   }
-  if (process.env.CLAUDE_CODE_USE_VERTEX === '1') {
-    const missing: string[] = [];
-    if (!process.env.CLOUD_ML_REGION) missing.push('CLOUD_ML_REGION');
-    if (!process.env.ANTHROPIC_VERTEX_PROJECT_ID) missing.push('ANTHROPIC_VERTEX_PROJECT_ID');
-    if (!process.env.ANTHROPIC_SMALL_MODEL) missing.push('ANTHROPIC_SMALL_MODEL');
-    if (!process.env.ANTHROPIC_MEDIUM_MODEL) missing.push('ANTHROPIC_MEDIUM_MODEL');
-    if (!process.env.ANTHROPIC_LARGE_MODEL) missing.push('ANTHROPIC_LARGE_MODEL');
-    if (missing.length > 0) {
-      return {
-        valid: false,
-        mode: 'vertex',
-        error: `Vertex AI mode requires: ${missing.join(', ')}`,
-      };
-    }
-    if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      return {
-        valid: false,
-        mode: 'vertex',
-        error: 'Vertex AI mode requires GOOGLE_APPLICATION_CREDENTIALS',
-      };
-    }
-    return { valid: true, mode: 'vertex' };
+
+  if (selection.credentialConfigured) {
+    const mode =
+      selection.providerId === 'amazon-bedrock'
+        ? 'bedrock'
+        : selection.credentialName === 'CLAUDE_CODE_OAUTH_TOKEN'
+          ? 'oauth'
+          : selection.credentialName === 'ANTHROPIC_AUTH_TOKEN'
+            ? 'custom-base-url'
+            : selection.providerMode === 'generic'
+              ? 'generic'
+              : 'api-key';
+    return { valid: true, mode };
   }
 
   const hint =
     getMode() === 'local'
-      ? `No credentials found. Set ANTHROPIC_API_KEY in .env or export it.`
+      ? 'Set the selected provider credential or SHANNON_AI_API_KEY in .env (Bedrock accepts a bearer token or the AWS credential chain).'
       : `Authentication not configured. Export variables or run 'npx @keygraph/shannon setup'.`;
   return {
     valid: false,
-    mode: 'api-key',
-    error: hint,
+    error: `No credentials found for provider "${selection.providerId}". ${hint}`,
   };
 }

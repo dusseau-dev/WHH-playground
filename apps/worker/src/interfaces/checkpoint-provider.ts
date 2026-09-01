@@ -18,7 +18,8 @@ export interface SkipDecision {
 
 /** File-system context passed after agent completion for artifact persistence. */
 export interface CheckpointContext {
-  readonly repoPath: string;
+  readonly workingDirectory: string;
+  readonly repoPath?: string;
   readonly sessionId: string;
   readonly deliverablesSubdir: string;
   readonly outputPath?: string;
@@ -30,7 +31,7 @@ export interface CheckpointProvider {
    * Return { skip: true, metrics } to skip the agent (e.g., output files already exist).
    * Return { skip: false } to run normally.
    */
-  shouldSkipAgent(agentName: string, repoPath: string, deliverablesSubdir: string): Promise<SkipDecision>;
+  shouldSkipAgent(agentName: string, workingDirectory: string, deliverablesSubdir: string): Promise<SkipDecision>;
 
   /**
    * Called after an agent activity succeeds.

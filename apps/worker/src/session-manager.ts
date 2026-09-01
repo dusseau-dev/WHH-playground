@@ -7,6 +7,7 @@
 import { fs, path } from 'zx';
 
 import { validateQueueAndDeliverable } from './services/queue-validation.js';
+import { validateStructuredReportFiles } from './services/structured-report.js';
 import { validateTriageVerdicts } from './services/triage-validation.js';
 import type { ActivityLogger } from './types/activity-logger.js';
 import type { AgentDefinition, AgentName, AgentValidator, PlaywrightSession, VulnType } from './types/index.js';
@@ -66,35 +67,35 @@ export const AGENTS: Readonly<Record<AgentName, AgentDefinition>> = Object.freez
   },
   'injection-exploit': {
     name: 'injection-exploit',
-    displayName: 'Injection exploit agent',
+    displayName: 'Injection safe demonstration agent',
     prerequisites: ['injection-vuln'],
     promptTemplate: 'exploit-injection',
     deliverableFilename: 'injection_exploitation_evidence.md',
   },
   'xss-exploit': {
     name: 'xss-exploit',
-    displayName: 'XSS exploit agent',
+    displayName: 'XSS safe demonstration agent',
     prerequisites: ['xss-vuln'],
     promptTemplate: 'exploit-xss',
     deliverableFilename: 'xss_exploitation_evidence.md',
   },
   'auth-exploit': {
     name: 'auth-exploit',
-    displayName: 'Auth exploit agent',
+    displayName: 'Auth safe demonstration agent',
     prerequisites: ['auth-vuln'],
     promptTemplate: 'exploit-auth',
     deliverableFilename: 'auth_exploitation_evidence.md',
   },
   'ssrf-exploit': {
     name: 'ssrf-exploit',
-    displayName: 'SSRF exploit agent',
+    displayName: 'SSRF safe demonstration agent',
     prerequisites: ['ssrf-vuln'],
     promptTemplate: 'exploit-ssrf',
     deliverableFilename: 'ssrf_exploitation_evidence.md',
   },
   'authz-exploit': {
     name: 'authz-exploit',
-    displayName: 'Authz exploit agent',
+    displayName: 'Authz safe demonstration agent',
     prerequisites: ['authz-vuln'],
     promptTemplate: 'exploit-authz',
     deliverableFilename: 'authz_exploitation_evidence.md',
@@ -240,15 +241,5 @@ export const AGENT_VALIDATORS: Record<AgentName, AgentValidator> = Object.freeze
   },
 
   // Executive report agent
-  report: async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
-    const reportFile = path.join(sourceDir, 'comprehensive_security_assessment_report.md');
-
-    const reportExists = await fs.pathExists(reportFile);
-
-    if (!reportExists) {
-      logger.error('Missing required deliverable: comprehensive_security_assessment_report.md');
-    }
-
-    return reportExists;
-  },
+  report: validateStructuredReportFiles,
 });

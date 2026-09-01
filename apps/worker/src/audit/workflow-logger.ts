@@ -13,6 +13,7 @@
 
 import fs from 'node:fs/promises';
 import { formatDuration, formatTimestamp } from '../utils/formatting.js';
+import { redactLogText, redactSecrets } from '../utils/redactSecrets.js';
 import { LogStream } from './log-stream.js';
 import { generateWorkflowLogPath, type SessionMetadata } from './utils.js';
 
@@ -20,6 +21,11 @@ export interface AgentLogDetails {
   attemptNumber?: number;
   duration_ms?: number;
   cost_usd?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  num_turns?: number;
   success?: boolean;
   error?: string;
 }
@@ -27,12 +33,22 @@ export interface AgentLogDetails {
 export interface AgentMetricsSummary {
   durationMs: number;
   costUsd: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheWriteTokens: number | null;
+  numTurns: number | null;
 }
 
 export interface WorkflowSummary {
   status: 'completed' | 'failed' | 'cancelled';
   totalDurationMs: number;
   totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
+  totalTurns: number;
   completedAgents: string[];
   agentMetrics: Record<string, AgentMetricsSummary>;
   error?: string;
@@ -82,7 +98,7 @@ export class WorkflowLogger {
       `Shannon Pentest - Workflow Log`,
       `================================================================================`,
       `Workflow ID: ${this.workflowId ?? this.sessionMetadata.id}`,
-      `Target URL:  ${this.sessionMetadata.webUrl}`,
+      `Target URL:  ${redactSecrets(this.sessionMetadata.webUrl)}`,
       `Started:     ${formatTimestamp()}`,
       `================================================================================`,
       ``,
@@ -189,7 +205,7 @@ export class WorkflowLogger {
   async logEvent(eventType: string, message: string): Promise<void> {
     await this.ensureInitialized();
 
-    const line = `[${this.formatLogTime()}] [${eventType.toUpperCase()}] ${message}\n`;
+    const line = `[${this.formatLogTime()}] [${eventType.toUpperCase()}] ${redactLogText(message)}\n`;
     await this.logStream.write(line);
   }
 
@@ -199,8 +215,8 @@ export class WorkflowLogger {
   async logError(error: Error, context?: string): Promise<void> {
     await this.ensureInitialized();
 
-    const contextStr = context ? ` (${context})` : '';
-    const line = `[${this.formatLogTime()}] [ERROR] ${error.message}${contextStr}\n`;
+    const contextStr = context ? ` (${redactLogText(context)})` : '';
+    const line = `[${this.formatLogTime()}] [ERROR] ${redactLogText(error.message)}${contextStr}\n`;
     await this.logStream.write(line);
   }
 
@@ -220,7 +236,7 @@ export class WorkflowLogger {
       return '';
     }
 
-    const p = params as Record<string, unknown>;
+    const p = redactSecrets(params) as Record<string, unknown>;
 
     // Tool-specific formatting for common tools
     switch (toolName) {
@@ -291,7 +307,7 @@ export class WorkflowLogger {
     await this.ensureInitialized();
 
     // Show full content, replacing newlines with escaped version for single-line output
-    const escaped = content.replace(/\n/g, '\\n');
+    const escaped = redactSecrets(content).replace(/\n/g, '\\n');
     const line = `[${this.formatLogTime()}] [${agentName}] [LLM] Turn ${turn}: ${escaped}\n`;
     await this.logStream.write(line);
   }
@@ -329,11 +345,14 @@ export class WorkflowLogger {
       `Status:      ${summary.status}`,
       `Duration:    ${formatDuration(summary.totalDurationMs)}`,
       `Total Cost:  $${summary.totalCostUsd.toFixed(4)}`,
+      `Turns:       ${summary.totalTurns}`,
+      `Tokens:      ${summary.totalInputTokens} input, ${summary.totalOutputTokens} output`,
+      `Cache:       ${summary.totalCacheReadTokens} read, ${summary.totalCacheWriteTokens} write`,
       `Agents:      ${summary.completedAgents.length} completed`,
     ];
 
     if (summary.error) {
-      lines.push(this.formatErrorBlock(summary.error).trimEnd());
+      lines.push(this.formatErrorBlock(redactLogText(summary.error)).trimEnd());
     }
 
     lines.push('');
@@ -344,7 +363,8 @@ export class WorkflowLogger {
       if (metrics) {
         const duration = formatDuration(metrics.durationMs);
         const cost = metrics.costUsd !== null ? `$${metrics.costUsd.toFixed(4)}` : 'N/A';
-        lines.push(`  - ${agentName} (${duration}, ${cost})`);
+        const turns = metrics.numTurns !== null ? `${metrics.numTurns} turns` : 'turns N/A';
+        lines.push(`  - ${agentName} (${duration}, ${cost}, ${turns})`);
       } else {
         lines.push(`  - ${agentName}`);
       }

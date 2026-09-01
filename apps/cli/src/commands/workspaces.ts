@@ -1,35 +1,46 @@
-/**
- * `shannon workspaces` command — list all workspaces.
- */
+/** List managed runs and read-only legacy workspaces through the shared controller. */
 
-import { execFileSync } from 'node:child_process';
-import os from 'node:os';
-import { getWorkerImage } from '../docker.js';
-import { getWorkspacesDir } from '../home.js';
+import type { RunListItem } from '../contracts.js';
+import { ScanController } from '../scan-controller.js';
 
-export function workspaces(version: string): void {
-  const workspacesDir = getWorkspacesDir();
-  const image = getWorkerImage(version);
+function truncate(value: string, width: number): string {
+  return value.length <= width ? value : `${value.slice(0, Math.max(0, width - 3))}...`;
+}
 
-  try {
-    execFileSync(
-      'docker',
+function target(run: RunListItem): string {
+  return run.kind === 'managed' ? run.snapshot.targetUrl : (run.targetUrl ?? '(legacy report)');
+}
+
+function mode(run: RunListItem): string {
+  if (run.kind === 'managed') return run.snapshot.sourceMode;
+  return run.sourceMode ?? 'legacy';
+}
+
+export async function workspaces(version: string): Promise<void> {
+  const controller = new ScanController({ version });
+  const runs = await controller.initialize();
+  if (runs.length === 0) {
+    console.log('No workspaces found.');
+    return;
+  }
+
+  const columns = { run: 32, status: 12, mode: 18, target: 48 };
+  console.log(
+    [
+      'RUN'.padEnd(columns.run),
+      'STATUS'.padEnd(columns.status),
+      'MODE'.padEnd(columns.mode),
+      'TARGET'.padEnd(columns.target),
+    ].join(' '),
+  );
+  for (const run of runs) {
+    console.log(
       [
-        'run',
-        '--rm',
-        '-v',
-        `${workspacesDir}:/app/workspaces`,
-        '-e',
-        'WORKSPACES_DIR=/app/workspaces',
-        image,
-        'node',
-        'apps/worker/dist/temporal/workspaces.js',
-      ],
-      { stdio: 'inherit', ...(os.platform() === 'win32' && { env: { ...process.env, MSYS_NO_PATHCONV: '1' } }) },
+        truncate(run.runId, columns.run).padEnd(columns.run),
+        run.status.padEnd(columns.status),
+        mode(run).padEnd(columns.mode),
+        truncate(target(run), columns.target).padEnd(columns.target),
+      ].join(' '),
     );
-  } catch {
-    console.error('ERROR: Failed to list workspaces. Is the Docker image available?');
-    console.error(`  Run: docker pull ${image}`);
-    process.exit(1);
   }
 }

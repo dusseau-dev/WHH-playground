@@ -18,7 +18,7 @@
 
 /**
  * Text patterns for SDK output sniffing (what Claude says).
- * Used by message-handlers.ts and the behavioral heuristic.
+ * Used by the Pi result handler's behavioral heuristic.
  */
 export const BILLING_TEXT_PATTERNS = [
   'spending cap',

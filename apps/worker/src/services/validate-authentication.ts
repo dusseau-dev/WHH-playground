@@ -13,9 +13,10 @@
  */
 
 import { readFile, rm } from 'node:fs/promises';
-import type { JsonSchemaOutputFormat } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
-import { runClaudePrompt } from '../ai/claude-executor.js';
+import { defineTool } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
+import { type PiPromptResult, runPiPrompt } from '../ai/pi/pi-executor.js';
+import type { CapturedSubmitTool } from '../ai/submit-tool.js';
 import type { AuditSession } from '../audit/index.js';
 import { authStateFile } from '../audit/utils.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
@@ -25,6 +26,7 @@ import { ErrorCode } from '../types/errors.js';
 import { err, ok, type Result } from '../types/result.js';
 import { PentestError } from './error-handling.js';
 import { loadPrompt } from './prompt-manager.js';
+import { collectConfiguredSecrets, collectRuntimeProviderSecrets } from './redaction.js';
 
 const FAILURE_POINTS = ['username_or_password', 'totp_secret', 'out_of_band'] as const;
 type AuthFailurePoint = (typeof FAILURE_POINTS)[number];
@@ -33,32 +35,60 @@ function isAuthFailurePoint(v: unknown): v is AuthFailurePoint {
   return typeof v === 'string' && (FAILURE_POINTS as readonly string[]).includes(v);
 }
 
-// NOTE: SDK's AJV validator expects draft-07; Zod defaults to draft-2020-12,
-// which causes the SDK to silently skip structured output.
-const AuthValidationSchema = z.object({
-  login_success: z.boolean(),
-  failure_point: z.enum(FAILURE_POINTS).optional(),
-  failure_detail: z
-    .string()
-    .max(250)
-    .optional()
-    .describe(
-      'Free-form 1-2 sentence diagnostic of what the page showed (error messages, page state) when login failed. Required when login_success is false. Mask any sensitive values.',
-    ),
-});
+interface AuthValidationVerdict {
+  login_success: boolean;
+  failure_point?: AuthFailurePoint;
+  failure_detail?: string;
+}
 
-type AuthValidationVerdict = z.infer<typeof AuthValidationSchema>;
-
-const VALIDATION_SCHEMA: JsonSchemaOutputFormat = {
-  type: 'json_schema',
-  schema: z.toJSONSchema(AuthValidationSchema, { target: 'draft-07' }) as Record<string, unknown>,
-};
+export function createAuthSubmitTool(): CapturedSubmitTool {
+  let captured: AuthValidationVerdict | undefined;
+  return {
+    tool: defineTool({
+      name: 'submit_auth_result',
+      label: 'Submit Auth Result',
+      description: 'Report the login outcome. Call exactly once when the login attempt has concluded.',
+      promptSnippet: 'submit_auth_result: record the authentication validation verdict',
+      promptGuidelines: [
+        'You MUST call submit_auth_result exactly once as your final action.',
+        'Set login_success to true only after saving the authenticated browser session.',
+      ],
+      parameters: Type.Object({
+        login_success: Type.Boolean(),
+        failure_point: Type.Optional(
+          Type.Union([Type.Literal('username_or_password'), Type.Literal('totp_secret'), Type.Literal('out_of_band')]),
+        ),
+        failure_detail: Type.Optional(
+          Type.String({
+            maxLength: 250,
+            description:
+              'Free-form 1-2 sentence diagnostic of what the page showed when login failed. Mask sensitive values.',
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        captured = params as AuthValidationVerdict;
+        return {
+          content: [{ type: 'text' as const, text: 'Auth result recorded.' }],
+          details: params,
+          terminate: true,
+        };
+      },
+    }),
+    getCaptured: () => captured,
+    directive:
+      '\n\nYou MUST call the submit_auth_result tool exactly once as your final action to deliver the ' +
+      'authentication verdict. Do not output JSON as text.',
+  };
+}
 
 const AGENT_NAME = 'validate-authentication';
 
 export interface ValidateAuthInput {
   readonly distributedConfig: DistributedConfig;
-  readonly repoPath: string;
+  readonly workingDirectory: string;
+  readonly repoPath?: string;
+  readonly sourceMode: import('../types/config.js').SourceMode;
   readonly webUrl: string;
   readonly logger: ActivityLogger;
   readonly auditSession: AuditSession;
@@ -68,12 +98,15 @@ export interface ValidateAuthInput {
   readonly deliverablesSubdir?: string;
   readonly promptDir?: string;
   readonly pipelineTestingMode?: boolean;
+  readonly cancellationSignal?: AbortSignal;
 }
 
 export async function validateAuthentication(input: ValidateAuthInput): Promise<Result<void, PentestError>> {
   const {
     distributedConfig,
+    workingDirectory,
     repoPath,
+    sourceMode,
     webUrl,
     logger,
     auditSession,
@@ -83,12 +116,18 @@ export async function validateAuthentication(input: ValidateAuthInput): Promise<
     deliverablesSubdir,
     promptDir,
     pipelineTestingMode,
+    cancellationSignal,
   } = input;
 
   const authentication = distributedConfig.authentication;
   if (!authentication) {
     return ok(undefined);
   }
+
+  auditSession.setRedactionSecrets([
+    ...collectConfiguredSecrets(distributedConfig, providerConfig, apiKey),
+    ...collectRuntimeProviderSecrets(),
+  ]);
 
   logger.info('Validating authentication credentials with live browser...', {
     loginUrl: authentication.login_url,
@@ -100,30 +139,36 @@ export async function validateAuthentication(input: ValidateAuthInput): Promise<
 
   const prompt = await loadPrompt(
     AGENT_NAME,
-    { webUrl, repoPath, AUTH_STATE_FILE: stateFile },
+    {
+      webUrl,
+      workingDirectory,
+      ...(repoPath !== undefined && { repoPath }),
+      AUTH_STATE_FILE: stateFile,
+    },
     distributedConfig,
     pipelineTestingMode ?? false,
     logger,
     promptDir,
+    sourceMode,
   );
 
   await auditSession.startAgent(AGENT_NAME, prompt, attemptNumber);
   const startTime = Date.now();
 
-  const result = await runClaudePrompt(
+  cancellationSignal?.throwIfAborted();
+  const result = await runPiPrompt({
     prompt,
-    repoPath,
-    '',
-    'Authentication validation',
-    AGENT_NAME,
+    workingDirectory,
+    description: 'Authentication validation',
+    agentName: AGENT_NAME,
     auditSession,
     logger,
-    'medium',
-    VALIDATION_SCHEMA,
-    apiKey,
-    deliverablesSubdir,
-    providerConfig,
-  );
+    ...(deliverablesSubdir && { deliverablesSubdir }),
+    ...(cancellationSignal && { cancellationSignal }),
+    submitTool: createAuthSubmitTool(),
+    runtimeOptions: { modelTier: 'medium', providerConfig, apiKey },
+  });
+  cancellationSignal?.throwIfAborted();
 
   let classification = classifyResult(result, authentication);
 
@@ -138,6 +183,11 @@ export async function validateAuthentication(input: ValidateAuthInput): Promise<
     attemptNumber,
     duration_ms: Date.now() - startTime,
     cost_usd: result.cost || 0,
+    ...(result.inputTokens !== undefined && { input_tokens: result.inputTokens }),
+    ...(result.outputTokens !== undefined && { output_tokens: result.outputTokens }),
+    ...(result.cacheReadTokens !== undefined && { cache_read_tokens: result.cacheReadTokens }),
+    ...(result.cacheWriteTokens !== undefined && { cache_write_tokens: result.cacheWriteTokens }),
+    ...(result.turns !== undefined && { num_turns: result.turns }),
     success: classification.ok,
     ...(result.model !== undefined && { model: result.model }),
     ...(!classification.ok && { error: classification.error.message }),
@@ -204,7 +254,7 @@ function countStorageEntries(parsed: unknown, key: 'cookies' | 'origins'): numbe
 }
 
 function classifyResult(
-  result: import('../ai/claude-executor.js').ClaudePromptResult,
+  result: PiPromptResult,
   authentication: NonNullable<DistributedConfig['authentication']>,
 ): Result<void, PentestError> {
   if (!result.success) {

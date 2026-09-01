@@ -13,7 +13,7 @@
  * - "large"  (Opus — deep reasoning, complex analysis)
  *
  * Users override via ANTHROPIC_SMALL_MODEL / ANTHROPIC_MEDIUM_MODEL / ANTHROPIC_LARGE_MODEL,
- * which works across all providers (direct, Bedrock, Vertex).
+ * which remains readable for legacy direct and Bedrock configurations.
  */
 
 export type ModelTier = 'small' | 'medium' | 'large';

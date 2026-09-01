@@ -8,12 +8,12 @@ import { getConfigFile } from '../home.js';
 // === Types ===
 
 export interface ShannonConfig {
-  core?: { max_tokens?: number; adaptive_thinking?: boolean };
+  core?: { model?: string; base_url?: string };
   anthropic?: { api_key?: string; oauth_token?: string };
-  custom_base_url?: { base_url?: string; auth_token?: string };
-  bedrock?: { use?: boolean; region?: string; token?: string };
-  vertex?: { use?: boolean; region?: string; project_id?: string; key_path?: string };
-  models?: { small?: string; medium?: string; large?: string };
+  openai?: { api_key?: string; format?: 'chat-completions' | 'responses' };
+  xai?: { api_key?: string };
+  bedrock?: { region?: string; token?: string };
+  provider?: { api_key?: string };
 }
 
 // === File Operations ===
@@ -26,4 +26,5 @@ export function saveConfig(config: ShannonConfig): void {
 
   const content = stringify(config);
   fs.writeFileSync(configPath, content, { mode: 0o600 });
+  fs.chmodSync(configPath, 0o600);
 }

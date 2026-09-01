@@ -9,5 +9,10 @@ export type { CheckpointContext, CheckpointProvider, SkipDecision } from './chec
 export { NoOpCheckpointProvider } from './checkpoint-provider.js';
 export type { FindingsProvider } from './findings-provider.js';
 export { NoOpFindingsProvider } from './findings-provider.js';
-export type { ReportOutputProvider } from './report-output-provider.js';
+export type {
+  ReportArtifactKind,
+  ReportOutputArtifact,
+  ReportOutputProvider,
+  ReportOutputResult,
+} from './report-output-provider.js';
 export { NoOpReportOutputProvider } from './report-output-provider.js';

@@ -15,17 +15,18 @@
  * Business logic is delegated to services in src/services/.
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ApplicationFailure, Context, heartbeat } from '@temporalio/activity';
+import { syncPermissionSystemConfig } from '../ai/pi/permission-system.js';
 import { writePlaywrightStealthConfig } from '../ai/playwright-config-writer.js';
-import { writeUserSettingsForCodePathAvoids } from '../ai/settings-writer.js';
 import { AuditSession } from '../audit/index.js';
 import type { ResumeAttempt } from '../audit/metrics-tracker.js';
 import { authStateFile, generateSessionJsonPath, type SessionMetadata } from '../audit/utils.js';
 import type { WorkflowSummary } from '../audit/workflow-logger.js';
 import type { CheckpointContext } from '../interfaces/checkpoint-provider.js';
-import { DEFAULT_DELIVERABLES_SUBDIR, deliverablesDir } from '../paths.js';
+import { DEFAULT_DELIVERABLES_SUBDIR, deliverablesDir, resolveSessionJsonPath } from '../paths.js';
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
@@ -33,16 +34,31 @@ import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
 import { runPreflightChecks } from '../services/preflight.js';
 import type { ExploitationDecision, VulnType } from '../services/queue-validation.js';
-import { assembleFinalReport, injectModelIntoReport } from '../services/reporting.js';
+import {
+  collectConfiguredSecrets,
+  collectRuntimeProviderSecrets,
+  createExactValueRedactor,
+} from '../services/redaction.js';
+import { assembleFinalReport, injectAssessmentModeSections, injectModelIntoReport } from '../services/reporting.js';
+import { createStructuredReportSession } from '../services/structured-report.js';
 import { validateAuthentication } from '../services/validate-authentication.js';
 import { AGENTS } from '../session-manager.js';
 import type { AgentName } from '../types/agents.js';
 import { ALL_AGENTS } from '../types/agents.js';
-import type { ContainerConfig, ProviderConfig, VulnClass } from '../types/config.js';
+import type { AgentEndResult } from '../types/audit.js';
+import {
+  ALL_VULN_CLASSES,
+  type ContainerConfig,
+  type DistributedConfig,
+  type ProviderConfig,
+  type SourceMode,
+  type VulnClass,
+} from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import { isErr } from '../types/result.js';
 import { atomicWrite, fileExists, readJson } from '../utils/file-io.js';
 import { createActivityLogger } from './activity-logger.js';
+import { clearPipelineCredentials, resolvePipelineCredentials } from './pipeline-secrets.js';
 import type { AgentMetrics, PipelineState, ResumeState } from './shared.js';
 
 // Max lengths to prevent Temporal protobuf buffer overflow
@@ -54,6 +70,11 @@ const MAX_OUTPUT_VALIDATION_RETRIES = 3;
 
 const HEARTBEAT_INTERVAL_MS = 2000;
 
+/** Preserve Temporal cancellation instead of classifying it as an activity failure. */
+export function rethrowActivityCancellation(signal: AbortSignal): void {
+  if (signal.aborted) signal.throwIfAborted();
+}
+
 /**
  * Input for all agent activities.
  *
@@ -62,7 +83,9 @@ const HEARTBEAT_INTERVAL_MS = 2000;
  */
 export interface ActivityInput {
   webUrl: string;
-  repoPath: string;
+  workingDirectory: string;
+  sourceMode: SourceMode;
+  repoPath?: string;
   configPath?: string;
   outputPath?: string;
   pipelineTestingMode?: boolean;
@@ -71,6 +94,7 @@ export interface ActivityInput {
 
   // Config fields — serializable, read by getOrCreateContainer()
   configYAML?: string;
+  configData?: DistributedConfig;
   apiKey?: string;
   deliverablesSubdir?: string;
   auditDir?: string;
@@ -78,6 +102,29 @@ export interface ActivityInput {
   sastSarifPath?: string;
   skipGitCheck?: boolean;
   providerConfig?: ProviderConfig;
+  /** Opaque reference to provider credentials staged outside Temporal. */
+  secretRef?: string;
+  /** Exact vulnerability classes selected by the workflow for this run. */
+  vulnClasses?: VulnClass[];
+}
+
+interface AgentActivityExtensions {
+  readonly callerTools?: import('@earendil-works/pi-coding-agent').ToolDefinition[];
+  readonly postExecutionFinalizer?: import('../services/agent-execution.js').AgentExecutionInput['postExecutionFinalizer'];
+}
+
+/** Map the aggregate returned by Pi into the workflow's activity metric contract. */
+export function toAgentMetrics(result: AgentEndResult, durationMs: number): AgentMetrics {
+  return {
+    durationMs,
+    inputTokens: result.input_tokens ?? null,
+    outputTokens: result.output_tokens ?? null,
+    cacheReadTokens: result.cache_read_tokens ?? null,
+    cacheWriteTokens: result.cache_write_tokens ?? null,
+    costUsd: result.cost_usd,
+    numTurns: result.num_turns ?? null,
+    ...(result.model !== undefined && { model: result.model }),
+  };
 }
 
 /**
@@ -103,11 +150,12 @@ function truncateStackTrace(failure: ApplicationFailure): void {
  * Build SessionMetadata from ActivityInput.
  */
 function buildSessionMetadata(input: ActivityInput): SessionMetadata {
-  const { webUrl, repoPath, outputPath, sessionId } = input;
+  const { webUrl, sourceMode, repoPath, outputPath, sessionId } = input;
   return {
     id: sessionId,
     webUrl,
-    repoPath,
+    sourceMode,
+    ...(repoPath !== undefined && { repoPath }),
     ...(outputPath && { outputPath }),
   };
 }
@@ -125,6 +173,17 @@ function buildContainerConfig(input: ActivityInput): ContainerConfig {
   };
 }
 
+async function hydratePipelineCredentials(input: ActivityInput): Promise<ActivityInput> {
+  const credentials = await resolvePipelineCredentials(input);
+  return {
+    ...input,
+    ...(credentials.apiKey !== undefined && { apiKey: credentials.apiKey }),
+    ...(credentials.providerConfig !== undefined && { providerConfig: credentials.providerConfig }),
+    ...(credentials.configYAML !== undefined && { configYAML: credentials.configYAML }),
+    ...(credentials.configData !== undefined && { configData: credentials.configData }),
+  };
+}
+
 /**
  * Core activity implementation using services.
  *
@@ -134,8 +193,17 @@ function buildContainerConfig(input: ActivityInput): ContainerConfig {
  * 3. Service-based agent execution
  * 4. Error classification for Temporal retry
  */
-async function runAgentActivity(agentName: AgentName, input: ActivityInput): Promise<AgentMetrics> {
-  const { repoPath, configPath, pipelineTestingMode = false, workflowId, webUrl } = input;
+async function runAgentActivity(
+  agentName: AgentName,
+  rawInput: ActivityInput,
+  extensions: AgentActivityExtensions = {},
+): Promise<AgentMetrics> {
+  const input = await hydratePipelineCredentials(rawInput);
+  const { workingDirectory, sourceMode, repoPath, configPath, pipelineTestingMode = false, workflowId, webUrl } = input;
+  const activityRedactor = createExactValueRedactor([
+    ...collectConfiguredSecrets(input.configData, input.providerConfig, input.apiKey),
+    ...collectRuntimeProviderSecrets(),
+  ]);
 
   // Skip guard: the checkpoint provider decides whether to run the agent.
   // The default NoOp provider always returns { skip: false }.
@@ -144,7 +212,7 @@ async function runAgentActivity(agentName: AgentName, input: ActivityInput): Pro
     getOrCreateContainer(workflowId, buildSessionMetadata(input), buildContainerConfig(input));
   const decision = await skipContainer.checkpointProvider.shouldSkipAgent(
     agentName,
-    repoPath,
+    workingDirectory,
     input.deliverablesSubdir ?? DEFAULT_DELIVERABLES_SUBDIR,
   );
   if (decision.skip && decision.metrics) {
@@ -174,12 +242,14 @@ async function runAgentActivity(agentName: AgentName, input: ActivityInput): Pro
     await auditSession.initialize(workflowId);
 
     // 3. Execute agent via service (throws PentestError on failure)
-    const deliverablesPath = deliverablesDir(repoPath, container.config.deliverablesSubdir);
+    const deliverablesPath = deliverablesDir(workingDirectory, container.config.deliverablesSubdir);
     const endResult = await container.agentExecution.executeOrThrow(
       agentName,
       {
         webUrl,
-        repoPath,
+        workingDirectory,
+        sourceMode,
+        ...(repoPath !== undefined && { repoPath }),
         deliverablesPath,
         configPath,
         pipelineTestingMode,
@@ -188,21 +258,21 @@ async function runAgentActivity(agentName: AgentName, input: ActivityInput): Pro
         ...(input.providerConfig !== undefined && { providerConfig: input.providerConfig }),
         ...(input.promptDir !== undefined && { promptDir: input.promptDir }),
         ...(input.configYAML !== undefined && { configYAML: input.configYAML }),
+        ...(input.configData !== undefined && { configData: input.configData }),
+        ...(extensions.callerTools !== undefined && { callerTools: extensions.callerTools }),
+        ...(extensions.postExecutionFinalizer !== undefined && {
+          postExecutionFinalizer: extensions.postExecutionFinalizer,
+        }),
+        cancellationSignal: Context.current().cancellationSignal,
       },
       auditSession,
       logger,
     );
 
     // 4. Return metrics
-    return {
-      durationMs: Date.now() - startTime,
-      inputTokens: null,
-      outputTokens: null,
-      costUsd: endResult.cost_usd,
-      numTurns: null,
-      model: endResult.model,
-    };
+    return toAgentMetrics(endResult, Date.now() - startTime);
   } catch (error) {
+    rethrowActivityCancellation(Context.current().cancellationSignal);
     // If error is already an ApplicationFailure, re-throw directly
     if (error instanceof ApplicationFailure) {
       throw error;
@@ -223,7 +293,7 @@ async function runAgentActivity(agentName: AgentName, input: ActivityInput): Pro
 
     // Classify error for Temporal retry behavior
     const classified = classifyErrorForTemporal(error);
-    const rawMessage = error instanceof Error ? error.message : String(error);
+    const rawMessage = activityRedactor.redactText(error instanceof Error ? error.message : String(error));
     const message = truncateErrorMessage(rawMessage);
 
     if (classified.retryable) {
@@ -294,12 +364,50 @@ export async function runAuthzExploitAgent(input: ActivityInput): Promise<AgentM
   return runAgentActivity('authz-exploit', input);
 }
 
-export async function runReportAgent(input: ActivityInput): Promise<AgentMetrics> {
-  return runAgentActivity('report', input);
+export async function runReportAgent(
+  input: ActivityInput,
+  safeDemonstration: boolean,
+  triageRan: boolean,
+): Promise<AgentMetrics> {
+  const reportSession = await createStructuredReportSession({
+    deliverablesPath: deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
+    webUrl: input.webUrl,
+    sourceMode: input.sourceMode,
+    safeDemonstration,
+    triageRan,
+    selectedVulnClasses: input.vulnClasses ?? input.configData?.vuln_classes ?? ALL_VULN_CLASSES,
+  });
+  return runAgentActivity('report', input, {
+    callerTools: reportSession.tools,
+    postExecutionFinalizer: async ({ logger }) => {
+      await reportSession.finalize(logger);
+    },
+  });
 }
 
 export async function runTriageAgent(input: ActivityInput): Promise<AgentMetrics> {
   return runAgentActivity('triage', input);
+}
+
+/**
+ * Create the writable root used by URL-only runs.
+ *
+ * Source-assisted runs must point at a real repository supplied by the caller,
+ * so this intentionally does not create missing directories in that mode.
+ */
+export async function prepareWorkingDirectory(input: ActivityInput): Promise<void> {
+  if (input.sourceMode !== 'url-only') return;
+
+  try {
+    await fs.mkdir(input.workingDirectory, { recursive: true });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw ApplicationFailure.nonRetryable(
+      `Failed to create URL-only working directory ${input.workingDirectory}: ${detail}`,
+      'ConfigurationError',
+      [{ workingDirectory: input.workingDirectory }],
+    );
+  }
 }
 
 /**
@@ -308,14 +416,19 @@ export async function runTriageAgent(input: ActivityInput): Promise<AgentMetrics
  * Runs cheap checks before any agent execution:
  * 1. Repository path exists with .git
  * 2. Config file validates (if provided)
- * 3. Credential validation (API key, OAuth, Bedrock, or Vertex AI)
+ * 3. Credential validation for the selected Pi provider
  * 4. Target URL reachable from the container
  *
- * NOT using runAgentActivity — preflight doesn't run an agent via the SDK.
+ * NOT using runAgentActivity — preflight doesn't run a Pi agent.
  */
-export async function runPreflightValidation(input: ActivityInput): Promise<void> {
+export async function runPreflightValidation(rawInput: ActivityInput): Promise<void> {
+  const input = await hydratePipelineCredentials(rawInput);
   const startTime = Date.now();
   const attemptNumber = Context.current().info.attempt;
+  let redactor = createExactValueRedactor([
+    ...collectConfiguredSecrets(input.configData, input.providerConfig, input.apiKey),
+    ...collectRuntimeProviderSecrets(),
+  ]);
 
   const heartbeatInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -326,19 +439,38 @@ export async function runPreflightValidation(input: ActivityInput): Promise<void
     const logger = createActivityLogger();
     logger.info('Running preflight validation...', { attempt: attemptNumber });
 
+    const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
+    const configResult = await container.configLoader.loadOptional(
+      input.configPath,
+      input.configData,
+      input.configYAML,
+      input.sourceMode,
+    );
+    if (!isErr(configResult)) {
+      redactor = createExactValueRedactor([
+        ...collectConfiguredSecrets(configResult.value, input.providerConfig, input.apiKey),
+        ...collectRuntimeProviderSecrets(),
+      ]);
+    }
+
     const result = await runPreflightChecks(
       input.webUrl,
+      input.workingDirectory,
       input.repoPath,
+      input.sourceMode,
       input.configPath,
       logger,
       input.skipGitCheck,
       input.apiKey,
       input.providerConfig,
+      input.configYAML,
+      input.configData,
+      Context.current().cancellationSignal,
     );
 
     if (isErr(result)) {
       const classified = classifyErrorForTemporal(result.error);
-      const message = truncateErrorMessage(result.error.message);
+      const message = truncateErrorMessage(redactor.redactText(result.error.message));
 
       if (classified.retryable) {
         const failure = ApplicationFailure.create({
@@ -359,12 +491,13 @@ export async function runPreflightValidation(input: ActivityInput): Promise<void
 
     logger.info('Preflight validation passed');
   } catch (error) {
+    rethrowActivityCancellation(Context.current().cancellationSignal);
     if (error instanceof ApplicationFailure) {
       throw error;
     }
 
     const classified = classifyErrorForTemporal(error);
-    const rawMessage = error instanceof Error ? error.message : String(error);
+    const rawMessage = redactor.redactText(error instanceof Error ? error.message : String(error));
     const message = truncateErrorMessage(rawMessage);
 
     const failure = ApplicationFailure.nonRetryable(message, classified.type, [
@@ -382,9 +515,14 @@ export async function runPreflightValidation(input: ActivityInput): Promise<void
  * block; otherwise surfaces a classified failure (failurePoint +
  * failureDetail in ApplicationFailure.details) on credential rejection.
  */
-export async function runAuthenticationValidation(input: ActivityInput): Promise<void> {
+export async function runAuthenticationValidation(rawInput: ActivityInput): Promise<void> {
+  const input = await hydratePipelineCredentials(rawInput);
   const startTime = Date.now();
   const attemptNumber = Context.current().info.attempt;
+  let redactor = createExactValueRedactor([
+    ...collectConfiguredSecrets(input.configData, input.providerConfig, input.apiKey),
+    ...collectRuntimeProviderSecrets(),
+  ]);
 
   const heartbeatInterval = setInterval(() => {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -396,7 +534,12 @@ export async function runAuthenticationValidation(input: ActivityInput): Promise
 
     const sessionMetadata = buildSessionMetadata(input);
     const container = getOrCreateContainer(input.workflowId, sessionMetadata, buildContainerConfig(input));
-    const configResult = await container.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
+    const configResult = await container.configLoader.loadOptional(
+      input.configPath,
+      input.configData,
+      input.configYAML,
+      input.sourceMode,
+    );
     if (isErr(configResult)) {
       // runPreflightValidation already validated parsing, so this is unexpected.
       logger.warn(`runAuthenticationValidation: config load failed unexpectedly: ${configResult.error.message}`);
@@ -404,17 +547,24 @@ export async function runAuthenticationValidation(input: ActivityInput): Promise
     }
 
     const distributedConfig = configResult.value;
+    redactor = createExactValueRedactor([
+      ...collectConfiguredSecrets(distributedConfig, input.providerConfig, input.apiKey),
+      ...collectRuntimeProviderSecrets(),
+    ]);
     if (!distributedConfig?.authentication) {
       logger.info('No authentication configured — skipping credential validation');
       return;
     }
 
     const auditSession = new AuditSession(sessionMetadata);
+    auditSession.setRedactionSecrets(redactor.values);
     await auditSession.initialize(input.workflowId);
 
     const result = await validateAuthentication({
       distributedConfig,
-      repoPath: input.repoPath,
+      workingDirectory: input.workingDirectory,
+      sourceMode: input.sourceMode,
+      ...(input.repoPath !== undefined && { repoPath: input.repoPath }),
       webUrl: input.webUrl,
       logger,
       auditSession,
@@ -424,11 +574,12 @@ export async function runAuthenticationValidation(input: ActivityInput): Promise
       ...(input.deliverablesSubdir !== undefined && { deliverablesSubdir: input.deliverablesSubdir }),
       ...(input.promptDir !== undefined && { promptDir: input.promptDir }),
       ...(input.pipelineTestingMode !== undefined && { pipelineTestingMode: input.pipelineTestingMode }),
+      cancellationSignal: Context.current().cancellationSignal,
     });
 
     if (isErr(result)) {
       const classified = classifyErrorForTemporal(result.error);
-      const message = truncateErrorMessage(result.error.message);
+      const message = truncateErrorMessage(redactor.redactText(result.error.message));
       const ctx = result.error.context;
       const details = [
         {
@@ -436,7 +587,7 @@ export async function runAuthenticationValidation(input: ActivityInput): Promise
           attemptNumber,
           elapsed: Date.now() - startTime,
           ...(ctx.failurePoint !== undefined && { failurePoint: ctx.failurePoint }),
-          ...(ctx.failureDetail !== undefined && { failureDetail: ctx.failureDetail }),
+          ...(ctx.failureDetail !== undefined && { failureDetail: redactor.redactValue(ctx.failureDetail) }),
         },
       ];
 
@@ -447,12 +598,13 @@ export async function runAuthenticationValidation(input: ActivityInput): Promise
       throw failure;
     }
   } catch (error) {
+    rethrowActivityCancellation(Context.current().cancellationSignal);
     if (error instanceof ApplicationFailure) {
       throw error;
     }
 
     const classified = classifyErrorForTemporal(error);
-    const rawMessage = error instanceof Error ? error.message : String(error);
+    const rawMessage = redactor.redactText(error instanceof Error ? error.message : String(error));
     const message = truncateErrorMessage(rawMessage);
     const details = [{ phase: 'auth-validation', attemptNumber, elapsed: Date.now() - startTime }];
 
@@ -471,7 +623,7 @@ export async function runAuthenticationValidation(input: ActivityInput): Promise
  * Idempotent — skips if .git already exists (resume case).
  */
 export async function initDeliverableGit(input: ActivityInput): Promise<void> {
-  const deliverablesPath = deliverablesDir(input.repoPath, input.deliverablesSubdir);
+  const deliverablesPath = deliverablesDir(input.workingDirectory, input.deliverablesSubdir);
   await fs.mkdir(deliverablesPath, { recursive: true });
 
   // Check for .git directly inside deliverables, not parent repo's .git
@@ -492,7 +644,7 @@ export async function initDeliverableGit(input: ActivityInput): Promise<void> {
 }
 
 /**
- * Drop a stealth cli.config.json into the repo's .playwright/ directory so
+ * Drop a stealth cli.config.json into the working directory's .playwright/ directory so
  * `playwright-cli open` auto-loads anti-detection defaults from the agent's
  * cwd (disables the Blink AutomationControlled flag, drops the
  * --enable-automation default, and overrides the HeadlessChrome user agent).
@@ -501,7 +653,7 @@ export async function initDeliverableGit(input: ActivityInput): Promise<void> {
  */
 export async function syncPlaywrightStealthConfig(input: ActivityInput): Promise<void> {
   const logger = createActivityLogger();
-  const { result, configPath } = await writePlaywrightStealthConfig(input.repoPath);
+  const { result, configPath } = await writePlaywrightStealthConfig(input.workingDirectory);
   if (result === 'skipped-existing') {
     logger.info(`Playwright stealth config: leaving existing ${configPath} in place`);
   } else {
@@ -510,18 +662,28 @@ export async function syncPlaywrightStealthConfig(input: ActivityInput): Promise
 }
 
 /**
- * Sync code_path avoid rules into Claude's user-scope settings.json so the
- * SDK enforces them at the tool layer for every agent in this run.
+ * Sync code_path avoid rules into the Pi permission extension config so the
+ * runtime enforces them at the tool layer for every agent in this run.
  *
  * Runs once per workflow before any agent fires. Config is fixed for the
- * lifetime of the workflow, so writing once avoids the parallel-agent race
- * on the global ~/.claude/settings.json file.
+ * lifetime of the workflow, so writing once avoids a parallel-agent race on
+ * the global extension config.
  */
-export async function syncCodePathDenyRules(input: ActivityInput): Promise<void> {
+export async function syncCodePathDenyRules(rawInput: ActivityInput): Promise<void> {
+  const input = await hydratePipelineCredentials(rawInput);
   const logger = createActivityLogger();
+  if (input.sourceMode === 'url-only') {
+    logger.info('Skipping code_path deny-rule sync in URL-only mode');
+    return;
+  }
   const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
 
-  const configResult = await container.configLoader.loadOptional(input.configPath, undefined, input.configYAML);
+  const configResult = await container.configLoader.loadOptional(
+    input.configPath,
+    input.configData,
+    input.configYAML,
+    input.sourceMode,
+  );
   if (isErr(configResult)) {
     logger.warn(`syncCodePathDenyRules: skipping (config load failed: ${configResult.error.message})`);
     return;
@@ -529,29 +691,29 @@ export async function syncCodePathDenyRules(input: ActivityInput): Promise<void>
 
   const config = configResult.value;
   const denyCount = (config?.avoid ?? []).filter((r) => r.type === 'code_path').length;
-  await writeUserSettingsForCodePathAvoids(config);
-  logger.info(`Synced code_path deny rules to user settings (${denyCount} entries)`);
+  syncPermissionSystemConfig(config);
+  logger.info(`Synced code_path deny rules to Pi permissions (${denyCount} entries)`);
 }
 
 /**
  * Assemble the final report by concatenating per-class deliverables.
  *
- * Under exploit=true, each exploit agent has produced `*_exploitation_evidence.md`
- * directly. Under exploit=false, exploit agents didn't run; we deterministically
- * render `*_findings.md` from each `*_exploitation_queue.json` first, then assemble.
+ * When safeDemonstration=true, each demonstration agent has produced
+ * `*_exploitation_evidence.md` directly. Otherwise those agents did not run;
+ * we deterministically render `*_findings.md` from each queue first.
  */
 export async function assembleReportActivity(
   input: ActivityInput,
-  exploit: boolean,
+  safeDemonstration: boolean,
   triageRan: boolean,
 ): Promise<void> {
-  const { repoPath, deliverablesSubdir } = input;
+  const { workingDirectory, sourceMode, deliverablesSubdir } = input;
   const logger = createActivityLogger();
 
-  if (!exploit) {
+  if (!safeDemonstration) {
     logger.info('Rendering per-class findings from analysis queues...');
     try {
-      await renderFindingsFromQueues(repoPath, deliverablesSubdir, logger);
+      await renderFindingsFromQueues(workingDirectory, deliverablesSubdir, logger, sourceMode);
     } catch (error) {
       const err = error as Error;
       logger.warn(`Error rendering findings from queues: ${err.message}`);
@@ -560,7 +722,7 @@ export async function assembleReportActivity(
 
   logger.info('Assembling deliverables from specialist agents...');
   try {
-    await assembleFinalReport(repoPath, deliverablesSubdir, logger, triageRan);
+    await assembleFinalReport(workingDirectory, deliverablesSubdir, logger, triageRan);
   } catch (error) {
     const err = error as Error;
     logger.warn(`Error assembling final report: ${err.message}`);
@@ -571,14 +733,31 @@ export async function assembleReportActivity(
  * Inject model metadata into the final report.
  */
 export async function injectReportMetadataActivity(input: ActivityInput): Promise<void> {
-  const { repoPath, sessionId, outputPath, deliverablesSubdir } = input;
+  const { workingDirectory, sessionId, outputPath, deliverablesSubdir } = input;
   const logger = createActivityLogger();
   const effectiveOutputPath = outputPath ? path.join(outputPath, sessionId) : path.join('./workspaces', sessionId);
   try {
-    await injectModelIntoReport(repoPath, deliverablesSubdir, effectiveOutputPath, logger);
+    await injectModelIntoReport(workingDirectory, deliverablesSubdir, effectiveOutputPath, logger);
   } catch (error) {
     const err = error as Error;
     logger.warn(`Error injecting model into report: ${err.message}`);
+  }
+}
+
+/** Deterministically disclose assessment mode and coverage after the report agent has finished. */
+export async function injectReportModeSectionsActivity(input: ActivityInput): Promise<void> {
+  const logger = createActivityLogger();
+  try {
+    await injectAssessmentModeSections(input.workingDirectory, input.deliverablesSubdir, input.sourceMode, logger);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new PentestError(
+      `Failed to inject assessment mode sections: ${detail}`,
+      'filesystem',
+      false,
+      { phase: 'reporting' },
+      ErrorCode.DELIVERABLE_NOT_FOUND,
+    );
   }
 }
 
@@ -589,27 +768,32 @@ export async function injectReportMetadataActivity(input: ActivityInput): Promis
  * otherwise creates service directly (stateless, no dependencies).
  */
 export async function checkExploitationQueue(input: ActivityInput, vulnType: VulnType): Promise<ExploitationDecision> {
-  const { repoPath, workflowId } = input;
+  const { workingDirectory, workflowId } = input;
   const logger = createActivityLogger();
 
   // Reuse container's service if available (from prior vuln agent runs)
   const existingContainer = getContainer(workflowId);
   const checker = existingContainer?.exploitationChecker ?? new ExploitationCheckerService();
 
-  // Pass deliverablesPath (not repoPath) — validators expect the deliverables directory
-  const delivPath = deliverablesDir(repoPath, input.deliverablesSubdir);
+  // Pass deliverablesPath (not workingDirectory) — validators expect the deliverables directory
+  const delivPath = deliverablesDir(workingDirectory, input.deliverablesSubdir);
   return checker.checkQueue(vulnType, delivPath, logger);
 }
 
 interface RunScope {
   vulnClasses: VulnClass[];
-  exploit: boolean;
+  safeDemonstration?: boolean;
+  /** @deprecated Legacy session scope field. */
+  exploit?: boolean;
+  sourceMode: SourceMode;
+  configHash?: string;
 }
 
 interface SessionJson {
   session: {
     id: string;
     webUrl: string;
+    sourceMode?: SourceMode;
     repoPath?: string;
     originalWorkflowId?: string;
     resumeAttempts?: ResumeAttempt[];
@@ -632,11 +816,13 @@ interface SessionJson {
 export async function loadResumeState(
   workspaceName: string,
   expectedUrl: string,
-  expectedRepoPath: string,
+  expectedWorkingDirectory: string,
+  expectedSourceMode: SourceMode,
+  expectedRepoPath?: string,
   deliverablesSubdir?: string,
 ): Promise<ResumeState> {
   // 1. Validate workspace exists
-  const sessionPath = path.join('./workspaces', workspaceName, 'session.json');
+  const sessionPath = resolveSessionJsonPath(path.join('./workspaces', workspaceName));
 
   const exists = await fileExists(sessionPath);
   if (!exists) {
@@ -665,6 +851,23 @@ export async function loadResumeState(
     );
   }
 
+  const recordedSourceMode =
+    session.session.scope?.sourceMode ??
+    session.session.sourceMode ??
+    (session.session.repoPath ? 'source-assisted' : 'url-only');
+  if (recordedSourceMode !== expectedSourceMode) {
+    throw ApplicationFailure.nonRetryable(
+      `Source mode mismatch with workspace\n  Workspace mode: ${recordedSourceMode}\n  Provided mode:  ${expectedSourceMode}`,
+      'ScopeMismatchError',
+    );
+  }
+  if (expectedSourceMode === 'source-assisted' && session.session.repoPath !== expectedRepoPath) {
+    throw ApplicationFailure.nonRetryable(
+      `Repository mismatch with workspace\n  Workspace repository: ${session.session.repoPath ?? '<missing>'}\n  Provided repository:  ${expectedRepoPath ?? '<missing>'}`,
+      'ScopeMismatchError',
+    );
+  }
+
   // 3. Cross-check agent status with deliverables on disk
   const completedAgents: string[] = [];
   const agents = session.metrics.agents;
@@ -676,7 +879,10 @@ export async function loadResumeState(
     }
 
     const deliverableFilename = AGENTS[agentName].deliverableFilename;
-    const deliverablePath = path.join(deliverablesDir(expectedRepoPath, deliverablesSubdir), deliverableFilename);
+    const deliverablePath = path.join(
+      deliverablesDir(expectedWorkingDirectory, deliverablesSubdir),
+      deliverableFilename,
+    );
     const deliverableExists = await fileExists(deliverablePath);
 
     if (!deliverableExists) {
@@ -710,7 +916,7 @@ export async function loadResumeState(
   }
 
   // 5. Find the most recent checkpoint commit
-  const deliverablesPath = deliverablesDir(expectedRepoPath, deliverablesSubdir);
+  const deliverablesPath = deliverablesDir(expectedWorkingDirectory, deliverablesSubdir);
   const checkpointHash = await findLatestCommit(deliverablesPath, checkpoints);
   const originalWorkflowId = session.session.originalWorkflowId || session.session.id;
 
@@ -731,39 +937,137 @@ export async function loadResumeState(
   };
 }
 
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, nested]) => [key, sortJsonValue(nested)]),
+    );
+  }
+  return value;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function nonSecretRunConfig(config: DistributedConfig | null): unknown {
+  const authentication = config?.authentication;
+  if (!config || !authentication) return config;
+  const {
+    email_login: emailLogin,
+    password: _password,
+    totp_secret: _totpSecret,
+    ...credentials
+  } = authentication.credentials;
+  return {
+    ...config,
+    authentication: {
+      ...authentication,
+      credentials: {
+        ...credentials,
+        ...(emailLogin && { email_login: { address: emailLogin.address } }),
+      },
+    },
+  };
+}
+
+async function computeRunConfigHash(input: ActivityInput, sessionMetadata: SessionMetadata): Promise<string> {
+  const container = getOrCreateContainer(input.workflowId, sessionMetadata, buildContainerConfig(input));
+  const configResult = await container.configLoader.loadOptional(
+    input.configPath,
+    input.configData,
+    input.configYAML,
+    input.sourceMode,
+  );
+  if (isErr(configResult)) {
+    throw ApplicationFailure.nonRetryable(configResult.error.message, 'ConfigurationError', [
+      { phase: 'scope-validation' },
+    ]);
+  }
+  return crypto
+    .createHash('sha256')
+    .update(stableStringify(nonSecretRunConfig(configResult.value)))
+    .digest('hex');
+}
+
 /** First run records scope into session.json; resume runs throw if it differs. */
 export async function persistOrValidateRunScope(
-  input: ActivityInput,
+  rawInput: ActivityInput,
   vulnClasses: VulnClass[],
-  exploit: boolean,
+  safeDemonstration: boolean,
 ): Promise<void> {
+  const input = await hydratePipelineCredentials(rawInput);
   const sessionMetadata = buildSessionMetadata(input);
+  const configHash = await computeRunConfigHash(input, sessionMetadata);
   const auditSession = new AuditSession(sessionMetadata);
   await auditSession.initialize(input.workflowId);
 
   const sessionPath = generateSessionJsonPath(sessionMetadata);
   const session = await readJson<SessionJson>(sessionPath);
 
+  if (session.session.webUrl !== input.webUrl) {
+    throw ApplicationFailure.nonRetryable(
+      `URL mismatch with workspace\n  Workspace URL: ${session.session.webUrl}\n  Provided URL:  ${input.webUrl}`,
+      'URLMismatchError',
+    );
+  }
+  if (input.sourceMode === 'source-assisted' && session.session.repoPath !== input.repoPath) {
+    throw ApplicationFailure.nonRetryable(
+      `Repository mismatch with workspace\n  Workspace repository: ${session.session.repoPath ?? '<missing>'}\n  Provided repository:  ${input.repoPath ?? '<missing>'}`,
+      'ScopeMismatchError',
+    );
+  }
+
   if (session.session.scope) {
     const recorded = session.session.scope;
+    const recordedSafeDemonstration = recorded.safeDemonstration ?? recorded.exploit ?? true;
     const sameClasses =
       recorded.vulnClasses.length === vulnClasses.length &&
       recorded.vulnClasses.every((c) => vulnClasses.includes(c)) &&
       vulnClasses.every((c) => recorded.vulnClasses.includes(c));
 
-    if (!sameClasses || recorded.exploit !== exploit) {
+    const recordedSourceMode = recorded.sourceMode ?? (session.session.repoPath ? 'source-assisted' : 'url-only');
+    const sameConfig = !recorded.configHash || recorded.configHash === configHash;
+    if (
+      !sameClasses ||
+      recordedSafeDemonstration !== safeDemonstration ||
+      recordedSourceMode !== input.sourceMode ||
+      !sameConfig
+    ) {
       throw ApplicationFailure.nonRetryable(
         `Resume scope mismatch for workspace ${input.sessionId}.\n` +
-          `  Original: vuln_classes=[${recorded.vulnClasses.join(', ')}], exploit=${recorded.exploit}\n` +
-          `  Provided: vuln_classes=[${vulnClasses.join(', ')}], exploit=${exploit}\n` +
+          `  Original: source_mode=${recordedSourceMode}, vuln_classes=[${recorded.vulnClasses.join(', ')}], safe_demonstration=${recordedSafeDemonstration}, config_hash=${recorded.configHash ?? '<missing>'}\n` +
+          `  Provided: source_mode=${input.sourceMode}, vuln_classes=[${vulnClasses.join(', ')}], safe_demonstration=${safeDemonstration}, config_hash=${configHash}\n` +
           `Resume requires the same scope as the original run. Start a new workspace if you want different scope.`,
         'ScopeMismatchError',
       );
     }
+    if (!recorded.sourceMode || !recorded.configHash || recorded.safeDemonstration === undefined) {
+      const { exploit: _legacyExploit, ...scopeWithoutLegacy } = recorded;
+      session.session.scope = {
+        ...scopeWithoutLegacy,
+        safeDemonstration: recordedSafeDemonstration,
+        sourceMode: recordedSourceMode,
+        configHash,
+      };
+      session.session.sourceMode = recordedSourceMode;
+      await atomicWrite(sessionPath, session);
+    }
     return;
   }
 
-  session.session.scope = { vulnClasses: [...vulnClasses], exploit };
+  session.session.sourceMode = input.sourceMode;
+  session.session.scope = {
+    vulnClasses: [...vulnClasses],
+    safeDemonstration,
+    sourceMode: input.sourceMode,
+    configHash,
+  };
   await atomicWrite(sessionPath, session);
 }
 
@@ -796,12 +1100,12 @@ async function findLatestCommit(gitDir: string, commitHashes: string[]): Promise
  * Operates on the private git inside workspace deliverables, not the user's repo.
  */
 export async function restoreGitCheckpoint(
-  repoPath: string,
+  workingDirectory: string,
   checkpointHash: string,
   incompleteAgents: AgentName[],
   deliverablesSubdir?: string,
 ): Promise<void> {
-  const deliverablesPath = deliverablesDir(repoPath, deliverablesSubdir);
+  const deliverablesPath = deliverablesDir(workingDirectory, deliverablesSubdir);
   const logger = createActivityLogger();
   logger.info(`Restoring deliverables to ${checkpointHash}...`);
 
@@ -809,7 +1113,7 @@ export async function restoreGitCheckpoint(
   try {
     await executeGitCommandWithRetry(
       ['git', 'rev-parse', '--verify', checkpointHash],
-      repoPath,
+      deliverablesPath,
       'verify checkpoint hash exists',
     );
   } catch {
@@ -905,21 +1209,41 @@ export async function logWorkflowComplete(input: ActivityInput, summary: Workflo
     metrics: {
       total_duration_ms: number;
       total_cost_usd: number;
-      agents: Record<string, { final_duration_ms: number; total_cost_usd: number }>;
+      total_input_tokens?: number;
+      total_output_tokens?: number;
+      total_cache_read_tokens?: number;
+      total_cache_write_tokens?: number;
+      total_turns?: number;
+      agents: Record<
+        string,
+        {
+          final_duration_ms: number;
+          total_cost_usd: number;
+          total_input_tokens?: number;
+          total_output_tokens?: number;
+          total_cache_read_tokens?: number;
+          total_cache_write_tokens?: number;
+          total_turns?: number;
+        }
+      >;
     };
   };
 
-  // 3. Fill in metrics for skipped agents (resumed from previous run)
+  // 3. Replace activity-only metrics with cumulative attempt totals from session.json.
   const agentMetrics = { ...summary.agentMetrics };
   for (const agentName of summary.completedAgents) {
-    if (!agentMetrics[agentName]) {
-      const agentData = sessionData.metrics.agents[agentName];
-      if (agentData) {
-        agentMetrics[agentName] = {
-          durationMs: agentData.final_duration_ms,
-          costUsd: agentData.total_cost_usd,
-        };
-      }
+    const agentData = sessionData.metrics.agents[agentName];
+    if (agentData) {
+      const activityMetrics = agentMetrics[agentName];
+      agentMetrics[agentName] = {
+        durationMs: agentData.final_duration_ms,
+        costUsd: agentData.total_cost_usd,
+        inputTokens: agentData.total_input_tokens ?? activityMetrics?.inputTokens ?? null,
+        outputTokens: agentData.total_output_tokens ?? activityMetrics?.outputTokens ?? null,
+        cacheReadTokens: agentData.total_cache_read_tokens ?? activityMetrics?.cacheReadTokens ?? null,
+        cacheWriteTokens: agentData.total_cache_write_tokens ?? activityMetrics?.cacheWriteTokens ?? null,
+        numTurns: agentData.total_turns ?? activityMetrics?.numTurns ?? null,
+      };
     }
   }
 
@@ -928,6 +1252,11 @@ export async function logWorkflowComplete(input: ActivityInput, summary: Workflo
     ...summary,
     totalDurationMs: sessionData.metrics.total_duration_ms,
     totalCostUsd: sessionData.metrics.total_cost_usd,
+    totalInputTokens: sessionData.metrics.total_input_tokens ?? summary.totalInputTokens,
+    totalOutputTokens: sessionData.metrics.total_output_tokens ?? summary.totalOutputTokens,
+    totalCacheReadTokens: sessionData.metrics.total_cache_read_tokens ?? summary.totalCacheReadTokens,
+    totalCacheWriteTokens: sessionData.metrics.total_cache_write_tokens ?? summary.totalCacheWriteTokens,
+    totalTurns: sessionData.metrics.total_turns ?? summary.totalTurns,
     agentMetrics,
   };
 
@@ -944,6 +1273,7 @@ export async function logWorkflowComplete(input: ActivityInput, summary: Workflo
 
   // 7. Clean up container
   removeContainer(workflowId);
+  clearPipelineCredentials(input);
 }
 
 /**
@@ -959,7 +1289,7 @@ export async function mergeFindingsIntoQueue(
 ): Promise<{ mergedCount: number }> {
   const container = getContainer(input.workflowId);
   if (!container?.findingsProvider) return { mergedCount: 0 };
-  return container.findingsProvider.mergeFindingsIntoQueue(input.repoPath, vulnType, input);
+  return container.findingsProvider.mergeFindingsIntoQueue(input.workingDirectory, vulnType, input);
 }
 
 /**
@@ -978,7 +1308,8 @@ export async function saveCheckpoint(
   if (!container?.checkpointProvider) return;
 
   const context: CheckpointContext = {
-    repoPath: input.repoPath,
+    workingDirectory: input.workingDirectory,
+    ...(input.repoPath !== undefined && { repoPath: input.repoPath }),
     sessionId: input.sessionId,
     deliverablesSubdir: input.deliverablesSubdir ?? DEFAULT_DELIVERABLES_SUBDIR,
     ...(input.outputPath !== undefined && { outputPath: input.outputPath }),
@@ -988,20 +1319,26 @@ export async function saveCheckpoint(
 }
 
 /**
- * Generate an optional additional output alongside the assembled markdown report.
+ * Generate secondary outputs from the canonical report.
  *
  * Delegates to the ReportOutputProvider registered in the DI container.
- * Default: no-op. Consumers can override this activity at the worker level
- * to emit derived outputs from the final report.
+ * The default provider emits PDF and eligible SARIF artifacts; consumers may
+ * inject another implementation.
  */
-export async function generateReportOutputActivity(input: ActivityInput): Promise<void> {
+export async function generateReportOutputActivity(rawInput: ActivityInput): Promise<void> {
+  const input = await hydratePipelineCredentials(rawInput);
   const container = getContainer(input.workflowId);
   if (!container?.reportOutputProvider) return;
 
   const logger = createActivityLogger();
 
   const result = await container.reportOutputProvider.generate(input, logger);
-  if (result.outputPath) {
+  if (result.artifacts) {
+    for (const artifact of result.artifacts) {
+      logger.info(`${artifact.kind.toUpperCase()} report written to ${artifact.outputPath}`);
+    }
+  } else if (result.outputPath) {
+    // Backward compatibility for injected providers implementing the legacy single-output contract.
     logger.info(`Report output written to ${result.outputPath}`);
   }
 }

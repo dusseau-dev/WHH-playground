@@ -11,8 +11,9 @@
  * All functions are pure and crash-safe.
  */
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { WORKSPACES_DIR } from '../paths.js';
+import { INTERNAL_DIR, WORKSPACES_DIR } from '../paths.js';
 import { ensureDirectory } from '../utils/file-io.js';
 
 export type { SessionMetadata } from '../types/audit.js';
@@ -44,6 +45,11 @@ export function generateAuditPath(sessionMetadata: SessionMetadata): string {
   return path.join(baseDir, sessionIdentifier);
 }
 
+/** Generate the hidden state directory within an assessment workspace. */
+export function generateInternalPath(sessionMetadata: SessionMetadata): string {
+  return path.join(generateAuditPath(sessionMetadata), INTERNAL_DIR);
+}
+
 /**
  * Generate path to agent log file
  */
@@ -53,7 +59,7 @@ export function generateLogPath(
   timestamp: number,
   attemptNumber: number,
 ): string {
-  const auditPath = generateAuditPath(sessionMetadata);
+  const auditPath = generateInternalPath(sessionMetadata);
   const filename = `${timestamp}_${agentName}_attempt-${attemptNumber}.log`;
   return path.join(auditPath, 'agents', filename);
 }
@@ -62,7 +68,7 @@ export function generateLogPath(
  * Generate path to prompt snapshot file
  */
 export function generatePromptPath(sessionMetadata: SessionMetadata, agentName: string): string {
-  const auditPath = generateAuditPath(sessionMetadata);
+  const auditPath = generateInternalPath(sessionMetadata);
   return path.join(auditPath, 'prompts', `${agentName}.md`);
 }
 
@@ -70,8 +76,32 @@ export function generatePromptPath(sessionMetadata: SessionMetadata, agentName: 
  * Generate path to session.json file
  */
 export function generateSessionJsonPath(sessionMetadata: SessionMetadata): string {
-  const auditPath = generateAuditPath(sessionMetadata);
+  const auditPath = generateInternalPath(sessionMetadata);
   return path.join(auditPath, 'session.json');
+}
+
+/**
+ * Promote legacy workspace-root session state before a current-path file can be
+ * initialized. Linking first makes the complete legacy file visible atomically;
+ * removing the old name afterwards completes the migration.
+ */
+async function migrateLegacySessionJson(sessionMetadata: SessionMetadata): Promise<void> {
+  const legacyPath = path.join(generateAuditPath(sessionMetadata), 'session.json');
+  const currentPath = generateSessionJsonPath(sessionMetadata);
+
+  try {
+    await fs.link(legacyPath, currentPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'EEXIST') return;
+    throw error;
+  }
+
+  try {
+    await fs.unlink(legacyPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }
 
 /**
@@ -79,29 +109,28 @@ export function generateSessionJsonPath(sessionMetadata: SessionMetadata): strin
  * validator and consumed by downstream agents via `_shared-session.txt`.
  */
 export function authStateFile(sessionMetadata: SessionMetadata): string {
-  return path.join(generateAuditPath(sessionMetadata), 'auth-state.json');
+  return path.join(generateInternalPath(sessionMetadata), 'auth-state.json');
 }
 
 /**
  * Generate path to workflow.log file
  */
 export function generateWorkflowLogPath(sessionMetadata: SessionMetadata): string {
-  const auditPath = generateAuditPath(sessionMetadata);
+  const auditPath = generateInternalPath(sessionMetadata);
   return path.join(auditPath, 'workflow.log');
 }
 
 /**
  * Initialize audit directory structure for a session
- * Creates: workspaces/{sessionId}/, agents/, prompts/, deliverables/
+ * Creates: workspaces/{sessionId}/.shannon/{agents,prompts}/
  */
 export async function initializeAuditStructure(sessionMetadata: SessionMetadata): Promise<void> {
-  const auditPath = generateAuditPath(sessionMetadata);
+  const auditPath = generateInternalPath(sessionMetadata);
   const agentsPath = path.join(auditPath, 'agents');
   const promptsPath = path.join(auditPath, 'prompts');
-  const deliverablesPath = path.join(auditPath, 'deliverables');
 
   await ensureDirectory(auditPath);
+  await migrateLegacySessionJson(sessionMetadata);
   await ensureDirectory(agentsPath);
   await ensureDirectory(promptsPath);
-  await ensureDirectory(deliverablesPath);
 }

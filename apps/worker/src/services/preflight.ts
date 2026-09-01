@@ -15,7 +15,7 @@
  * 1. Repository path exists and contains .git
  * 2. Config file parses and validates (if provided)
  * 3. code_path rules match real entries in the repo (filesystem only)
- * 4. Credentials validate via Claude Agent SDK query (API key, OAuth, Bedrock, or Vertex AI)
+ * 4. The selected Pi model/runtime validates its configured credentials
  * 5. Target URL resolves, is not link-local (cloud metadata), and is reachable (DNS + HTTP)
  */
 
@@ -25,16 +25,25 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
 import net, { type LookupFunction } from 'node:net';
-import type { SDKAssistantMessageError } from '@anthropic-ai/claude-agent-sdk';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
+import {
+  type AgentSession,
+  createAgentSession,
+  SessionManager,
+  SettingsManager,
+} from '@earendil-works/pi-coding-agent';
 import { glob } from 'zx';
-import { resolveModel } from '../ai/models.js';
-import { parseConfig } from '../config-parser.js';
+import { attachCancellation } from '../ai/pi/cancellation.js';
+import { type PiModelRuntime, resolvePiModelRuntime } from '../ai/pi/model-runtime.js';
+import { PI_RETRY_SETTINGS } from '../ai/pi/retry-settings.js';
+import { providerTurnError } from '../ai/pi/turn-error.js';
+import { parseConfig, parseConfigYAML, validateConfigForSourceMode } from '../config-parser.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
-import type { Config, Rule } from '../types/config.js';
+import type { Config, DistributedConfig, Rule, SourceMode } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import { err, ok, type Result } from '../types/result.js';
-import { isRetryableError, PentestError } from './error-handling.js';
+import { sanitizeUrlForDiagnostics } from '../utils/redactSecrets.js';
+import { PentestError } from './error-handling.js';
 
 const TARGET_URL_TIMEOUT_MS = 10_000;
 
@@ -77,6 +86,44 @@ function pinnedLookup(addresses: LookupAddress[]): LookupFunction {
 }
 
 // === Repository Validation ===
+
+async function validateWorkingDirectory(
+  workingDirectory: string,
+  sourceMode: SourceMode,
+  logger: ActivityLogger,
+): Promise<Result<void, PentestError>> {
+  logger.info('Checking working directory...', { workingDirectory, sourceMode });
+  try {
+    const stats = await fs.stat(workingDirectory);
+    if (!stats.isDirectory()) {
+      return err(
+        new PentestError(
+          `Working directory is not a directory: ${workingDirectory}`,
+          'config',
+          false,
+          { workingDirectory, sourceMode },
+          ErrorCode.REPO_NOT_FOUND,
+        ),
+      );
+    }
+    if (sourceMode === 'url-only') {
+      await fs.access(workingDirectory, fs.constants.W_OK);
+    }
+  } catch {
+    return err(
+      new PentestError(
+        sourceMode === 'url-only'
+          ? `URL-only working directory does not exist or is not writable: ${workingDirectory}`
+          : `Working directory does not exist: ${workingDirectory}`,
+        'config',
+        false,
+        { workingDirectory, sourceMode },
+        ErrorCode.REPO_NOT_FOUND,
+      ),
+    );
+  }
+  return ok(undefined);
+}
 
 async function validateRepo(
   repoPath: string,
@@ -196,14 +243,33 @@ interface MissingCodePath {
   description: string;
 }
 
+type ConfigWithRules = Config | DistributedConfig;
+
+function rulesFromConfig(config: ConfigWithRules): { avoid: Rule[]; focus: Rule[] } {
+  if ('avoid' in config || 'focus' in config) {
+    const distributed = config as DistributedConfig;
+    return { avoid: distributed.avoid ?? [], focus: distributed.focus ?? [] };
+  }
+  return { avoid: config.rules?.avoid ?? [], focus: config.rules?.focus ?? [] };
+}
+
+export function validateSourceModeRules(config: ConfigWithRules, sourceMode: SourceMode): Result<void, PentestError> {
+  try {
+    validateConfigForSourceMode(config, sourceMode);
+    return ok(undefined);
+  } catch (error) {
+    return err(error instanceof PentestError ? error : new PentestError(String(error), 'config', false));
+  }
+}
+
 async function validateCodePathsExist(
-  config: Config,
+  config: ConfigWithRules,
   repoPath: string,
   logger: ActivityLogger,
 ): Promise<Result<void, PentestError>> {
   const tagged: Array<{ kind: RuleKind; rule: Rule }> = [
-    ...(config.rules?.avoid ?? []).map((rule) => ({ kind: 'avoid' as const, rule })),
-    ...(config.rules?.focus ?? []).map((rule) => ({ kind: 'focus' as const, rule })),
+    ...rulesFromConfig(config).avoid.map((rule) => ({ kind: 'avoid' as const, rule })),
+    ...rulesFromConfig(config).focus.map((rule) => ({ kind: 'focus' as const, rule })),
   ].filter(({ rule }) => rule.type === 'code_path');
 
   if (tagged.length === 0) {
@@ -240,191 +306,126 @@ async function validateCodePathsExist(
 
 // === Credential Validation ===
 
-/** Map SDK error type to a human-readable preflight PentestError. */
-function classifySdkError(sdkError: SDKAssistantMessageError, authType: string): Result<void, PentestError> {
-  switch (sdkError) {
-    case 'authentication_failed':
-      return err(
-        new PentestError(
-          `Invalid ${authType}. Check your credentials in .env and try again.`,
-          'config',
-          false,
-          { authType, sdkError },
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
-    case 'billing_error':
-      return err(
-        new PentestError(
-          `Anthropic account has a billing issue. Add credits or check your billing dashboard.`,
-          'billing',
-          true,
-          { authType, sdkError },
-          ErrorCode.BILLING_ERROR,
-        ),
-      );
-    case 'rate_limit':
-      return err(
-        new PentestError(
-          `Anthropic rate limit or spending cap reached. Wait a few minutes and try again.`,
-          'billing',
-          true,
-          { authType, sdkError },
-          ErrorCode.BILLING_ERROR,
-        ),
-      );
-    case 'server_error':
-      return err(
-        new PentestError(`Anthropic API is temporarily unavailable. Try again shortly.`, 'network', true, {
-          authType,
-          sdkError,
-        }),
-      );
+function credentialHint(providerId: string): string {
+  switch (providerId) {
+    case 'anthropic':
+      return 'ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or SHANNON_AI_API_KEY';
+    case 'openai':
+      return 'OPENAI_API_KEY or SHANNON_AI_API_KEY';
+    case 'xai':
+      return 'XAI_API_KEY or SHANNON_AI_API_KEY';
+    case 'amazon-bedrock':
+      return 'AWS_BEARER_TOKEN_BEDROCK, AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_PROFILE, AWS_WEB_IDENTITY_TOKEN_FILE, or AWS_CONTAINER_CREDENTIALS_RELATIVE_URI/FULL_URI';
     default:
-      return err(
-        new PentestError(
-          `${authType} validation failed unexpectedly. Check your credentials in .env.`,
-          'config',
-          false,
-          { authType, sdkError },
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
+      return 'SHANNON_AI_API_KEY';
   }
 }
 
-/** Validate credentials via a minimal Claude Agent SDK query. */
-async function validateCredentials(
+function describeAuth(runtime: PiModelRuntime): string {
+  const { providerId, baseUrl } = runtime.selection;
+  return baseUrl ? `custom endpoint (${sanitizeUrlForDiagnostics(baseUrl)})` : `${providerId} credentials`;
+}
+
+function classifyPiCredentialError(error: Error, authType: string): PentestError {
+  const lower = error.message.toLowerCase();
+  if (/billing|credit|spending cap|rate.?limit|429/.test(lower)) {
+    return new PentestError(
+      `${authType} has a billing or rate-limit issue. Check the provider account and try again.`,
+      'billing',
+      true,
+      { authType },
+      ErrorCode.BILLING_ERROR,
+    );
+  }
+  if (/401|403|invalid[ _-]?api[ _-]?key|unauthorized|authentication|forbidden|x-api-key/.test(lower)) {
+    return new PentestError(
+      `Invalid ${authType}. Check the configured credentials and try again.`,
+      'config',
+      false,
+      { authType },
+      ErrorCode.AUTH_FAILED,
+    );
+  }
+  if (
+    /network|timeout|enotfound|econnrefused|fetch failed|getaddrinfo|socket|overloaded|unavailable|50\d/.test(lower)
+  ) {
+    return new PentestError(
+      `${authType} is unreachable or temporarily unavailable. Try again shortly.`,
+      'network',
+      true,
+      { authType },
+    );
+  }
+  return new PentestError(
+    `${authType} validation failed: ${error.message.slice(0, 300)}`,
+    'config',
+    false,
+    { authType },
+    ErrorCode.AUTH_FAILED,
+  );
+}
+
+async function probePiModelRuntime(
+  workingDirectory: string,
+  runtime: PiModelRuntime,
+  authType: string,
+  cancellationSignal?: AbortSignal,
+): Promise<Result<void, PentestError>> {
+  let failedTurn: AssistantMessage | undefined;
+  let session: AgentSession | undefined;
+  let cleanupCancellation = (): void => undefined;
+  try {
+    cancellationSignal?.throwIfAborted();
+    ({ session } = await createAgentSession({
+      cwd: workingDirectory,
+      model: runtime.model,
+      noTools: 'all',
+      modelRuntime: runtime.modelRuntime,
+      sessionManager: SessionManager.inMemory(workingDirectory),
+      settingsManager: SettingsManager.inMemory({ retry: PI_RETRY_SETTINGS, compaction: { enabled: false } }),
+    }));
+    cleanupCancellation = attachCancellation(cancellationSignal, () => session?.abort());
+    session.subscribe((event) => {
+      if (event.type === 'turn_end' && event.message.role === 'assistant' && event.message.stopReason === 'error') {
+        failedTurn = event.message;
+      }
+    });
+    await session.prompt('Reply with OK.');
+    cancellationSignal?.throwIfAborted();
+  } catch (error) {
+    if (cancellationSignal?.aborted) cancellationSignal.throwIfAborted();
+    return err(classifyPiCredentialError(error instanceof Error ? error : new Error(String(error)), authType));
+  } finally {
+    cleanupCancellation();
+    session?.dispose();
+  }
+
+  if (failedTurn) {
+    return err(classifyPiCredentialError(providerTurnError(failedTurn, `${authType} validation failed`), authType));
+  }
+  return ok(undefined);
+}
+
+/** Resolve and probe exactly the Pi model/runtime selected for this run. */
+export async function validatePiCredentials(
+  workingDirectory: string,
   logger: ActivityLogger,
   apiKey?: string,
   providerConfig?: import('../types/config.js').ProviderConfig,
+  cancellationSignal?: AbortSignal,
 ): Promise<Result<void, PentestError>> {
-  // 0. If providerConfig is present, credentials are managed by the caller.
-  //    The executor will map providerConfig directly to sdkEnv — no process.env needed.
-  if (providerConfig) {
-    logger.info(
-      `Provider config present (type: ${providerConfig.providerType || 'anthropic_api'}) — skipping env-based credential validation`,
-    );
-    return ok(undefined);
-  }
-
-  // 0b. If apiKey provided via config, set it in env for SDK validation
-  //     This avoids requiring process.env.ANTHROPIC_API_KEY when key is threaded via input
-  if (apiKey) {
-    process.env.ANTHROPIC_API_KEY = apiKey;
-  }
-  // 1. Custom base URL — validate endpoint is reachable via SDK query
-  if (process.env.ANTHROPIC_BASE_URL && process.env.ANTHROPIC_AUTH_TOKEN) {
-    const baseUrl = process.env.ANTHROPIC_BASE_URL;
-    logger.info('Validating custom base URL');
-
-    try {
-      for await (const message of query({ prompt: 'hi', options: { model: resolveModel('small'), maxTurns: 1 } })) {
-        if (message.type === 'assistant' && message.error) {
-          return classifySdkError(message.error, `custom endpoint (${baseUrl})`);
-        }
-        if (message.type === 'result') {
-          break;
-        }
-      }
-
-      logger.info('Custom base URL OK');
-      return ok(undefined);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return err(
-        new PentestError(
-          `Custom base URL unreachable: ${baseUrl} — ${message}`,
-          'network',
-          false,
-          { baseUrl },
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
-    }
-  }
-
-  // 2. Bedrock mode — validate required AWS credentials are present
-  if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') {
-    const required = [
-      'AWS_REGION',
-      'AWS_BEARER_TOKEN_BEDROCK',
-      'ANTHROPIC_SMALL_MODEL',
-      'ANTHROPIC_MEDIUM_MODEL',
-      'ANTHROPIC_LARGE_MODEL',
-    ];
-    const missing = required.filter((v) => !process.env[v]);
-    if (missing.length > 0) {
-      return err(
-        new PentestError(
-          `Bedrock mode requires the following env vars in .env: ${missing.join(', ')}`,
-          'config',
-          false,
-          { missing },
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
-    }
-    logger.info('Bedrock credentials OK');
-    return ok(undefined);
-  }
-
-  // 3. Vertex AI mode — validate required GCP credentials are present
-  if (process.env.CLAUDE_CODE_USE_VERTEX === '1') {
-    const required = [
-      'CLOUD_ML_REGION',
-      'ANTHROPIC_VERTEX_PROJECT_ID',
-      'ANTHROPIC_SMALL_MODEL',
-      'ANTHROPIC_MEDIUM_MODEL',
-      'ANTHROPIC_LARGE_MODEL',
-    ];
-    const missing = required.filter((v) => !process.env[v]);
-    if (missing.length > 0) {
-      return err(
-        new PentestError(
-          `Vertex AI mode requires the following env vars in .env: ${missing.join(', ')}`,
-          'config',
-          false,
-          { missing },
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
-    }
-    // Validate service account credentials file is accessible
-    const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    if (!credPath) {
-      return err(
-        new PentestError(
-          'Vertex AI mode requires GOOGLE_APPLICATION_CREDENTIALS pointing to a service account key JSON file',
-          'config',
-          false,
-          {},
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
-    }
-    try {
-      await fs.access(credPath);
-    } catch {
-      return err(
-        new PentestError(
-          `Service account key file not found at: ${credPath}`,
-          'config',
-          false,
-          { credPath },
-          ErrorCode.AUTH_FAILED,
-        ),
-      );
-    }
-    logger.info('Vertex AI credentials OK');
-    return ok(undefined);
-  }
-
-  // 4. Check that at least one credential is present
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_AUTH_TOKEN) {
+  const effectiveProviderConfig = providerConfig ?? (apiKey ? { providerType: 'anthropic', apiKey } : undefined);
+  let runtime: PiModelRuntime;
+  try {
+    runtime = await resolvePiModelRuntime({
+      modelTier: 'small',
+      ...(effectiveProviderConfig && { providerConfig: effectiveProviderConfig }),
+      warn: (message) => logger.warn(message),
+    });
+  } catch (error) {
     return err(
       new PentestError(
-        'No API credentials found. Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in .env (or use CLAUDE_CODE_USE_BEDROCK=1 for AWS Bedrock, or CLAUDE_CODE_USE_VERTEX=1 for Google Vertex AI)',
+        error instanceof Error ? error.message : String(error),
         'config',
         false,
         {},
@@ -433,38 +434,25 @@ async function validateCredentials(
     );
   }
 
-  // 5. Validate via SDK query
-  const authType = process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'OAuth token' : 'API key';
-  logger.info(`Validating ${authType} via SDK...`);
-
-  try {
-    for await (const message of query({ prompt: 'hi', options: { model: resolveModel('small'), maxTurns: 1 } })) {
-      if (message.type === 'assistant' && message.error) {
-        return classifySdkError(message.error, authType);
-      }
-      if (message.type === 'result') {
-        break;
-      }
-    }
-
-    logger.info(`${authType} OK`);
-    return ok(undefined);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const retryable = isRetryableError(error instanceof Error ? error : new Error(message));
-
+  logger.info(`Model: ${runtime.selection.debugLabel}`);
+  if (!runtime.selection.credential.configured) {
     return err(
       new PentestError(
-        retryable
-          ? `Failed to reach Anthropic API. Check your network connection.`
-          : `${authType} validation failed: ${message}`,
-        retryable ? 'network' : 'config',
-        retryable,
-        { authType },
-        retryable ? undefined : ErrorCode.AUTH_FAILED,
+        `No credentials found for provider "${runtime.selection.providerId}". Set ${credentialHint(runtime.selection.providerId)}.`,
+        'config',
+        false,
+        { providerId: runtime.selection.providerId },
+        ErrorCode.AUTH_FAILED,
       ),
     );
   }
+
+  const authType = describeAuth(runtime);
+  logger.info(`Validating ${authType} via Pi...`);
+  const probe = await probePiModelRuntime(workingDirectory, runtime, authType, cancellationSignal);
+  if (!probe.ok) return probe;
+  logger.info(`${authType} OK`);
+  return ok(undefined);
 }
 
 // === Target URL Validation ===
@@ -595,29 +583,55 @@ async function validateTargetUrl(targetUrl: string, logger: ActivityLogger): Pro
  * 1. Repository path exists and contains .git
  * 2. Config file parses and validates (if configPath provided)
  * 3. code_path rules match at least one entry in the repo (skipped without config)
- * 4. Credentials validate (API key, OAuth, Bedrock, or Vertex AI)
+ * 4. Credentials validate for the selected Pi provider
  * 5. Target URL is reachable from the container
  *
  * Returns on first failure.
  */
 export async function runPreflightChecks(
   targetUrl: string,
-  repoPath: string,
+  workingDirectory: string,
+  repoPath: string | undefined,
+  sourceMode: SourceMode,
   configPath: string | undefined,
   logger: ActivityLogger,
   skipGitCheck?: boolean,
   apiKey?: string,
   providerConfig?: import('../types/config.js').ProviderConfig,
+  configYAML?: string,
+  configData?: DistributedConfig,
+  cancellationSignal?: AbortSignal,
 ): Promise<Result<void, PentestError>> {
-  // 1. Repository check (free — filesystem only)
-  const repoResult = await validateRepo(repoPath, logger, skipGitCheck);
-  if (!repoResult.ok) {
-    return repoResult;
+  // 1. Every run needs a real working directory; URL-only additionally requires it to be writable.
+  const workingResult = await validateWorkingDirectory(workingDirectory, sourceMode, logger);
+  if (!workingResult.ok) return workingResult;
+
+  // 2. Source-assisted runs retain the existing repository validation. URL-only runs never fake it.
+  if (sourceMode === 'source-assisted') {
+    if (!repoPath) {
+      return err(
+        new PentestError(
+          'Source-assisted mode requires a repository path.',
+          'config',
+          false,
+          { sourceMode },
+          ErrorCode.REPO_NOT_FOUND,
+        ),
+      );
+    }
+    const repoResult = await validateRepo(repoPath, logger, skipGitCheck);
+    if (!repoResult.ok) return repoResult;
   }
 
-  // 2. Config check (free — filesystem + CPU)
-  let parsedConfig: Config | null = null;
-  if (configPath) {
+  // 3. Config check (pre-parsed → inline YAML → file, matching ConfigLoaderService precedence).
+  let parsedConfig: ConfigWithRules | null = configData ?? null;
+  if (!parsedConfig && configYAML) {
+    try {
+      parsedConfig = parseConfigYAML(configYAML);
+    } catch (error) {
+      return err(error instanceof PentestError ? error : new PentestError(String(error), 'config', false));
+    }
+  } else if (!parsedConfig && configPath) {
     const configResult = await validateConfig(configPath, logger);
     if (!configResult.ok) {
       return configResult;
@@ -625,22 +639,23 @@ export async function runPreflightChecks(
     parsedConfig = configResult.value;
   }
 
-  // 3. code_path rules must match real entries in the repo (filesystem only).
-  // Runs after both repo and config are valid, before any network round-trip.
+  // 4. URL-only rejects code_path rules; source-assisted validates that they match real entries.
   if (parsedConfig) {
-    const codePathResult = await validateCodePathsExist(parsedConfig, repoPath, logger);
-    if (!codePathResult.ok) {
-      return codePathResult;
+    const modeResult = validateSourceModeRules(parsedConfig, sourceMode);
+    if (!modeResult.ok) return modeResult;
+    if (sourceMode === 'source-assisted' && repoPath) {
+      const codePathResult = await validateCodePathsExist(parsedConfig, repoPath, logger);
+      if (!codePathResult.ok) return codePathResult;
     }
   }
 
-  // 4. Credential check (cheap — 1 SDK round-trip, skipped when providerConfig present)
-  const credResult = await validateCredentials(logger, apiKey, providerConfig);
+  // 5. Resolve and probe the same Pi model/runtime used by agent execution.
+  const credResult = await validatePiCredentials(workingDirectory, logger, apiKey, providerConfig, cancellationSignal);
   if (!credResult.ok) {
     return credResult;
   }
 
-  // 5. Target URL reachability check (cheap — 1 HTTP round-trip)
+  // 6. Target URL reachability check (cheap — 1 HTTP round-trip)
   const urlResult = await validateTargetUrl(targetUrl, logger);
   if (!urlResult.ok) {
     return urlResult;

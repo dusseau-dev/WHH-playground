@@ -11,13 +11,27 @@
  * Services are pure domain logic with no Temporal dependencies.
  */
 
-export type { ClaudePromptResult } from '../ai/claude-executor.js';
-export { runClaudePrompt } from '../ai/claude-executor.js';
+export type { PiPromptResult } from '../ai/pi/pi-executor.js';
+export { runPiPrompt } from '../ai/pi/pi-executor.js';
 export type { AgentExecutionInput } from './agent-execution.js';
 export { AgentExecutionService } from './agent-execution.js';
 export { ConfigLoaderService } from './config-loader.js';
 export type { ContainerDependencies } from './container.js';
 export { Container, getContainer, getOrCreateContainer, removeContainer, setContainerFactory } from './container.js';
 export { ExploitationCheckerService } from './exploitation-checker.js';
+export { renderReportPdf } from './pdf-renderer.js';
 export { loadPrompt } from './prompt-manager.js';
-export { assembleFinalReport, injectModelIntoReport } from './reporting.js';
+export {
+  DefaultReportOutputProvider,
+  isSarifEligible,
+  REPORT_PDF_FILENAME,
+  REPORT_SARIF_FILENAME,
+} from './report-output.js';
+export {
+  assembleFinalReport,
+  injectAssessmentModeSections,
+  injectModelIntoReport,
+  renderAssessmentModeSection,
+  renderAssessmentModeSections,
+} from './reporting.js';
+export { renderSarif } from './sarif-renderer.js';

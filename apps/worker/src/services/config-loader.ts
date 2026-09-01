@@ -11,8 +11,14 @@
  * Pure service with no Temporal dependencies.
  */
 
-import { distributeConfig, parseConfig, parseConfigYAML } from '../config-parser.js';
-import type { DistributedConfig } from '../types/config.js';
+import {
+  distributeConfig,
+  normalizeDistributedConfig,
+  parseConfig,
+  parseConfigYAML,
+  validateConfigForSourceMode,
+} from '../config-parser.js';
+import type { DistributedConfig, SourceMode } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import { err, ok, type Result } from '../types/result.js';
 import { PentestError } from './error-handling.js';
@@ -30,10 +36,11 @@ export class ConfigLoaderService {
    * @param configPath - Path to the YAML configuration file
    * @returns Result containing DistributedConfig on success, PentestError on failure
    */
-  async load(configPath: string): Promise<Result<DistributedConfig, PentestError>> {
+  async load(configPath: string, sourceMode?: SourceMode): Promise<Result<DistributedConfig, PentestError>> {
     try {
       const config = await parseConfig(configPath);
       const distributed = distributeConfig(config);
+      if (sourceMode) validateConfigForSourceMode(distributed, sourceMode);
       return ok(distributed);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -70,14 +77,32 @@ export class ConfigLoaderService {
     configPath: string | undefined,
     configData?: DistributedConfig,
     configYAML?: string,
+    sourceMode?: SourceMode,
   ): Promise<Result<DistributedConfig | null, PentestError>> {
     if (configData) {
-      return ok(configData);
+      try {
+        const distributed = normalizeDistributedConfig(configData);
+        if (sourceMode) validateConfigForSourceMode(distributed, sourceMode);
+        return ok(distributed);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return err(
+          new PentestError(
+            `Failed to validate config data: ${errorMessage}`,
+            'config',
+            false,
+            { originalError: errorMessage },
+            ErrorCode.CONFIG_VALIDATION_FAILED,
+          ),
+        );
+      }
     }
     if (configYAML) {
       try {
         const config = parseConfigYAML(configYAML);
-        return ok(distributeConfig(config));
+        const distributed = distributeConfig(config);
+        if (sourceMode) validateConfigForSourceMode(distributed, sourceMode);
+        return ok(distributed);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         return err(
@@ -94,6 +119,6 @@ export class ConfigLoaderService {
     if (!configPath) {
       return ok(null);
     }
-    return this.load(configPath);
+    return this.load(configPath, sourceMode);
   }
 }

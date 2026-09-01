@@ -4,8 +4,8 @@
 
 # Shannon — AI Pentester by Keygraph
 
-Shannon is an autonomous, white-box AI pentester for web applications and APIs. <br />
-It analyzes your source code, identifies attack vectors, and executes real exploits to prove vulnerabilities before they reach production.
+Shannon runs source-assisted or URL-only dynamic security assessments for web applications and APIs. <br />
+Use the CLI directly or open the bundled localhost operator UI with `npx @keygraph/shannon ui`.
 
 ---
 
@@ -18,5 +18,22 @@ It analyzes your source code, identifies attack vectors, and executes real explo
 
 **Full README and usage guide**  
 [https://github.com/KeygraphHQ/shannon#readme](https://github.com/KeygraphHQ/shannon#readme)
+
+```bash
+# Configure Anthropic, OpenAI, xAI, AWS Bedrock, or a compatible gateway.
+# The wizard masks credentials and stores its config with mode 0600.
+npx @keygraph/shannon setup
+
+# URL-only dynamic assessment
+npx @keygraph/shannon start --url https://your-app.example
+
+# Source-assisted assessment
+npx @keygraph/shannon start --url https://your-app.example --repo /path/to/repository
+
+# Profiles, run controls, findings, activity, and reports
+npx @keygraph/shannon ui
+```
+
+Direct configuration uses `SHANNON_AI_MODEL=<provider>:<model-id>` plus the selected provider's credential variable. Google Vertex AI is no longer supported; legacy Vertex configuration returns migration guidance to choose a supported provider or gateway. Keep credentials in the setup-managed config or a secret manager, never in `SHANNON_AI_MODEL`.
 
 </div>

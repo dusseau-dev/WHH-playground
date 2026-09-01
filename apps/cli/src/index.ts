@@ -13,11 +13,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from './commands/build.js';
+import { cancel } from './commands/cancel.js';
 import { logs } from './commands/logs.js';
+import { resume } from './commands/resume.js';
 import { setup } from './commands/setup.js';
 import { start } from './commands/start.js';
 import { status } from './commands/status.js';
 import { stop } from './commands/stop.js';
+import { ui } from './commands/ui.js';
 import { uninstall } from './commands/uninstall.js';
 import { workspaces } from './commands/workspaces.js';
 import { getMode } from './mode.js';
@@ -59,7 +62,7 @@ function showHelp(): void {
   const prefix = mode === 'local' ? './shannon' : 'npx @keygraph/shannon';
 
   console.log(`
-Shannon - AI Penetration Testing Framework
+Shannon - AI Security Assessment Framework
 
 Usage:${
     mode === 'local'
@@ -67,7 +70,10 @@ Usage:${
       : `
   ${prefix} setup                                       Configure credentials`
   }
-  ${prefix} start --url <url> --repo <path> [options]   Start a pentest scan
+  ${prefix} start --url <url> [--repo <path>] [options] Start an assessment
+  ${prefix} ui [--port <number>] [--no-open]            Open the local operator UI
+  ${prefix} cancel <workspace>                           Cancel an active run
+  ${prefix} resume <workspace> [--config <path>]         Resume an interrupted run
   ${prefix} stop [--clean]                               Stop all containers
   ${prefix} workspaces                                   List all workspaces
   ${prefix} logs <workspace>                             Tail workflow log
@@ -83,14 +89,15 @@ Usage:${
 
 Options for 'start':
   -u, --url <url>           Target URL (required)
-  -r, --repo <path>         Repository path${mode === 'local' ? ' or bare name' : ''} (required)
+  -r, --repo <path>         Optional repository path${mode === 'local' ? ' or bare name' : ''}
   -c, --config <path>       Configuration file (YAML)
   -o, --output <path>       Copy deliverables to this directory after run
-  -w, --workspace <name>    Named workspace (auto-resumes if exists)
+  -w, --workspace <name>    Named workspace
       --pipeline-testing    Use minimal prompts for fast testing
       --debug               Preserve worker container after exit for log inspection
 
 Examples:
+  ${prefix} start -u https://example.com
   ${prefix} start -u https://example.com -r ${mode === 'local' ? 'my-repo' : './my-repo'}
   ${prefix} start -u https://example.com -r /path/to/repo -c config.yaml -w q1-audit
   ${prefix} logs q1-audit
@@ -108,7 +115,7 @@ Monitor workflows at http://localhost:8233
 
 interface ParsedStartArgs {
   url: string;
-  repo: string;
+  repo?: string;
   config?: string;
   workspace?: string;
   output?: string;
@@ -178,17 +185,17 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
     }
   }
 
-  if (!url || !repo) {
-    console.error('ERROR: --url and --repo are required');
-    console.error(`Usage: ${getMode() === 'local' ? './shannon' : 'npx @keygraph/shannon'} start -u <url> -r <path>`);
+  if (!url) {
+    console.error('ERROR: --url is required');
+    console.error(`Usage: ${getMode() === 'local' ? './shannon' : 'npx @keygraph/shannon'} start -u <url> [-r <path>]`);
     process.exit(1);
   }
 
   return {
     url,
-    repo,
     pipelineTesting,
     debug,
+    ...(repo && { repo }),
     ...(config && { config }),
     ...(workspace && { workspace }),
     ...(output && { output }),
@@ -208,6 +215,44 @@ switch (command) {
     await start({ ...parsed, version: getVersion() });
     break;
   }
+  case 'ui': {
+    let port: number | undefined;
+    const portIndex = args.indexOf('--port');
+    if (portIndex >= 0) {
+      const rawPort = args[portIndex + 1];
+      port = rawPort ? Number(rawPort) : Number.NaN;
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        console.error('ERROR: --port must be an integer from 1 to 65535');
+        process.exit(1);
+      }
+    }
+    await ui(getVersion(), port, !args.includes('--no-open'));
+    break;
+  }
+  case 'cancel': {
+    const workspaceId = args[1];
+    if (!workspaceId) {
+      console.error('ERROR: Workspace ID is required');
+      process.exit(1);
+    }
+    await cancel(workspaceId, getVersion());
+    break;
+  }
+  case 'resume': {
+    const workspaceId = args[1];
+    if (!workspaceId) {
+      console.error('ERROR: Workspace ID is required');
+      process.exit(1);
+    }
+    const configIndex = args.indexOf('--config');
+    const configPath = configIndex >= 0 ? args[configIndex + 1] : undefined;
+    if (configIndex >= 0 && !configPath) {
+      console.error('ERROR: --config requires a path');
+      process.exit(1);
+    }
+    await resume(workspaceId, getVersion(), configPath);
+    break;
+  }
   case 'stop':
     stop(args.includes('--clean'));
     break;
@@ -222,7 +267,7 @@ switch (command) {
     break;
   }
   case 'workspaces':
-    workspaces(getVersion());
+    await workspaces(getVersion());
     break;
   case 'status':
     status();

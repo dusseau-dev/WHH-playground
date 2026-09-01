@@ -9,19 +9,30 @@ const WORKER_ROOT = path.resolve(import.meta.dirname, '..');
 export const PROMPTS_DIR = path.join(WORKER_ROOT, 'prompts');
 export const CONFIGS_DIR = path.join(WORKER_ROOT, 'configs');
 
-/** Default deliverables subdirectory relative to repoPath */
+/** Default deliverables subdirectory relative to the run's working directory */
 export const DEFAULT_DELIVERABLES_SUBDIR = '.shannon/deliverables';
 
 /** Default audit log directory */
 export const DEFAULT_AUDIT_DIR = './workspaces';
 
+/** Hidden internal state directory inside each assessment workspace. */
+export const INTERNAL_DIR = '.shannon';
+
+/** Resolve current session state while retaining read compatibility with legacy workspaces. */
+export function resolveSessionJsonPath(runDirectory: string): string {
+  const current = path.join(runDirectory, INTERNAL_DIR, 'session.json');
+  if (fs.existsSync(current)) return current;
+  const legacy = path.join(runDirectory, 'session.json');
+  return fs.existsSync(legacy) ? legacy : current;
+}
+
 /**
- * Resolve the deliverables directory for a given repoPath and optional subdir override.
- * @param repoPath - Absolute path to the target repository
- * @param subdir - Subdirectory relative to repoPath (default: '.shannon/deliverables')
+ * Resolve the deliverables directory for a working root and optional subdir override.
+ * @param workingDirectory - Absolute writable root for the run
+ * @param subdir - Subdirectory relative to workingDirectory (default: '.shannon/deliverables')
  */
-export function deliverablesDir(repoPath: string, subdir: string = DEFAULT_DELIVERABLES_SUBDIR): string {
-  return path.join(repoPath, ...subdir.split('/'));
+export function deliverablesDir(workingDirectory: string, subdir: string = DEFAULT_DELIVERABLES_SUBDIR): string {
+  return path.join(workingDirectory, ...subdir.split('/'));
 }
 
 /**

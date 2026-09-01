@@ -9,8 +9,8 @@
 
 <a href="https://trendshift.io/repositories/15604" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15604" alt="KeygraphHQ%2Fshannon | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-Shannon is an autonomous, white-box AI pentester for web applications and APIs. <br />
-It analyzes your source code, identifies attack vectors, and executes real exploits to prove vulnerabilities before they reach production.
+Shannon is an autonomous security assessment system for web applications and APIs. <br />
+Run URL-only dynamic testing, or add a repository for source-assisted coverage and code-location context.
 
 ---
 
@@ -22,9 +22,9 @@ It analyzes your source code, identifies attack vectors, and executes real explo
 
 ## What is Shannon?
 
-Shannon is an AI pentester developed by [Keygraph](https://keygraph.io). It performs white-box security testing of web applications and their underlying APIs by combining source code analysis with live exploitation.
+Shannon is an AI security testing system developed by [Keygraph](https://keygraph.io). It combines live browser and API testing with an evidence triage gate. A repository is optional: source-assisted assessments use code to guide the live test, while URL-only assessments operate exclusively through behavior observable at the authorized target.
 
-Shannon analyzes your web application's source code to identify potential attack vectors, then uses browser automation and command-line tools to execute real exploits (injection attacks, authentication bypass, SSRF, XSS) against the running application and its APIs. Only vulnerabilities with a working proof-of-concept are included in the final report.
+Both modes run preflight, authentication validation, live reconnaissance, selected security test categories, optional safe demonstrations, triage, and reporting. URL-only reports explicitly disclose that implementation analysis and code-location coverage were unavailable.
 
 **Why Shannon Exists**
 
@@ -40,11 +40,13 @@ Shannon identified 20+ vulnerabilities in OWASP Juice Shop, including authentica
 
 ## Features
 
-- **Fully Autonomous Operation**: A single command launches the full pentest. Shannon handles 2FA/TOTP logins (including SSO), browser navigation, exploitation, and report generation without manual intervention.
-- **Reproducible Proof-of-Concept Exploits**: The final report contains only proven, exploitable findings with copy-and-paste PoCs. Vulnerabilities that cannot be exploited are not reported.
+- **Two Assessment Modes**: Run against a URL alone, or provide a repository for source-assisted analysis and code-location context.
+- **Local Operator UI**: Create reusable profiles, select security test categories, start/cancel/resume runs, follow live activity, triage findings, and download reports or evidence from a localhost-only interface.
+- **Fully Autonomous Operation**: A single command launches the full assessment. Shannon handles 2FA/TOTP logins (including SSO), browser navigation, safe demonstrations, triage, and report generation without manual intervention.
+- **Evidence-First Results**: Triage distinguishes confirmed, downgraded, ruled-out, chain-dependent, and unvalidated candidates before reporting.
 - **OWASP Vulnerability Coverage**: Identifies and validates Injection, XSS, SSRF, and Broken Authentication/Authorization, with additional categories in development.
-- **Code-Aware Dynamic Testing**: Analyzes source code to guide attack strategy, then validates findings with live browser and CLI-based exploits against the running application.
-- **Parallel Processing**: Vulnerability analysis and exploitation phases run concurrently across all attack categories.
+- **Code-Aware Dynamic Testing**: In source-assisted mode, source analysis guides live browser and API validation against the running application.
+- **Parallel Processing**: Analysis and safe-demonstration pipelines run concurrently across selected categories.
 
 ## Product Line
 
@@ -58,8 +60,7 @@ Shannon is developed by [Keygraph](https://keygraph.io) and available in two edi
 > **This repository contains Shannon Lite,** the core autonomous AI pentesting framework. **Shannon Pro** is Keygraph's all-in-one AppSec platform, combining SAST, SCA, secrets scanning, business logic security testing, and autonomous AI pentesting in a single correlated workflow. Every finding is validated with a working proof-of-concept exploit.
 
 > [!IMPORTANT]
-> **White-box only.** Shannon Lite is designed for **white-box (source-available)** application security testing.  
-> It expects access to your application's source code and repository layout.
+> **URL-only mode has lower coverage than source-assisted mode.** It cannot inspect implementation-only attack surfaces, attribute findings to code locations, or prove that unobserved routes are absent. Shannon discloses these limits in the UI and every URL-only report.
 
 ### Shannon Pro: Architecture Overview
 
@@ -110,12 +111,12 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
   - [Prerequisites](#prerequisites)
   - [Quick Start (Recommended: npx)](#quick-start-recommended-npx)
   - [Clone and Build](#clone-and-build)
-  - [Prepare Your Repository](#prepare-your-repository)
+  - [Choose an Assessment Mode](#choose-an-assessment-mode)
   - [Common Commands](#common-commands)
   - [Workspaces and Resuming](#workspaces-and-resuming)
   - [Credentials and Configuration](#credentials-and-configuration)
   - [AWS Bedrock](#aws-bedrock)
-  - [Google Vertex AI](#google-vertex-ai)
+  - [Vertex AI Migration](#vertex-ai-migration)
   - [Custom Base URL](#custom-base-url)
   - [Platform-Specific Instructions](#platform-specific-instructions)
   - [Output and Results](#output-and-results)
@@ -135,16 +136,18 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
 ### Prerequisites
 
 - **Docker** - Container runtime ([Install Docker](https://docs.docker.com/get-docker/))
-- **Node.js 18+** - Required for `npx` usage ([Install Node.js](https://nodejs.org/))
+- **Node.js 20.19+** - Required for `npx` usage and the local UI ([Install Node.js](https://nodejs.org/))
 - **pnpm** - Required for Clone and Build mode ([Install pnpm](https://pnpm.io/installation))
 - **AI Provider Credentials** (choose one):
   - **Anthropic API key** (recommended) - Get from [Anthropic Console](https://console.anthropic.com)
   - **Claude Code OAuth token**
+  - **OpenAI API key**
+  - **xAI API key**
   - **AWS Bedrock** - Route through Amazon Bedrock with AWS credentials (see [AWS Bedrock](#aws-bedrock))
-  - **Google Vertex AI** - Route through Google Cloud Vertex AI (see [Google Vertex AI](#google-vertex-ai))
+  - **Custom or catalog provider** - Use a provider supported by the model runtime, optionally through a compatible gateway
 
 > [!NOTE]
-> Docker is still required to use the `npx` workflow. Under the hood, the CLI pulls and runs a prebuilt Shannon worker image from Docker Hub, which is approximately 1 GB and contains Shannon plus all required dependencies. Shannon mounts the target repository as read-only inside the worker container to protect against accidental modifications during analysis. Run Shannon via `npx @keygraph/shannon` for the latest released version, or pull the latest `main` if building from source.
+> Docker is still required to run assessments through `npx`. The CLI pulls a prebuilt Shannon worker image. In source-assisted mode the repository is mounted read-only with workspace-backed writable overlays; URL-only mode instead mounts an isolated writable target workspace. The local UI itself binds only to `127.0.0.1`.
 
 ### Quick Start (Recommended: npx)
 
@@ -156,10 +159,17 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
 npx @keygraph/shannon setup
 
 # Or export env vars directly
-export ANTHROPIC_API_KEY=your-api-key
+export SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+# Load ANTHROPIC_API_KEY from your shell or secret manager.
 
-# 2. Run a pentest
+# 2a. Run a URL-only assessment
+npx @keygraph/shannon start -u https://your-app.com
+
+# 2b. Or add a repository for source-assisted coverage
 npx @keygraph/shannon start -u https://your-app.com -r /path/to/your-repo
+
+# Open the local operator UI
+npx @keygraph/shannon ui
 ```
 
 Shannon will pull the worker image from Docker Hub, start the infrastructure, and launch an ephemeral worker container for the scan.
@@ -177,11 +187,13 @@ cd shannon
 
 # Option A: Create a .env file
 cat > .env << 'EOF'
+SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
 ANTHROPIC_API_KEY=your-api-key
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
 EOF
 
 # Option B: Export environment variables
+export SHANNON_AI_MODEL="anthropic:claude-sonnet-4-6"
 export ANTHROPIC_API_KEY="your-api-key"              # or CLAUDE_CODE_OAUTH_TOKEN
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000           # recommended
 
@@ -189,20 +201,25 @@ export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000           # recommended
 pnpm install
 pnpm build
 
-# 4. Run a pentest
+# 4. Run an assessment, with or without a repository
+./shannon start -u https://your-app.com
 ./shannon start -u https://your-app.com -r /path/to/your-repo
+
+# Open the local operator UI
+./shannon ui
 ```
 
 Shannon will build the worker image locally, start the infrastructure, and launch an ephemeral worker container for the scan.
 
-### Prepare Your Repository
+### Choose an Assessment Mode
 
-Shannon can scan any repository on your machine. Pass an absolute or relative path with `-r`.
+Omit `-r` for URL-only dynamic testing. Pass an absolute or relative repository path with `-r` for source-assisted coverage.
 
 Examples:
 
 ```bash
 npx @keygraph/shannon start -u https://example.com -r /path/to/repo
+npx @keygraph/shannon start -u https://example.com
 ```
 
 <details>
@@ -210,6 +227,7 @@ npx @keygraph/shannon start -u https://example.com -r /path/to/repo
 
 ```bash
 ./shannon start -u https://example.com -r ./relative/path
+./shannon start -u https://example.com
 ```
 
 </details>
@@ -221,6 +239,7 @@ npx @keygraph/shannon start -u https://example.com -r /path/to/repo
 ```bash
 npx @keygraph/shannon logs <workspace>
 npx @keygraph/shannon status
+npx @keygraph/shannon ui
 ```
 
 Open the Temporal Web UI for detailed monitoring:
@@ -235,6 +254,7 @@ open http://localhost:8233
 ```bash
 ./shannon logs <workspace>
 ./shannon status
+./shannon ui
 ```
 
 </details>
@@ -261,6 +281,9 @@ npx @keygraph/shannon uninstall
 
 ```bash
 # Basic pentest
+npx @keygraph/shannon start -u https://example.com
+
+# Source-assisted assessment
 npx @keygraph/shannon start -u https://example.com -r /path/to/repo
 
 # With a configuration file
@@ -274,13 +297,20 @@ npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w q1-audit
 
 # List all workspaces
 npx @keygraph/shannon workspaces
+
+# Cancel or resume by immutable workspace snapshot
+npx @keygraph/shannon cancel q1-audit
+npx @keygraph/shannon resume q1-audit
 ```
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-# Basic pentest
+# URL-only assessment
+./shannon start -u https://example.com
+
+# Source-assisted assessment
 ./shannon start -u https://example.com -r /path/to/repo
 
 # With a configuration file
@@ -303,14 +333,15 @@ npx @keygraph/shannon workspaces
 
 ### Workspaces and Resuming
 
-Shannon supports **workspaces** that allow you to resume interrupted or failed runs without re-running completed agents.
+Shannon supports **workspaces** that allow failed or cancelled runs to resume without changing their original target, source mode, repository, or normalized configuration.
 
 **How it works:**
 
 - Every run creates a workspace (auto-named by default, for example `example-com_shannon-1771007534808`)
 - Workspaces are stored in `./workspaces/` (local mode) or `~/.shannon/workspaces/` (npx mode)
 - Use `-w <name>` to give your run a custom name for easier reference
-- To resume any run, pass its workspace name via `-w` — Shannon detects which agents completed successfully and picks up where it left off
+- Resume with `shannon resume <workspace>`; completed agents and checkpoint artifacts are reused
+- Target secrets are never stored in `.shannon/run.json` and must be resolved from stored references or supplied again on resume
 - Each agent's progress is checkpointed via git commits, so resumed runs start from a clean, validated state
 
 ```bash
@@ -318,10 +349,10 @@ Shannon supports **workspaces** that allow you to resume interrupted or failed r
 npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w my-audit
 
 # Resume the same workspace (skips completed agents)
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w my-audit
+npx @keygraph/shannon resume my-audit
 
-# Resume an auto-named workspace from a previous run
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w example-com_shannon-1771007534808
+# Cancel an active workspace
+npx @keygraph/shannon cancel my-audit
 
 # List all workspaces and their status
 npx @keygraph/shannon workspaces
@@ -340,7 +371,7 @@ npx @keygraph/shannon workspaces
 </details>
 
 > [!NOTE]
-> The `URL` must match the original workspace URL when resuming. Shannon will reject mismatched URLs to prevent cross-target contamination.
+> Resumes always use the immutable non-secret run snapshot. The target, source mode, repository, and normalized configuration cannot be changed during resume.
 
 ### Credentials and Configuration
 
@@ -348,15 +379,34 @@ npx @keygraph/shannon workspaces
 
 **Local mode** resolves credentials from:
 
-1. **Environment variables** - `export ANTHROPIC_API_KEY=...`
+1. **Environment variables** - `SHANNON_AI_MODEL` and the selected provider's credential variable
 2. **`.env` file** - `./.env`
 
 **npx mode** uses TOML instead of `.env`:
 
-1. **Environment variables** - `export ANTHROPIC_API_KEY=...`
+1. **Environment variables** - `SHANNON_AI_MODEL` and the selected provider's credential variable
 2. **`~/.shannon/config.toml`** - created by `npx @keygraph/shannon setup`
 
 Environment variables always win, so you can override saved config for a single session without editing files.
+
+#### Model and Provider Selection
+
+`SHANNON_AI_MODEL` selects one model using the format `<provider>:<model-id>`. The provider is separated on the first colon, so model IDs may contain additional colons. The setup wizard writes this selection to `~/.shannon/config.toml` using a masked credential prompt and mode `0600` permissions.
+
+| Setup option | `SHANNON_AI_MODEL` example | Accepted credential source |
+| --- | --- | --- |
+| Anthropic | `anthropic:claude-sonnet-4-6` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `SHANNON_AI_API_KEY` |
+| OpenAI | `openai:gpt-5.6-sol` | `OPENAI_API_KEY` or `SHANNON_AI_API_KEY` |
+| xAI | `xai:grok-4.5` | `XAI_API_KEY` or `SHANNON_AI_API_KEY` |
+| Amazon Bedrock | `amazon-bedrock:us.anthropic.claude-sonnet-4-6` | The standard AWS credential chain or `AWS_BEARER_TOKEN_BEDROCK` |
+| Other catalog provider | `<provider>:<model-id>` | `SHANNON_AI_API_KEY` |
+
+Run `npx @keygraph/shannon setup` for the recommended configuration flow. If you configure the environment directly, load the credential variable through your shell, CI, or secret manager; never put a credential in `SHANNON_AI_MODEL` or commit it to the repository.
+
+```bash
+export SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+# Inject ANTHROPIC_API_KEY through your secret manager before starting Shannon.
+```
 
 #### Configuration (Optional)
 
@@ -376,11 +426,11 @@ cp configs/example-config.yaml ./my-app-config.yaml
 # Describe your target environment (optional, max 500 chars)
 description: "Next.js e-commerce app on PostgreSQL. Local dev environment — .env files contain local-only credentials, not deployed to production."
 
-# Limit which vulnerability classes run end-to-end (optional, default: all five)
-# vuln_classes: [injection, xss, auth, authz, ssrf]
+# Limit which security test categories run end-to-end (optional, default: all five)
+# test_categories: [injection, xss, auth, authz, ssrf]
 
-# Skip the exploitation phase (optional, default: "true")
-# exploit: "false"
+# Disable safe demonstrations (optional, default: true)
+# demonstrate: false
 
 # Free-form rules of engagement (optional)
 # rules_of_engagement: |
@@ -413,7 +463,8 @@ authentication:
     value: "/dashboard"
 
 rules:
-  # Supported types: url_path, subdomain, domain, method, header, parameter, code_path
+  # Supported types: url_path, subdomain, domain, method, header, parameter.
+  # code_path is additionally available in source-assisted mode.
   avoid:
     - description: "AI should avoid testing logout functionality"
       type: url_path
@@ -440,6 +491,7 @@ rules:
 Run with:
 
 ```bash
+npx @keygraph/shannon start -u https://example.com -c ./my-app-config.yaml
 npx @keygraph/shannon start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
 ```
 
@@ -504,109 +556,73 @@ Shannon also supports [Amazon Bedrock](https://aws.amazon.com/bedrock/) instead 
 
 #### Quick Setup
 
-Run `npx @keygraph/shannon setup` and select **AWS Bedrock**. The wizard will prompt for your region, bearer token, and model IDs.
+Run `npx @keygraph/shannon setup` and select **AWS Bedrock**. The wizard will prompt for your region, bearer token, and one model ID.
 
 Or export env vars directly:
 
 ```bash
-export CLAUDE_CODE_USE_BEDROCK=1
+export SHANNON_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
 export AWS_REGION=us-east-1
-export AWS_BEARER_TOKEN_BEDROCK=your-bearer-token
-export ANTHROPIC_SMALL_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0
-export ANTHROPIC_MEDIUM_MODEL=us.anthropic.claude-sonnet-4-6
-export ANTHROPIC_LARGE_MODEL=us.anthropic.claude-opus-4-7
+# Load one supported AWS credential mechanism, such as AWS_PROFILE,
+# workload identity, or AWS_BEARER_TOKEN_BEDROCK.
 ```
 
 <details>
 <summary>Clone and Build: add to .env instead</summary>
 
 ```bash
-CLAUDE_CODE_USE_BEDROCK=1
+SHANNON_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
 AWS_REGION=us-east-1
-AWS_BEARER_TOKEN_BEDROCK=your-bearer-token
-ANTHROPIC_SMALL_MODEL=us.anthropic.claude-haiku-4-5-20251001-v1:0
-ANTHROPIC_MEDIUM_MODEL=us.anthropic.claude-sonnet-4-6
-ANTHROPIC_LARGE_MODEL=us.anthropic.claude-opus-4-7
+# Load credentials from outside the repository before starting Shannon.
 ```
 
 </details>
 
-Shannon uses three model tiers: **small** (`claude-haiku-4-5-20251001`) for summarization, **medium** (`claude-sonnet-4-6`) for security analysis, and **large** (`claude-opus-4-7`) for deep reasoning. Set `ANTHROPIC_SMALL_MODEL`, `ANTHROPIC_MEDIUM_MODEL`, and `ANTHROPIC_LARGE_MODEL` to the Bedrock model IDs for your region.
+The model ID must be available in the selected AWS region. Standard AWS profiles, access keys, container credentials, and web identity credentials are supported in addition to Bedrock bearer tokens.
 
-### Google Vertex AI
+### Vertex AI Migration
 
-Shannon also supports [Google Vertex AI](https://cloud.google.com/vertex-ai) instead of using an Anthropic API key.
+Google Vertex AI is not supported by Shannon's current model compatibility layer. It is no longer offered by `npx @keygraph/shannon setup`.
 
-Create a service account with the `roles/aiplatform.user` role in the [GCP Console](https://console.cloud.google.com/iam-admin/serviceaccounts), then download a JSON key file.
+Legacy Vertex settings are rejected. The CLI and worker return migration guidance instead of forwarding Vertex credentials. Migrate to one of the supported provider setups above:
 
-#### Quick Setup
-
-Run `npx @keygraph/shannon setup` and select **Google Vertex AI**. The wizard will prompt for your region, project ID, service account key file path, and model IDs. The key file is securely copied to `~/.shannon/google-sa-key.json`.
-
-Or export env vars directly:
-
-```bash
-export CLAUDE_CODE_USE_VERTEX=1
-export CLOUD_ML_REGION=us-east5
-export ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/your-sa-key.json
-export ANTHROPIC_SMALL_MODEL=claude-haiku-4-5@20251001
-export ANTHROPIC_MEDIUM_MODEL=claude-sonnet-4-6
-export ANTHROPIC_LARGE_MODEL=claude-opus-4-7
-```
-
-<details>
-<summary>Clone and Build: add to .env instead</summary>
-
-```bash
-CLAUDE_CODE_USE_VERTEX=1
-CLOUD_ML_REGION=us-east5
-ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
-GOOGLE_APPLICATION_CREDENTIALS=./credentials/google-sa-key.json
-ANTHROPIC_SMALL_MODEL=claude-haiku-4-5@20251001
-ANTHROPIC_MEDIUM_MODEL=claude-sonnet-4-6
-ANTHROPIC_LARGE_MODEL=claude-opus-4-7
-```
-
-</details>
-
-Set `CLOUD_ML_REGION=global` for global endpoints, or a specific region like `us-east5`. Some models may not be available on global endpoints — see the [Vertex AI Model Garden](https://console.cloud.google.com/vertex-ai/model-garden) for region availability.
+1. Remove the legacy Vertex variables or `[vertex]` section.
+2. Run `npx @keygraph/shannon setup` and choose Anthropic, OpenAI, xAI, AWS Bedrock, or a compatible gateway.
+3. For environment-based configuration, set `SHANNON_AI_MODEL=<provider>:<model-id>` and load the matching credential variable from a secret manager. For a gateway, also set `SHANNON_AI_BASE_URL`.
 
 ### Custom Base URL
 
-Shannon supports pointing the SDK at any Anthropic-compatible endpoint via `ANTHROPIC_BASE_URL`. For users who need proxy-based routing, the supported path is to use an LLM proxy such as [LiteLLM](https://github.com/BerriAI/litellm) configured to expose an Anthropic-compatible endpoint.
+Shannon supports custom gateways through `SHANNON_AI_BASE_URL`. Gateways may expose Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses. For proxy-based routing, one option is an LLM proxy such as [LiteLLM](https://github.com/BerriAI/litellm) configured for the matching API format.
 
 > [!IMPORTANT]
 > **Only Claude models are officially supported.** Shannon's evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Shannon's instructions or tool-use constraints, and are not officially supported. Use them at your own risk; results may be incomplete, inaccurate, or unstable.
 >
 > The previously experimental `claude-code-router` integration is being removed in an upcoming release. If you currently rely on it, migrate to an Anthropic-compatible proxy such as LiteLLM before upgrading.
 
-Run `npx @keygraph/shannon setup` and select **Custom Base URL**. The wizard will prompt for your endpoint URL, auth token, and optionally let you override the default model tiers.
+Run `npx @keygraph/shannon setup` and select **Custom Base URL**. The wizard will prompt for the API format, endpoint URL, API key, and one model ID. It supports Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses gateways.
 
 Or export env vars directly:
 
 ```bash
-export ANTHROPIC_BASE_URL=https://your-proxy.example.com
-export ANTHROPIC_AUTH_TOKEN=your-auth-token
-
-# Optionally override model tiers (defaults are used if not set)
-export ANTHROPIC_SMALL_MODEL=claude-haiku-4-5-20251001
-export ANTHROPIC_MEDIUM_MODEL=claude-sonnet-4-6
-export ANTHROPIC_LARGE_MODEL=claude-opus-4-7
+export SHANNON_AI_MODEL=openai:gateway-model-id
+export SHANNON_AI_BASE_URL=https://your-proxy.example.com
+export SHANNON_AI_OPENAI_FORMAT=chat-completions  # or responses
+# Inject SHANNON_AI_API_KEY through your secret manager.
 ```
 
 <details>
 <summary>Clone and Build: add to .env instead</summary>
 
 ```bash
-ANTHROPIC_BASE_URL=https://your-proxy.example.com
-ANTHROPIC_AUTH_TOKEN=your-auth-token
-ANTHROPIC_SMALL_MODEL=claude-haiku-4-5-20251001
-ANTHROPIC_MEDIUM_MODEL=claude-sonnet-4-6
-ANTHROPIC_LARGE_MODEL=claude-opus-4-7
+SHANNON_AI_MODEL=openai:gateway-model-id
+SHANNON_AI_BASE_URL=https://your-proxy.example.com
+SHANNON_AI_OPENAI_FORMAT=chat-completions
+# Load SHANNON_AI_API_KEY from outside the repository before starting Shannon.
 ```
 
 </details>
+
+For an Anthropic Messages gateway, use an `anthropic:<model-id>` selection and omit `SHANNON_AI_OPENAI_FORMAT`.
 
 ### Platform-Specific Instructions
 
@@ -774,71 +790,34 @@ Shannon Lite scored **96.15% (100/104 exploits)** on a hint-free, source-aware v
 
 ## Architecture
 
-Shannon uses a multi-agent architecture that combines white-box source code analysis with dynamic exploitation across five phases:
+Shannon uses one dynamic pipeline with a source-mode branch:
 
-```
-        ┌──────────────────────┐
-        │   Pre-Reconnaissance │
-        │   (source code scan) │
-        └──────────┬───────────┘
-                   │
-                   ▼
-        ┌──────────────────────┐
-        │   Reconnaissance     │
-        │  (attack surface     │
-        │   mapping)           │
-        └──────────┬───────────┘
-                   │
-                   ▼
-        ┌──────────┴───────────┐
-        │          │           │
-        ▼          ▼           ▼
-  ┌───────────┐ ┌───────────┐ ┌───────────┐
-  │ Vuln      │ │ Vuln      │ │   ...     │
-  │(Injection)│ │  (XSS)    │ │           │
-  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
-        │              │             │
-        ▼              ▼             ▼
-  ┌───────────┐ ┌───────────┐ ┌───────────┐
-  │ Exploit   │ │ Exploit   │ │   ...     │
-  │(Injection)│ │  (XSS)    │ │           │
-  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
-        │              │             │
-        └──────┬───────┴─────────────┘
-               │
-               ▼
-        ┌──────────────────────┐
-        │      Reporting       │
-        └──────────────────────┘
+```mermaid
+flowchart LR
+  Input{Repository provided?}
+  Input -->|Yes| Source[Source pre-recon]
+  Input -->|No| UrlOnly[URL-only coverage scope]
+  Source --> Recon[Live reconnaissance]
+  UrlOnly --> Recon
+  Recon --> Tests[Parallel security test categories]
+  Tests --> Demo[Optional safe demonstrations]
+  Demo --> Triage[Evidence triage]
+  Triage --> Report[Sanitized report]
 ```
 
-### Architectural Overview
+- **Preflight and authentication** run in both modes. URL-only mode validates a writable workspace and rejects `code_path` rules; source-assisted mode also validates the repository.
+- **Source pre-recon** runs only in source-assisted mode. URL-only prompts are isolated from source prompts and cannot claim implementation paths or code locations.
+- **Live reconnaissance** maps behavior observable through the authorized target and supplied identities.
+- **Parallel category pipelines** cover Injection, XSS, Authentication, Authorization, and SSRF according to the selected scope and concurrency.
+- **Safe demonstrations** are optional. They gather the minimum reversible evidence needed to prove or disprove candidates.
+- **Triage** emits PASS, DOWNGRADE, KILL, or CHAIN_REQUIRED verdicts. If triage fails open, candidates remain visible but are labeled unvalidated.
+- **Reporting** sanitizes Markdown and deterministically discloses URL-only coverage limits.
 
-Shannon uses Anthropic's Claude Agent SDK as its reasoning engine within a multi-agent architecture. The system combines white-box source code analysis with black-box dynamic exploitation, managed by an orchestrator across five phases. The architecture is designed for minimal false positives through a "no exploit, no report" policy.
+The CLI and localhost Hono API share a scan controller. Each run has an atomic `.shannon/run.json` with an immutable non-secret snapshot, attempt history, Docker labels, lifecycle timestamps, and source mode. Target secrets are materialized only in a mode-`0600` runtime file and deleted on terminal states. Provider credentials remain managed by the existing environment and CLI setup.
 
-Each scan runs in its own ephemeral Docker container (`docker run --rm`) with a per-invocation Temporal task queue, enabling concurrent scans with different target repositories.
+The React operator UI is bundled into the published package and binds only to `127.0.0.1`. Session cookies, CSRF checks, Host/Origin validation, CSP, realpath containment, and a triage-derived artifact allowlist protect the local control plane.
 
----
-
-#### **Phase 1: Pre-Reconnaissance**
-
-Performs source code analysis to identify the application framework, entry points, and potential attack surface from the codebase. Builds the foundational architectural intelligence that all subsequent agents depend on.
-
-#### **Phase 2: Reconnaissance**
-
-Builds a comprehensive attack surface map from the pre-recon findings. Shannon performs live application exploration via browser automation to correlate code-level insights with real-world behavior, producing a detailed map of all entry points, API endpoints, and authentication mechanisms.
-
-#### **Phase 3: Vulnerability Analysis**
-
-To maximize efficiency, this phase operates in parallel with 5 concurrent agents. Using the reconnaissance data, specialized agents for each OWASP category (injection, XSS, auth, authz, SSRF) hunt for potential flaws in parallel. For vulnerabilities like Injection and SSRF, agents perform a structured data flow analysis, tracing user input to dangerous sinks. This phase produces a key deliverable: a list of **hypothesized exploitable paths** that are passed on for validation.
-
-#### **Phase 4: Exploitation**
-
-Continuing the parallel workflow to maintain speed, this phase is dedicated entirely to turning hypotheses into proof. Dedicated exploit agents receive the hypothesized paths and attempt to execute real-world attacks using browser automation, command-line tools, and custom scripts. This phase enforces a strict **"No Exploit, No Report"** policy: if a hypothesis cannot be successfully exploited to demonstrate impact, it is discarded as a false positive.
-
-#### **Phase 5: Reporting**
-
-The final phase compiles all validated findings into a professional, actionable report. An agent consolidates the reconnaissance data and the successful exploit evidence, cleaning up any noise or hallucinated artifacts. Only verified vulnerabilities are included, complete with **reproducible, copy-and-paste Proof-of-Concepts**, delivering a final pentest-grade report focused exclusively on proven risks.
+See [Architecture and Local Control Plane](docs/architecture.md) for API, persistence, resume, and packaging details.
 
 
 ## Coverage and Roadmap

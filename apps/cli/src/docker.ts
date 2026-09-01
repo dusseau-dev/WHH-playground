@@ -5,14 +5,16 @@
  * NPX mode: pulls from Docker Hub, uses bundled compose.yml.
  */
 
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, execFile, execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import type { ProviderCredentialFile } from './env.js';
 import { getMode } from './mode.js';
+import { INTERNAL_DIR } from './paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,6 +55,29 @@ function runOutput(cmd: string, args: string[]): string {
   }
 }
 
+interface CommandError extends Error {
+  stderr?: string;
+}
+
+function runAsync(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        const commandError = error as CommandError;
+        commandError.stderr = stderr;
+        reject(commandError);
+        return;
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
+
+function isMissingContainerError(error: unknown): boolean {
+  const detail = `${error instanceof Error ? error.message : String(error)} ${(error as CommandError).stderr ?? ''}`;
+  return /no such (?:object|container)/i.test(detail);
+}
+
 /**
  * Check if Temporal is running and healthy.
  */
@@ -90,8 +115,7 @@ export async function ensureInfra(): Promise<void> {
     }
     await sleep(2000);
   }
-  console.error('Timeout waiting for Temporal');
-  process.exit(1);
+  throw new Error('Timeout waiting for Temporal');
 }
 
 /**
@@ -123,10 +147,10 @@ export function ensureImage(version: string): void {
     try {
       execFileSync('docker', ['pull', image], { stdio: 'inherit' });
     } catch {
-      console.error(`\nERROR: Failed to pull ${image}`);
-      console.error('The image may not be available for your platform yet.');
-      console.error('Check https://hub.docker.com/r/keygraph/shannon for available tags.');
-      process.exit(1);
+      throw new Error(
+        `Failed to pull ${image}. The image may not be available for your platform yet; ` +
+          'check https://hub.docker.com/r/keygraph/shannon for available tags.',
+      );
     }
     pruneOldImages(version);
   }
@@ -229,18 +253,20 @@ function forwardEtcHostsFlags(): string[] {
 
 export interface WorkerOptions {
   version: string;
-  url: string;
   repo: { hostPath: string; containerPath: string };
   workspacesDir: string;
   taskQueue: string;
+  workflowId: string;
   containerName: string;
   envFlags: string[];
+  providerCredentialFiles?: readonly ProviderCredentialFile[];
   config?: { hostPath: string; containerPath: string };
-  credentials?: string;
   promptsDir?: string;
   outputDir?: string;
   workspace: string;
-  pipelineTesting?: boolean;
+  workingDirectory: string;
+  sourceMode: 'source-assisted' | 'url-only';
+  labels: Readonly<Record<string, string>>;
   debug?: boolean;
 }
 
@@ -248,12 +274,15 @@ export interface WorkerOptions {
  * Spawn the worker container in detached mode and return the process.
  * When `opts.debug` is true, omits `--rm` so the container persists for log inspection.
  */
-export function spawnWorker(opts: WorkerOptions): ChildProcess {
+export function buildWorkerArgs(opts: WorkerOptions): string[] {
   const args = ['run', '-d'];
   if (!opts.debug) {
     args.push('--rm');
   }
   args.push('--name', opts.containerName, '--network', 'shannon-net');
+  for (const [key, value] of Object.entries(opts.labels ?? {})) {
+    args.push('--label', `${key}=${value}`);
+  }
 
   // Add host flag for Linux
   args.push(...addHostFlag());
@@ -268,14 +297,15 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
 
   // Volume mounts
   args.push('-v', `${opts.workspacesDir}:/app/workspaces`);
-  args.push('-v', `${opts.repo.hostPath}:${opts.repo.containerPath}:ro`);
+  const repositoryMount = `${opts.repo.hostPath}:${opts.repo.containerPath}`;
+  args.push('-v', opts.sourceMode === 'url-only' ? repositoryMount : `${repositoryMount}:ro`);
 
   // Writable overlays: shadow .shannon/ and .playwright/ inside the :ro repo with workspace-backed dirs
-  const workspacePath = path.join(opts.workspacesDir, opts.workspace);
-  args.push('-v', `${path.join(workspacePath, 'deliverables')}:${opts.repo.containerPath}/.shannon/deliverables`);
-  args.push('-v', `${path.join(workspacePath, 'scratchpad')}:${opts.repo.containerPath}/.shannon/scratchpad`);
-  args.push('-v', `${path.join(workspacePath, '.playwright-cli')}:${opts.repo.containerPath}/.shannon/.playwright-cli`);
-  args.push('-v', `${path.join(workspacePath, '.playwright')}:${opts.repo.containerPath}/.playwright`);
+  const internalPath = path.join(opts.workspacesDir, opts.workspace, INTERNAL_DIR);
+  args.push('-v', `${path.join(internalPath, 'deliverables')}:${opts.repo.containerPath}/.shannon/deliverables`);
+  args.push('-v', `${path.join(internalPath, 'scratchpad')}:${opts.repo.containerPath}/.shannon/scratchpad`);
+  args.push('-v', `${path.join(internalPath, '.playwright-cli')}:${opts.repo.containerPath}/.shannon/.playwright-cli`);
+  args.push('-v', `${path.join(internalPath, '.playwright')}:${opts.repo.containerPath}/.playwright`);
 
   // Local mode: mount prompts for live editing
   if (opts.promptsDir) {
@@ -291,13 +321,26 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
     args.push('-v', `${opts.outputDir}:/app/output`);
   }
 
-  // Mount credentials file to fixed container path
-  if (opts.credentials) {
-    args.push('-v', `${opts.credentials}:/app/credentials/google-sa-key.json:ro`);
+  for (const file of opts.providerCredentialFiles ?? []) {
+    args.push('-v', `${file.hostPath}:${file.containerPath}:ro`);
   }
 
   // Environment
-  args.push(...opts.envFlags);
+  const remappedNames = new Set((opts.providerCredentialFiles ?? []).map((file) => file.environmentName));
+  for (let index = 0; index < opts.envFlags.length; index += 1) {
+    const flag = opts.envFlags[index];
+    const value = opts.envFlags[index + 1];
+    if (flag === '-e' && value !== undefined) {
+      const environmentName = value.split('=', 1)[0] as ProviderCredentialFile['environmentName'];
+      if (!remappedNames.has(environmentName)) args.push(flag, value);
+      index += 1;
+    } else if (flag !== undefined) {
+      args.push(flag);
+    }
+  }
+  for (const file of opts.providerCredentialFiles ?? []) {
+    args.push('-e', `${file.environmentName}=${file.containerPath}`);
+  }
 
   // Container settings
   args.push('--shm-size', '2gb', '--security-opt', 'seccomp=unconfined');
@@ -306,18 +349,22 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
   args.push(getWorkerImage(opts.version));
 
   // Worker command
-  args.push('node', 'apps/worker/dist/temporal/worker.js', opts.url, opts.repo.containerPath);
-  args.push('--task-queue', opts.taskQueue);
-  if (opts.config) {
-    args.push('--config', opts.config.containerPath);
-  }
+  args.push('node', 'apps/worker/dist/temporal/worker.js');
+  args.push('--task-queue', opts.taskQueue, '--workflow-id', opts.workflowId);
+  args.push('--working-directory', opts.workingDirectory);
   if (opts.outputDir) {
     args.push('--output', '/app/output');
   }
-  args.push('--workspace', opts.workspace);
-  if (opts.pipelineTesting) {
-    args.push('--pipeline-testing');
-  }
+
+  return args;
+}
+
+/**
+ * Spawn the worker container in detached mode and return the process.
+ * When `opts.debug` is true, omits `--rm` so the container persists for log inspection.
+ */
+export function spawnWorker(opts: WorkerOptions): ChildProcess {
+  const args = buildWorkerArgs(opts);
 
   // Inherit stderr so `docker run` daemon errors surface to the user;
   // ignore stdin/stdout (the container ID is noise).
@@ -326,6 +373,82 @@ export function spawnWorker(opts: WorkerOptions): ChildProcess {
     // Prevent MSYS/Git Bash from converting Unix paths on Windows
     ...(os.platform() === 'win32' && { env: { ...process.env, MSYS_NO_PATHCONV: '1' } }),
   });
+}
+
+export interface DockerContainerState {
+  name: string;
+  running: boolean;
+  status: string;
+  exitCode: number | null;
+  labels: Readonly<Record<string, string>>;
+}
+
+interface DockerInspectResult {
+  Name?: string;
+  State?: { Running?: boolean; Status?: string; ExitCode?: number };
+  Config?: { Labels?: Record<string, string> | null };
+}
+
+export interface DockerClient {
+  prepare(version: string): Promise<void>;
+  spawn(options: WorkerOptions): ChildProcess;
+  inspectContainer(containerName: string): Promise<DockerContainerState | null>;
+  listManagedContainers(): Promise<DockerContainerState[]>;
+  stopContainer(containerName: string): Promise<void>;
+}
+
+class SystemDockerClient implements DockerClient {
+  async prepare(version: string): Promise<void> {
+    ensureImage(version);
+    await ensureInfra();
+  }
+
+  spawn(options: WorkerOptions): ChildProcess {
+    return spawnWorker(options);
+  }
+
+  async inspectContainer(containerName: string): Promise<DockerContainerState | null> {
+    let output: string;
+    try {
+      output = await runAsync('docker', ['inspect', '--format', '{{json .}}', containerName]);
+    } catch (error) {
+      if (isMissingContainerError(error)) return null;
+      throw error;
+    }
+    const inspected = JSON.parse(output) as DockerInspectResult;
+    return {
+      name: inspected.Name?.replace(/^\//, '') ?? containerName,
+      running: inspected.State?.Running === true,
+      status: inspected.State?.Status ?? 'unknown',
+      exitCode: typeof inspected.State?.ExitCode === 'number' ? inspected.State.ExitCode : null,
+      labels: inspected.Config?.Labels ?? {},
+    };
+  }
+
+  async listManagedContainers(): Promise<DockerContainerState[]> {
+    const output = await runAsync('docker', ['ps', '-a', '-q', '--filter', 'label=shannon.managed=true']);
+    if (!output) return [];
+    const containers = await Promise.all(
+      output
+        .split('\n')
+        .filter(Boolean)
+        .map((id) => this.inspectContainer(id)),
+    );
+    return containers.filter((container): container is DockerContainerState => container !== null);
+  }
+
+  async stopContainer(containerName: string): Promise<void> {
+    try {
+      await runAsync('docker', ['stop', '--time', '10', containerName]);
+    } catch (error) {
+      if (!isMissingContainerError(error)) throw error;
+    }
+  }
+}
+
+/** Create the shared host-side Docker client used by CLI commands and the run controller. */
+export function createDockerClient(): DockerClient {
+  return new SystemDockerClient();
 }
 
 /**

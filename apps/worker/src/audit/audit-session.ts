@@ -12,6 +12,7 @@
  */
 
 import { PentestError } from '../services/error-handling.js';
+import { createExactValueRedactor, EMPTY_REDACTOR, type ExactValueRedactor } from '../services/redaction.js';
 import { ErrorCode } from '../types/errors.js';
 import type { AgentEndResult } from '../types/index.js';
 import { SessionMutex } from '../utils/concurrency.js';
@@ -35,6 +36,7 @@ export class AuditSession {
   private currentLogger: AgentLogger | null = null;
   private currentAgentName: string | null = null;
   private initialized: boolean = false;
+  private redactor: ExactValueRedactor = EMPTY_REDACTOR;
 
   constructor(sessionMetadata: SessionMetadata) {
     this.sessionMetadata = sessionMetadata;
@@ -63,6 +65,19 @@ export class AuditSession {
     // Components
     this.metricsTracker = new MetricsTracker(sessionMetadata);
     this.workflowLogger = new WorkflowLogger(sessionMetadata);
+  }
+
+  /** Configure exact values that must never be written to audit artifacts. */
+  setRedactionSecrets(values: readonly string[]): void {
+    this.redactor = createExactValueRedactor(values);
+  }
+
+  redactText(value: string): string {
+    return this.redactor.redactText(value);
+  }
+
+  redactValue<T>(value: T): T {
+    return this.redactor.redactValue(value);
   }
 
   /**
@@ -105,7 +120,7 @@ export class AuditSession {
 
     // 1. Save prompt snapshot (only on first attempt)
     if (attemptNumber === 1) {
-      await AgentLogger.savePrompt(this.sessionMetadata, agentName, promptContent);
+      await AgentLogger.savePrompt(this.sessionMetadata, agentName, this.redactText(promptContent));
     }
 
     // 2. Create and initialize the per-agent logger
@@ -141,10 +156,11 @@ export class AuditSession {
     }
 
     // Log to agent-specific log file (JSON format)
-    await this.currentLogger.logEvent(eventType, eventData);
+    const redactedData = this.redactValue(eventData);
+    await this.currentLogger.logEvent(eventType, redactedData);
 
     // Also log to unified workflow log (human-readable format)
-    const data = eventData as Record<string, unknown>;
+    const data = redactedData as Record<string, unknown>;
     const agentName = this.currentAgentName || 'unknown';
     switch (eventType) {
       case 'tool_start':
@@ -169,6 +185,11 @@ export class AuditSession {
         success: result.success,
         duration_ms: result.duration_ms,
         cost_usd: result.cost_usd,
+        ...(result.input_tokens !== undefined && { input_tokens: result.input_tokens }),
+        ...(result.output_tokens !== undefined && { output_tokens: result.output_tokens }),
+        ...(result.cache_read_tokens !== undefined && { cache_read_tokens: result.cache_read_tokens }),
+        ...(result.cache_write_tokens !== undefined && { cache_write_tokens: result.cache_write_tokens }),
+        ...(result.num_turns !== undefined && { num_turns: result.num_turns }),
         timestamp: formatTimestamp(),
       });
 
@@ -179,12 +200,18 @@ export class AuditSession {
     // 2. Log completion to the unified workflow log
     this.currentAgentName = null;
 
+    const redactedResult = this.redactValue(result);
     const agentLogDetails: AgentLogDetails = {
-      attemptNumber: result.attemptNumber,
-      duration_ms: result.duration_ms,
-      cost_usd: result.cost_usd,
-      success: result.success,
-      ...(result.error !== undefined && { error: result.error }),
+      attemptNumber: redactedResult.attemptNumber,
+      duration_ms: redactedResult.duration_ms,
+      cost_usd: redactedResult.cost_usd,
+      ...(redactedResult.input_tokens !== undefined && { input_tokens: redactedResult.input_tokens }),
+      ...(redactedResult.output_tokens !== undefined && { output_tokens: redactedResult.output_tokens }),
+      ...(redactedResult.cache_read_tokens !== undefined && { cache_read_tokens: redactedResult.cache_read_tokens }),
+      ...(redactedResult.cache_write_tokens !== undefined && { cache_write_tokens: redactedResult.cache_write_tokens }),
+      ...(redactedResult.num_turns !== undefined && { num_turns: redactedResult.num_turns }),
+      success: redactedResult.success,
+      ...(redactedResult.error !== undefined && { error: redactedResult.error }),
     };
     await this.workflowLogger.logAgent(agentName, 'end', agentLogDetails);
 
@@ -193,7 +220,7 @@ export class AuditSession {
     try {
       // 4. Reload-then-write inside mutex to prevent lost updates during parallel phases
       await this.metricsTracker.reload();
-      await this.metricsTracker.endAgent(agentName, result);
+      await this.metricsTracker.endAgent(agentName, redactedResult);
     } finally {
       unlock();
     }

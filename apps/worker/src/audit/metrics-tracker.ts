@@ -13,6 +13,7 @@
 
 import { PentestError } from '../services/error-handling.js';
 import { AGENT_PHASE_MAP, type PhaseName } from '../session-manager.js';
+import type { SourceMode } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import type { AgentEndResult, AgentName } from '../types/index.js';
 import { atomicWrite, fileExists, readJson } from '../utils/file-io.js';
@@ -23,6 +24,11 @@ interface AttemptData {
   attempt_number: number;
   duration_ms: number;
   cost_usd: number;
+  input_tokens?: number | undefined;
+  output_tokens?: number | undefined;
+  cache_read_tokens?: number | undefined;
+  cache_write_tokens?: number | undefined;
+  num_turns?: number | undefined;
   success: boolean;
   timestamp: string;
   model?: string | undefined;
@@ -34,6 +40,11 @@ interface AgentAuditMetrics {
   attempts: AttemptData[];
   final_duration_ms: number;
   total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
+  total_turns: number;
   model?: string | undefined;
   checkpoint?: string | undefined;
 }
@@ -42,6 +53,11 @@ interface PhaseMetrics {
   duration_ms: number;
   duration_percentage: number;
   cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  turns: number;
   agent_count: number;
 }
 
@@ -56,6 +72,7 @@ interface SessionData {
   session: {
     id: string;
     webUrl: string;
+    sourceMode?: SourceMode;
     repoPath?: string;
     status: 'in-progress' | 'completed' | 'failed' | 'cancelled';
     createdAt: string;
@@ -66,6 +83,11 @@ interface SessionData {
   metrics: {
     total_duration_ms: number;
     total_cost_usd: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cache_read_tokens: number;
+    total_cache_write_tokens: number;
+    total_turns: number;
     phases: Record<string, PhaseMetrics>;
     agents: Record<string, AgentAuditMetrics>;
   };
@@ -119,6 +141,7 @@ export class MetricsTracker {
       session: {
         id: this.sessionMetadata.id,
         webUrl: this.sessionMetadata.webUrl,
+        ...(this.sessionMetadata.sourceMode && { sourceMode: this.sessionMetadata.sourceMode }),
         status: 'in-progress',
         createdAt: (this.sessionMetadata as { createdAt?: string }).createdAt || formatTimestamp(),
         resumeAttempts: [],
@@ -126,6 +149,11 @@ export class MetricsTracker {
       metrics: {
         total_duration_ms: 0,
         total_cost_usd: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_cache_write_tokens: 0,
+        total_turns: 0,
         phases: {}, // Phase-level aggregations
         agents: {}, // Agent-level metrics
       },
@@ -174,6 +202,11 @@ export class MetricsTracker {
       attempts: [],
       final_duration_ms: 0,
       total_cost_usd: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      total_turns: 0,
     };
     this.data.metrics.agents[agentName] = agent;
 
@@ -182,6 +215,11 @@ export class MetricsTracker {
       attempt_number: result.attemptNumber,
       duration_ms: result.duration_ms,
       cost_usd: result.cost_usd,
+      ...(result.input_tokens !== undefined && { input_tokens: result.input_tokens }),
+      ...(result.output_tokens !== undefined && { output_tokens: result.output_tokens }),
+      ...(result.cache_read_tokens !== undefined && { cache_read_tokens: result.cache_read_tokens }),
+      ...(result.cache_write_tokens !== undefined && { cache_write_tokens: result.cache_write_tokens }),
+      ...(result.num_turns !== undefined && { num_turns: result.num_turns }),
       success: result.success,
       timestamp: formatTimestamp(),
     };
@@ -197,8 +235,13 @@ export class MetricsTracker {
     // 3. Append attempt to history
     agent.attempts.push(attempt);
 
-    // 4. Recalculate total cost across all attempts (includes failures)
+    // 4. Recalculate usage across all attempts (includes failures)
     agent.total_cost_usd = agent.attempts.reduce((sum, a) => sum + a.cost_usd, 0);
+    agent.total_input_tokens = agent.attempts.reduce((sum, a) => sum + (a.input_tokens ?? 0), 0);
+    agent.total_output_tokens = agent.attempts.reduce((sum, a) => sum + (a.output_tokens ?? 0), 0);
+    agent.total_cache_read_tokens = agent.attempts.reduce((sum, a) => sum + (a.cache_read_tokens ?? 0), 0);
+    agent.total_cache_write_tokens = agent.attempts.reduce((sum, a) => sum + (a.cache_write_tokens ?? 0), 0);
+    agent.total_turns = agent.attempts.reduce((sum, a) => sum + (a.num_turns ?? 0), 0);
 
     // 5. Update agent status based on outcome
     if (result.success) {
@@ -299,25 +342,42 @@ export class MetricsTracker {
 
     const agents = this.data.metrics.agents;
 
-    // Only count successful agents
+    const trackedAgents = Object.entries(agents);
+
+    // Duration represents completed work; billed usage represents every attempt.
     const successfulAgents = Object.entries(agents).filter(([, data]) => data.status === 'success');
 
     // Calculate total duration and cost
     const totalDuration = successfulAgents.reduce((sum, [, data]) => sum + data.final_duration_ms, 0);
 
-    const totalCost = successfulAgents.reduce((sum, [, data]) => sum + data.total_cost_usd, 0);
-
     this.data.metrics.total_duration_ms = totalDuration;
-    this.data.metrics.total_cost_usd = totalCost;
+    this.data.metrics.total_cost_usd = trackedAgents.reduce((sum, [, data]) => sum + (data.total_cost_usd ?? 0), 0);
+    this.data.metrics.total_input_tokens = trackedAgents.reduce(
+      (sum, [, data]) => sum + (data.total_input_tokens ?? 0),
+      0,
+    );
+    this.data.metrics.total_output_tokens = trackedAgents.reduce(
+      (sum, [, data]) => sum + (data.total_output_tokens ?? 0),
+      0,
+    );
+    this.data.metrics.total_cache_read_tokens = trackedAgents.reduce(
+      (sum, [, data]) => sum + (data.total_cache_read_tokens ?? 0),
+      0,
+    );
+    this.data.metrics.total_cache_write_tokens = trackedAgents.reduce(
+      (sum, [, data]) => sum + (data.total_cache_write_tokens ?? 0),
+      0,
+    );
+    this.data.metrics.total_turns = trackedAgents.reduce((sum, [, data]) => sum + (data.total_turns ?? 0), 0);
 
     // Calculate phase-level metrics
-    this.data.metrics.phases = this.calculatePhaseMetrics(successfulAgents);
+    this.data.metrics.phases = this.calculatePhaseMetrics(trackedAgents);
   }
 
   /**
    * Calculate phase-level metrics
    */
-  private calculatePhaseMetrics(successfulAgents: Array<[string, AgentAuditMetrics]>): Record<string, PhaseMetrics> {
+  private calculatePhaseMetrics(trackedAgents: Array<[string, AgentAuditMetrics]>): Record<string, PhaseMetrics> {
     const phases: Record<PhaseName, AgentAuditMetrics[]> = {
       'pre-recon': [],
       recon: [],
@@ -327,7 +387,7 @@ export class MetricsTracker {
     };
 
     // Group agents by phase using imported AGENT_PHASE_MAP
-    for (const [agentName, agentData] of successfulAgents) {
+    for (const [agentName, agentData] of trackedAgents) {
       const phase = AGENT_PHASE_MAP[agentName as AgentName];
       if (phase) {
         phases[phase].push(agentData);
@@ -349,6 +409,11 @@ export class MetricsTracker {
         duration_ms: phaseDuration,
         duration_percentage: calculatePercentage(phaseDuration, totalDuration),
         cost_usd: phaseCost,
+        input_tokens: agentList.reduce((sum, agent) => sum + (agent.total_input_tokens ?? 0), 0),
+        output_tokens: agentList.reduce((sum, agent) => sum + (agent.total_output_tokens ?? 0), 0),
+        cache_read_tokens: agentList.reduce((sum, agent) => sum + (agent.total_cache_read_tokens ?? 0), 0),
+        cache_write_tokens: agentList.reduce((sum, agent) => sum + (agent.total_cache_write_tokens ?? 0), 0),
+        turns: agentList.reduce((sum, agent) => sum + (agent.total_turns ?? 0), 0),
         agent_count: agentList.length,
       };
     }

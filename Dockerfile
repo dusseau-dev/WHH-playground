@@ -36,6 +36,7 @@ COPY . .
 
 # Build worker. CLI not needed in Docker
 RUN pnpm --filter @shannon/worker run build
+RUN test -f apps/worker/dist/ai/extensions/bash-timeout/index.js
 
 # Production-only deps (pnpm recommends install --prod over prune in monorepos)
 RUN rm -rf node_modules apps/*/node_modules && pnpm install --frozen-lockfile --prod
@@ -52,6 +53,8 @@ RUN apk update && apk add --no-cache \
     curl \
     ca-certificates \
     shadow \
+    # Typst release archive decompression
+    xz \
     # Language runtimes (minimal)
     nodejs-22 \
     npm \
@@ -73,6 +76,23 @@ RUN apk update && apk add --no-cache \
     # Font rendering
     fontconfig
 
+# Pin the PDF compiler and select the musl release for the runtime architecture.
+ARG TYPST_VERSION=0.14.2
+RUN case "$(uname -m)" in \
+      x86_64) TYPST_ARCH=x86_64-unknown-linux-musl ;; \
+      aarch64) TYPST_ARCH=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported architecture for Typst: $(uname -m)" && exit 1 ;; \
+    esac && \
+    mkdir -p /tmp/typst-install /usr/local/bin && \
+    cd /tmp/typst-install && \
+    curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-${TYPST_ARCH}.tar.xz" -o typst.tar.xz && \
+    xz -d typst.tar.xz && \
+    tar -xf typst.tar && \
+    mv "typst-${TYPST_ARCH}/typst" /usr/local/bin/typst && \
+    chmod +x /usr/local/bin/typst && \
+    cd / && rm -rf /tmp/typst-install && \
+    typst --version
+
 # Create non-root user
 RUN addgroup -g 1001 pentest && \
     adduser -u 1001 -G pentest -s /bin/bash -D pentest
@@ -91,10 +111,10 @@ COPY --from=builder /app/node_modules /app/node_modules
 COPY --from=builder /app/apps/worker /app/apps/worker
 COPY --from=builder /app/apps/cli/package.json /app/apps/cli/package.json
 
-RUN npm install -g --ignore-scripts @anthropic-ai/claude-code@2.1.84 @playwright/cli@0.1.1
-RUN mkdir -p /tmp/.claude/skills && \
+RUN npm install -g --ignore-scripts @playwright/cli@0.1.1
+RUN mkdir -p /tmp/.pi/agent/skills && \
     playwright-cli install --skills && \
-    cp -r .claude/skills/playwright-cli /tmp/.claude/skills/ && \
+    cp -r .claude/skills/playwright-cli /tmp/.pi/agent/skills/ && \
     rm -rf .claude
 
 # Symlink CLI tools onto PATH
@@ -110,7 +130,7 @@ RUN mkdir -p /app/sessions /app/repos /app/workspaces && \
     chmod 777 /tmp/.cache && \
     chmod 777 /tmp/.config && \
     chmod 777 /tmp/.npm && \
-    chown -R pentest:pentest /app /tmp/.claude
+    chown -R pentest:pentest /app /tmp/.pi
 
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
@@ -121,6 +141,7 @@ ENV PATH="/usr/local/bin:$PATH"
 ENV SHANNON_DOCKER=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_MCP_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PLAYWRIGHT_CLI_SKILL_PATH=/tmp/.pi/agent/skills/playwright-cli/SKILL.md
 ENV npm_config_cache=/tmp/.npm
 ENV HOME=/tmp
 ENV XDG_CACHE_HOME=/tmp/.cache

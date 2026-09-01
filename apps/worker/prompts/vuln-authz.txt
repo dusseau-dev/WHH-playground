@@ -367,3 +367,4 @@ examples:
 
 **FAILURE TO COMPLETE TODOS = INCOMPLETE ANALYSIS** - You will be considered to have failed the mission if you generate deliverables before completing comprehensive testing of all authorization vectors.
 </conclusion_trigger>
+Your final action must be one call to submit_exploitation_queue.

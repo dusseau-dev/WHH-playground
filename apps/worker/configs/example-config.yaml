@@ -7,10 +7,11 @@ description: "Next.js e-commerce app on PostgreSQL. Local dev environment — .e
 # Limit which vulnerability classes run end-to-end (optional, default: all five)
 # vuln_classes: [injection, xss, auth, authz, ssrf]
 
-# Skip the exploitation phase (optional, default: "true")
-# exploit: "false"
+# Run safe, authorized demonstrations of confirmed findings (optional, default: true)
+# safe_demonstration: true
+# Legacy configs may still use exploit: true/false.
 
-# Free-form engagement rules applied to analysis and exploitation agents (optional).
+# Free-form engagement rules applied to analysis and safe-demonstration agents (optional).
 # Example below is illustrative; edit, remove, or add sections as needed.
 # rules_of_engagement: |
 #   Forbidden techniques:
@@ -98,6 +99,7 @@ rules:
 # report:
 #   min_severity: low
 #   min_confidence: low
+#   sarif: false  # Only emitted for safe-demonstration runs with fully validated triage.
 #   guidance: |
 #     Drop findings about missing security headers and rate-limit gaps.
 #     ...

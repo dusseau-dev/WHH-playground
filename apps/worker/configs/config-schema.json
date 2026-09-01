@@ -112,8 +112,7 @@
           "description": "Retry preset. 'subscription' extends timeouts for Anthropic subscription rate limit windows (5h+)."
         },
         "max_concurrent_pipelines": {
-          "type": "string",
-          "pattern": "^[1-5]$",
+          "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 5 }, { "type": "string", "pattern": "^[1-5]$" }],
           "description": "Max concurrent vulnerability pipelines (1-5, default: 5)"
         }
       },
@@ -154,9 +153,12 @@
       "uniqueItems": true
     },
     "exploit": {
-      "type": "string",
-      "enum": ["true", "false"],
-      "description": "Whether to run the exploitation phase (default true). Set false to run only analysis."
+      "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+      "description": "Deprecated: use safe_demonstration. Whether to run safe demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
+    },
+    "safe_demonstration": {
+      "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+      "description": "Whether to run safe, authorized demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
     },
     "report": {
       "type": "object",
@@ -177,6 +179,10 @@
           "minLength": 1,
           "maxLength": 500,
           "description": "Free-text guidance to the report agent (e.g., 'Drop findings about missing security headers')."
+        },
+        "sarif": {
+          "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+          "description": "Emit report.sarif for safe-demonstration runs with fully validated triage. Natural YAML booleans and legacy quoted strings are accepted."
         }
       },
       "additionalProperties": false
@@ -205,7 +211,9 @@
     { "required": ["rules"] },
     { "required": ["authentication", "rules"] },
     { "required": ["description"] },
+    { "required": ["pipeline"] },
     { "required": ["vuln_classes"] },
+    { "required": ["safe_demonstration"] },
     { "required": ["exploit"] },
     { "required": ["report"] },
     { "required": ["rules_of_engagement"] }

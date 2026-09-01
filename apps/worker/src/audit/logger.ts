@@ -13,6 +13,7 @@
 
 import { atomicWrite } from '../utils/file-io.js';
 import { formatTimestamp } from '../utils/formatting.js';
+import { redactSecrets } from '../utils/redactSecrets.js';
 import { LogStream } from './log-stream.js';
 import { generateLogPath, generatePromptPath, type SessionMetadata } from './utils.js';
 
@@ -66,7 +67,7 @@ export class AgentLogger {
       `Attempt: ${this.attemptNumber}`,
       `Started: ${formatTimestamp(this.timestamp)}`,
       `Session: ${this.sessionMetadata.id}`,
-      `Web URL: ${this.sessionMetadata.webUrl}`,
+      `Web URL: ${redactSecrets(this.sessionMetadata.webUrl)}`,
       `========================================\n`,
     ].join('\n');
 
@@ -81,7 +82,7 @@ export class AgentLogger {
     const event: LogEvent = {
       type: eventType,
       timestamp: formatTimestamp(),
-      data: eventData,
+      data: redactSecrets(eventData),
     };
 
     const eventLine = `${JSON.stringify(event)}\n`;
@@ -107,14 +108,14 @@ export class AgentLogger {
       `# Prompt Snapshot: ${agentName}`,
       ``,
       `**Session:** ${sessionMetadata.id}`,
-      `**Web URL:** ${sessionMetadata.webUrl}`,
+      `**Web URL:** ${redactSecrets(sessionMetadata.webUrl)}`,
       `**Saved:** ${formatTimestamp()}`,
       ``,
       `---`,
       ``,
     ].join('\n');
 
-    const fullContent = header + promptContent;
+    const fullContent = header + redactSecrets(promptContent);
 
     // Use atomic write for safety
     await atomicWrite(promptPath, fullContent);

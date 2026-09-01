@@ -5,10 +5,18 @@
 // as published by the Free Software Foundation.
 
 import { fs, path } from 'zx';
-import { deliverablesDir } from '../paths.js';
+import { deliverablesDir, resolveSessionJsonPath } from '../paths.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
+import type { SourceMode } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import { PentestError } from './error-handling.js';
+import {
+  isReportData,
+  REPORT_DATA_FILENAME,
+  REPORT_MARKDOWN_FILENAME,
+  writeReportMarkdownFiles,
+  writeStructuredReportFiles,
+} from './structured-report.js';
 import { loadVerdicts, renderVerdictSections } from './triage-report.js';
 
 interface DeliverableFile {
@@ -18,9 +26,78 @@ interface DeliverableFile {
   required: boolean;
 }
 
+export const URL_ONLY_COVERAGE_NOTICE = [
+  '> [!IMPORTANT]',
+  '> **Assessment mode: URL-only dynamic testing.** No source repository was provided. The assessment',
+  '> covers behavior observable through the authorized live target; source-code paths, internal-only',
+  '> attack surfaces, and code-location attribution were not evaluated.',
+].join('\n');
+
+function modeLabel(sourceMode: SourceMode): 'Source-Assisted' | 'URL-Only' {
+  return sourceMode === 'url-only' ? 'URL-Only' : 'Source-Assisted';
+}
+
+export function renderAssessmentModeSection(sourceMode: SourceMode): string {
+  const coverage =
+    sourceMode === 'url-only'
+      ? 'This assessment used browser and API observations against the authorized live target. Code-level coverage and source-location attribution were unavailable in URL-only mode.'
+      : 'This assessment used the provided repository and live target evidence where available. Findings and remediation are limited to evidence collected during this run and do not assert complete source coverage.';
+
+  return ['## Mode', '', modeLabel(sourceMode), '', '## Coverage', '', coverage].join('\n');
+}
+
+function stripExistingAssessmentModeSections(report: string): string {
+  let cleaned = report.replace(URL_ONLY_COVERAGE_NOTICE, '');
+  for (const sourceMode of ['source-assisted', 'url-only'] as const) {
+    cleaned = cleaned.replace(renderAssessmentModeSection(sourceMode), '');
+  }
+  return cleaned.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Add deterministic assessment mode and coverage sections exactly once. */
+export function renderAssessmentModeSections(report: string, sourceMode: SourceMode): string {
+  const cleaned = stripExistingAssessmentModeSections(report);
+  const sections = renderAssessmentModeSection(sourceMode);
+  const headingMatch = cleaned.match(/^# .+$/m);
+
+  if (!headingMatch || headingMatch.index === undefined) {
+    return `${sections}\n\n${cleaned}`;
+  }
+  const insertionPoint = headingMatch.index + headingMatch[0].length;
+  const before = cleaned.slice(0, insertionPoint);
+  const after = cleaned.slice(insertionPoint).trimStart();
+  return `${before}\n\n${sections}${after ? `\n\n${after}` : ''}`;
+}
+
+export async function injectAssessmentModeSections(
+  workingDirectory: string,
+  deliverablesSubdir: string | undefined,
+  sourceMode: SourceMode,
+  logger: ActivityLogger,
+): Promise<void> {
+  const deliverablesPath = deliverablesDir(workingDirectory, deliverablesSubdir);
+  if (await fs.pathExists(path.join(deliverablesPath, REPORT_DATA_FILENAME))) {
+    logger.info('Canonical report.json already renders assessment mode and coverage; skipping legacy injection');
+    return;
+  }
+  const reportPath = path.join(deliverablesPath, REPORT_MARKDOWN_FILENAME);
+  if (!(await fs.pathExists(reportPath))) {
+    logger.warn('Final report not found, skipping assessment mode sections');
+    return;
+  }
+  const report = await fs.readFile(reportPath, 'utf8');
+  const updated = renderAssessmentModeSections(report, sourceMode);
+  await writeReportMarkdownFiles(deliverablesPath, updated);
+  if (updated !== report) {
+    logger.info('Injected assessment mode and coverage sections');
+  } else {
+    logger.info('Refreshed assessment mode and coverage sections');
+  }
+}
+
 // Pure function: Assemble final report from specialist deliverables.
 // Per class, prefer the exploit-agent's evidence file; fall back to renderer-produced findings.
-// Both never coexist for a workspace because scope (exploit flag) is locked.
+// Both never coexist for a workspace because scope (safeDemonstration) is locked.
 export async function assembleFinalReport(
   sourceDir: string,
   deliverablesSubdir: string | undefined,
@@ -74,11 +151,10 @@ export async function assembleFinalReport(
   const verdicts = await loadVerdicts(sourceDir, deliverablesSubdir, logger);
   const verdictMarkdown = renderVerdictSections(verdicts, triageRan);
   const finalContent = [verdictMarkdown, ...sections].join('\n\n');
-  const finalReportPath = path.join(dir, 'comprehensive_security_assessment_report.md');
+  const finalReportPath = path.join(dir, REPORT_MARKDOWN_FILENAME);
 
   try {
-    await fs.ensureDir(dir);
-    await fs.writeFile(finalReportPath, finalContent);
+    await writeReportMarkdownFiles(dir, finalContent);
     logger.info(`Final report assembled at ${finalReportPath}`);
   } catch (error) {
     const err = error as Error;
@@ -97,13 +173,13 @@ export async function assembleFinalReport(
  * into the Executive Summary section of the report.
  */
 export async function injectModelIntoReport(
-  repoPath: string,
+  workingDirectory: string,
   deliverablesSubdir: string | undefined,
   outputPath: string,
   logger: ActivityLogger,
 ): Promise<void> {
   // 1. Read session.json to get model information
-  const sessionJsonPath = path.join(outputPath, 'session.json');
+  const sessionJsonPath = resolveSessionJsonPath(outputPath);
 
   if (!(await fs.pathExists(sessionJsonPath))) {
     logger.warn('session.json not found, skipping model injection');
@@ -131,14 +207,29 @@ export async function injectModelIntoReport(
     return;
   }
 
-  const modelStr = Array.from(models).join(', ');
+  const modelStr = Array.from(models).sort().join(', ');
   logger.info(`Injecting model info into report: ${modelStr}`);
 
+  const deliverablesPath = deliverablesDir(workingDirectory, deliverablesSubdir);
+  const reportDataPath = path.join(deliverablesPath, REPORT_DATA_FILENAME);
+  if (await fs.pathExists(reportDataPath)) {
+    const raw = (await fs.readJson(reportDataPath)) as unknown;
+    if (!isReportData(raw)) {
+      throw new PentestError('Cannot inject model metadata into invalid report.json', 'validation', false, {
+        reportDataPath,
+      });
+    }
+    const updated = {
+      ...raw,
+      report_meta: { ...raw.report_meta, model: modelStr },
+    };
+    await writeStructuredReportFiles(deliverablesPath, updated);
+    logger.info('Updated model metadata in report.json and rerendered Markdown');
+    return;
+  }
+
   // 3. Read the final report
-  const reportPath = path.join(
-    deliverablesDir(repoPath, deliverablesSubdir),
-    'comprehensive_security_assessment_report.md',
-  );
+  const reportPath = path.join(deliverablesPath, REPORT_MARKDOWN_FILENAME);
 
   if (!(await fs.pathExists(reportPath))) {
     logger.warn('Final report not found, skipping model injection');
@@ -170,6 +261,6 @@ export async function injectModelIntoReport(
     }
   }
 
-  // 5. Write modified report back
-  await fs.writeFile(reportPath, reportContent);
+  // 5. Keep the public and legacy Markdown artifacts byte-for-byte identical.
+  await writeReportMarkdownFiles(deliverablesPath, reportContent);
 }

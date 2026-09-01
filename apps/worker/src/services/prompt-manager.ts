@@ -8,7 +8,7 @@ import { fs, path } from 'zx';
 import { PROMPTS_DIR } from '../paths.js';
 import { PLAYWRIGHT_SESSION_MAPPING } from '../session-manager.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
-import type { Authentication, DistributedConfig, ReportConfig, Rule, VulnClass } from '../types/config.js';
+import type { Authentication, DistributedConfig, ReportConfig, Rule, SourceMode, VulnClass } from '../types/config.js';
 import { isGlobPattern } from '../utils/glob.js';
 import { handlePromptError, PentestError } from './error-handling.js';
 
@@ -32,27 +32,27 @@ interface VulnSummarySpec {
 const VULN_SUMMARY_SPECS: Record<VulnClass, VulnSummarySpec> = {
   auth: {
     heading: 'Authentication Vulnerabilities',
-    evidenceSection: 'Authentication Exploitation Evidence',
+    evidenceSection: 'Authentication Safe Demonstration Evidence',
     noneFoundLabel: 'authentication',
   },
   authz: {
     heading: 'Authorization Vulnerabilities',
-    evidenceSection: 'Authorization Exploitation Evidence',
+    evidenceSection: 'Authorization Safe Demonstration Evidence',
     noneFoundLabel: 'authorization',
   },
   xss: {
     heading: 'Cross-Site Scripting (XSS) Vulnerabilities',
-    evidenceSection: 'XSS Exploitation Evidence',
+    evidenceSection: 'XSS Safe Demonstration Evidence',
     noneFoundLabel: 'XSS',
   },
   injection: {
     heading: 'SQL/Command Injection Vulnerabilities',
-    evidenceSection: 'Injection Exploitation Evidence',
+    evidenceSection: 'Injection Safe Demonstration Evidence',
     noneFoundLabel: 'SQL or command injection',
   },
   ssrf: {
     heading: 'Server-Side Request Forgery (SSRF) Vulnerabilities',
-    evidenceSection: 'SSRF Exploitation Evidence',
+    evidenceSection: 'SSRF Safe Demonstration Evidence',
     noneFoundLabel: 'SSRF',
   },
 };
@@ -62,7 +62,7 @@ function renderVulnSummarySubsections(selected: readonly VulnClass[]): string {
   return classes
     .map((cls) => {
       const spec = VULN_SUMMARY_SPECS[cls];
-      return `**${spec.heading}:**\n{Check for "${spec.evidenceSection}" section. Include actually exploited vulnerabilities and those blocked by security controls. Exclude theoretical vulnerabilities requiring internal network access. If vulnerabilities exist, summarize their impact and severity. If section is missing or empty, state: "No ${spec.noneFoundLabel} vulnerabilities were found."}`;
+      return `**${spec.heading}:**\n{Check for "${spec.evidenceSection}" section. Include demonstrated findings and those blocked by security controls. Exclude theoretical vulnerabilities requiring internal network access. If vulnerabilities exist, summarize their impact and severity. If section is missing or empty, state: "No ${spec.noneFoundLabel} vulnerabilities were found."}`;
     })
     .join('\n\n');
 }
@@ -117,7 +117,8 @@ function renderReportFilterRules(report: ReportConfig | undefined): string {
 
 interface PromptVariables {
   webUrl: string;
-  repoPath: string;
+  workingDirectory: string;
+  repoPath?: string;
   AUTH_STATE_FILE: string;
   PLAYWRIGHT_SESSION?: string;
 }
@@ -212,7 +213,8 @@ async function buildLoginInstructions(
     }
     const errMsg = error instanceof Error ? error.message : String(error);
     throw new PentestError(`Failed to build login instructions: ${errMsg}`, 'config', false, {
-      authentication,
+      loginType: authentication.login_type,
+      loginUrl: authentication.login_url,
       originalError: errMsg,
     });
   }
@@ -282,15 +284,16 @@ async function interpolateVariables(
       });
     }
 
-    if (!variables || !variables.webUrl || !variables.repoPath) {
-      throw new PentestError('Variables must include webUrl and repoPath', 'validation', false, {
+    if (!variables || !variables.webUrl || !variables.workingDirectory) {
+      throw new PentestError('Variables must include webUrl and workingDirectory', 'validation', false, {
         variables: Object.keys(variables || {}),
       });
     }
 
     let result = template
       .replace(/{{WEB_URL}}/g, variables.webUrl)
-      .replace(/{{REPO_PATH}}/g, variables.repoPath)
+      .replace(/{{REPO_PATH}}/g, variables.repoPath ?? variables.workingDirectory)
+      .replace(/{{WORKING_DIRECTORY}}/g, variables.workingDirectory)
       .replace(/{{PLAYWRIGHT_SESSION}}/g, variables.PLAYWRIGHT_SESSION || 'agent1')
       .replace(/{{AUTH_CONTEXT}}/g, buildAuthContext(config))
       .replace(/{{DESCRIPTION}}/g, config?.description ? `Description: ${config.description}` : '');
@@ -342,13 +345,14 @@ async function interpolateVariables(
     );
     result = result.replace(/{{VULN_SUMMARY_SUBSECTIONS}}/g, renderVulnSummarySubsections(vulnClasses));
 
-    const exploitEnabled = config?.exploit ?? true;
+    const safeDemonstration = config?.safeDemonstration ?? (config as { exploit?: boolean } | null)?.exploit ?? true;
     result = result
-      .replace(/{{EXPLOITATION}}/g, exploitEnabled ? 'enabled' : 'disabled')
-      .replace(/{{REPORT_VULN_HEADING}}/g, exploitEnabled ? 'Exploitation Evidence' : 'Findings')
+      .replace(/{{SAFE_DEMONSTRATION}}/g, safeDemonstration ? 'enabled' : 'disabled')
+      .replace(/{{EXPLOITATION}}/g, safeDemonstration ? 'enabled' : 'disabled')
+      .replace(/{{REPORT_VULN_HEADING}}/g, safeDemonstration ? 'Safe Demonstration Evidence' : 'Findings')
       .replace(
         /{{REPORT_VULN_SUBHEADING}}/g,
-        exploitEnabled ? 'Successfully Exploited Vulnerabilities' : 'Identified Vulnerabilities',
+        safeDemonstration ? 'Demonstrated Findings' : 'Identified Vulnerabilities',
       );
 
     result = result
@@ -382,6 +386,19 @@ function resolvePromptDir(promptDir: string | undefined): string {
   return path.resolve(process.env.SHANNON_WORKER_ROOT ?? process.cwd(), promptDir);
 }
 
+export function promptDirectoryCandidates(
+  basePromptsDir: string,
+  pipelineTestingMode: boolean,
+  sourceMode: SourceMode,
+): string[] {
+  if (sourceMode === 'url-only') {
+    return pipelineTestingMode
+      ? [path.join(basePromptsDir, 'pipeline-testing', 'url-only'), path.join(basePromptsDir, 'url-only')]
+      : [path.join(basePromptsDir, 'url-only')];
+  }
+  return [pipelineTestingMode ? path.join(basePromptsDir, 'pipeline-testing') : basePromptsDir];
+}
+
 // Pure function: Load and interpolate prompt template
 export async function loadPrompt(
   promptName: string,
@@ -390,19 +407,31 @@ export async function loadPrompt(
   pipelineTestingMode: boolean = false,
   logger: ActivityLogger,
   promptDir?: string,
+  sourceMode: SourceMode = 'source-assisted',
 ): Promise<string> {
   try {
     const basePromptsDir = resolvePromptDir(promptDir);
-    const promptsDir = pipelineTestingMode ? path.join(basePromptsDir, 'pipeline-testing') : basePromptsDir;
-    const promptPath = path.join(promptsDir, `${promptName}.txt`);
-
-    if (pipelineTestingMode) {
-      logger.info(`Using pipeline testing prompt: ${promptPath}`);
+    const candidates = promptDirectoryCandidates(basePromptsDir, pipelineTestingMode, sourceMode);
+    let promptsDir: string | undefined;
+    let promptPath: string | undefined;
+    for (const candidate of candidates) {
+      const candidatePath = path.join(candidate, `${promptName}.txt`);
+      if (await fs.pathExists(candidatePath)) {
+        promptsDir = candidate;
+        promptPath = candidatePath;
+        break;
+      }
     }
 
-    if (!(await fs.pathExists(promptPath))) {
-      throw new PentestError(`Prompt file not found: ${promptPath}`, 'prompt', false, { promptName, promptPath });
+    if (!promptPath || !promptsDir) {
+      throw new PentestError(`Prompt file not found for ${promptName} (${sourceMode})`, 'prompt', false, {
+        promptName,
+        sourceMode,
+        searched: candidates,
+      });
     }
+
+    logger.info(`Using ${sourceMode}${pipelineTestingMode ? ' pipeline-testing' : ''} prompt: ${promptPath}`);
 
     // 2. Assign Playwright session based on agent name
     const enhancedVariables: PromptVariables = { ...variables };

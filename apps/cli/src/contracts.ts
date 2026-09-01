@@ -1,0 +1,462 @@
+import { z } from 'zod';
+
+export const SOURCE_MODES = ['source-assisted', 'url-only'] as const;
+export const SourceModeSchema = z.enum(SOURCE_MODES);
+export type SourceMode = z.infer<typeof SourceModeSchema>;
+
+export const VULNERABILITY_CLASSES = ['injection', 'xss', 'auth', 'authz', 'ssrf'] as const;
+export const VulnerabilityClassSchema = z.enum(VULNERABILITY_CLASSES);
+export type VulnerabilityClass = z.infer<typeof VulnerabilityClassSchema>;
+
+export const SECRET_FIELDS = ['password', 'totpSecret', 'emailPassword', 'emailTotpSecret'] as const;
+export const SecretFieldSchema = z.enum(SECRET_FIELDS);
+export type SecretField = z.infer<typeof SecretFieldSchema>;
+
+const identifierSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/);
+const httpUrlSchema = z
+  .string()
+  .url()
+  .max(2048)
+  .superRefine((value, context) => {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      context.addIssue({ code: 'custom', message: 'Only http and https URLs are supported' });
+    }
+    if (parsed.username || parsed.password) {
+      context.addIssue({ code: 'custom', message: 'URLs must not contain credentials or userinfo' });
+    }
+  });
+
+export const RuleSchema = z
+  .object({
+    description: z.string().trim().min(1).max(200),
+    type: z.enum(['url_path', 'subdomain', 'domain', 'method', 'header', 'parameter', 'code_path']),
+    value: z.string().trim().min(1).max(1000),
+  })
+  .strict();
+export type AssessmentRule = z.infer<typeof RuleSchema>;
+
+export const PublicAuthenticationSchema = z
+  .object({
+    loginType: z.enum(['form', 'sso', 'api', 'basic']),
+    loginUrl: httpUrlSchema,
+    username: z.string().min(1).max(255),
+    emailAddress: z.string().email().max(320).optional(),
+    loginFlow: z.array(z.string().trim().min(1).max(500)).min(1).max(20).optional(),
+    successCondition: z
+      .object({
+        type: z.enum(['url_contains', 'element_present', 'url_equals_exactly', 'text_contains']),
+        value: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict();
+export type PublicAuthentication = z.infer<typeof PublicAuthenticationSchema>;
+
+const AssessmentConfigBaseSchema = z
+  .object({
+    description: z.string().trim().min(1).max(500).optional(),
+    testCategories: z.array(VulnerabilityClassSchema).min(1).max(5).optional(),
+    safeDemonstration: z.boolean().optional(),
+    /** @deprecated Use safeDemonstration. */
+    demonstrate: z.boolean().optional(),
+    /** @deprecated Use safeDemonstration. */
+    exploit: z.boolean().optional(),
+    pipeline: z
+      .object({
+        retryPreset: z.enum(['default', 'subscription']).optional(),
+        maxConcurrentPipelines: z.number().int().min(1).max(5).optional(),
+      })
+      .strict()
+      .optional(),
+    rules: z
+      .object({
+        avoid: z.array(RuleSchema).max(50).optional(),
+        focus: z.array(RuleSchema).max(50).optional(),
+      })
+      .strict()
+      .optional(),
+    report: z
+      .object({
+        minSeverity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+        minConfidence: z.enum(['low', 'medium', 'high']).optional(),
+        guidance: z.string().trim().min(1).max(500).optional(),
+        sarif: z
+          .preprocess((value) => (value === 'true' ? true : value === 'false' ? false : value), z.boolean())
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    rulesOfEngagement: z.string().trim().min(1).max(1000).optional(),
+    authentication: PublicAuthenticationSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const provided = [
+      ['safeDemonstration', value.safeDemonstration],
+      ['demonstrate', value.demonstrate],
+      ['exploit', value.exploit],
+    ].filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
+    if (provided.length < 2) return;
+    const expected = provided[0]?.[1];
+    if (provided.some(([, current]) => current !== expected)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['safeDemonstration'],
+        message: 'safeDemonstration conflicts with legacy demonstration flags',
+      });
+    }
+  });
+
+export const AssessmentConfigSchema = AssessmentConfigBaseSchema.transform(
+  ({ safeDemonstration, demonstrate, exploit, ...config }) => {
+    const resolvedSafeDemonstration = safeDemonstration ?? demonstrate ?? exploit;
+    return {
+      ...config,
+      ...(resolvedSafeDemonstration !== undefined && { safeDemonstration: resolvedSafeDemonstration }),
+    };
+  },
+);
+export type AssessmentConfig = z.infer<typeof AssessmentConfigSchema>;
+
+export const TargetSecretsSchema = z
+  .object({
+    password: z.string().min(1).max(255).optional(),
+    totpSecret: z
+      .string()
+      .regex(/^[A-Za-z2-7]+=*$/)
+      .optional(),
+    emailPassword: z.string().min(1).max(255).optional(),
+    emailTotpSecret: z
+      .string()
+      .regex(/^[A-Za-z2-7]+=*$/)
+      .optional(),
+  })
+  .strict();
+export type TargetSecrets = z.infer<typeof TargetSecretsSchema>;
+
+function validateSourceMode(
+  value: { sourceMode: SourceMode; repoPath?: string | undefined },
+  context: z.RefinementCtx,
+): void {
+  if (value.sourceMode === 'source-assisted' && !value.repoPath) {
+    context.addIssue({
+      code: 'custom',
+      path: ['repoPath'],
+      message: 'Repository path is required in source-assisted mode',
+    });
+  }
+  if (value.sourceMode === 'url-only' && value.repoPath) {
+    context.addIssue({
+      code: 'custom',
+      path: ['repoPath'],
+      message: 'Repository path is not accepted in URL-only mode',
+    });
+  }
+}
+
+export const ProfileDraftSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+    targetUrl: httpUrlSchema,
+    sourceMode: SourceModeSchema,
+    repoPath: z.string().trim().min(1).max(4096).optional(),
+    config: AssessmentConfigSchema.optional(),
+    secrets: TargetSecretsSchema.optional(),
+    clearSecrets: z.array(SecretFieldSchema).max(4).optional(),
+  })
+  .strict()
+  .superRefine(validateSourceMode);
+export type ProfileDraft = z.infer<typeof ProfileDraftSchema>;
+
+export const SecretReferencesSchema = z
+  .object({
+    password: z.string().min(1).optional(),
+    totpSecret: z.string().min(1).optional(),
+    emailPassword: z.string().min(1).optional(),
+    emailTotpSecret: z.string().min(1).optional(),
+  })
+  .strict();
+export type SecretReferences = z.infer<typeof SecretReferencesSchema>;
+
+const ProfileFileBaseSchema = z
+  .object({
+    version: z.literal(1),
+    id: identifierSchema,
+    name: z.string().trim().min(1).max(80),
+    targetUrl: httpUrlSchema,
+    sourceMode: SourceModeSchema,
+    repoPath: z.string().trim().min(1).max(4096).optional(),
+    config: AssessmentConfigSchema,
+    secretRefs: SecretReferencesSchema,
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+export const ProfileFileSchema = ProfileFileBaseSchema.superRefine(validateSourceMode);
+export type ProfileFile = z.infer<typeof ProfileFileSchema>;
+
+export const SecretPresenceSchema = z.partialRecord(SecretFieldSchema, z.boolean());
+export type SecretPresence = z.infer<typeof SecretPresenceSchema>;
+
+export const ProfileResponseSchema = ProfileFileBaseSchema.omit({ secretRefs: true })
+  .extend({
+    hasSecret: SecretPresenceSchema,
+  })
+  .superRefine(validateSourceMode);
+export type ProfileResponse = z.infer<typeof ProfileResponseSchema>;
+
+export const StartRunRequestSchema = z
+  .object({
+    profileId: identifierSchema.optional(),
+    targetUrl: httpUrlSchema.optional(),
+    sourceMode: SourceModeSchema.optional(),
+    repoPath: z.string().trim().min(1).max(4096).optional(),
+    config: AssessmentConfigSchema.optional(),
+    secrets: TargetSecretsSchema.optional(),
+    workspace: identifierSchema.optional(),
+    outputPath: z.string().trim().min(1).max(4096).optional(),
+    pipelineTesting: z.boolean().optional(),
+    debug: z.boolean().optional(),
+    authorizationConfirmed: z.literal(true),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (!value.profileId && (!value.targetUrl || !value.sourceMode)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'A profile or an explicit target URL and source mode is required',
+      });
+    }
+    if (value.sourceMode) validateSourceMode({ sourceMode: value.sourceMode, repoPath: value.repoPath }, context);
+  });
+export type StartRunRequest = z.infer<typeof StartRunRequestSchema>;
+
+export const ResumeRunRequestSchema = z
+  .object({
+    secrets: TargetSecretsSchema.optional(),
+  })
+  .strict();
+export type ResumeRunRequest = z.infer<typeof ResumeRunRequestSchema>;
+
+export const ProfileReferenceSchema = z
+  .object({
+    id: identifierSchema,
+    version: z.literal(1),
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+export type ProfileReference = z.infer<typeof ProfileReferenceSchema>;
+
+const RunLaunchSpecBaseSchema = z
+  .object({
+    targetUrl: httpUrlSchema,
+    sourceMode: SourceModeSchema,
+    repoPath: z.string().trim().min(1).max(4096).optional(),
+    profileRef: ProfileReferenceSchema.optional(),
+    config: AssessmentConfigSchema,
+    secrets: TargetSecretsSchema.optional(),
+    secretRefs: SecretReferencesSchema.optional(),
+    workspace: identifierSchema.optional(),
+    outputPath: z.string().trim().min(1).max(4096).optional(),
+    pipelineTesting: z.boolean().optional(),
+    debug: z.boolean().optional(),
+  })
+  .strict();
+
+export const RunLaunchSpecSchema = RunLaunchSpecBaseSchema.superRefine(validateSourceMode);
+export type RunLaunchSpec = z.infer<typeof RunLaunchSpecSchema>;
+
+export const RUN_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
+export const RunStatusSchema = z.enum(RUN_STATUSES);
+export type RunStatus = z.infer<typeof RunStatusSchema>;
+
+export const RunSnapshotSchema = RunLaunchSpecBaseSchema.omit({ secrets: true, workspace: true, secretRefs: true })
+  .extend({
+    secretRefs: SecretReferencesSchema,
+    requiredSecretFields: z.array(SecretFieldSchema),
+  })
+  .superRefine(validateSourceMode);
+export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
+
+export const RunAttemptSchema = z
+  .object({
+    attemptNumber: z.number().int().positive(),
+    taskQueue: z.string().min(1),
+    containerName: z.string().min(1),
+    workflowId: z.string().min(1),
+    temporalRunId: z.string().min(1).optional(),
+    dockerLabels: z.record(z.string(), z.string()),
+    createdAt: z.string().datetime(),
+    startedAt: z.string().datetime().optional(),
+    cancellationReason: z.enum(['user', 'orphaned-worker', 'start-failure']).optional(),
+    completedAt: z.string().datetime().optional(),
+    status: RunStatusSchema,
+    error: z.string().optional(),
+  })
+  .strict();
+export type RunAttempt = z.infer<typeof RunAttemptSchema>;
+
+export const ManagedRunRecordSchema = z
+  .object({
+    kind: z.literal('managed'),
+    version: z.literal(1),
+    runId: identifierSchema,
+    workspacePath: z.string().min(1).max(4096),
+    status: RunStatusSchema,
+    snapshot: RunSnapshotSchema,
+    snapshotHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    attempts: z.array(RunAttemptSchema),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    completedAt: z.string().datetime().optional(),
+    lastError: z.string().optional(),
+  })
+  .strict();
+export type ManagedRunRecord = z.infer<typeof ManagedRunRecordSchema>;
+
+export const LegacyRunRecordSchema = z
+  .object({
+    kind: z.literal('legacy'),
+    runId: identifierSchema,
+    workspacePath: z.string().min(1).max(4096),
+    status: RunStatusSchema,
+    targetUrl: httpUrlSchema.nullable(),
+    sourceMode: SourceModeSchema.nullable(),
+    repoPath: z.string().optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    completedAt: z.string().datetime().optional(),
+    readOnly: z.literal(true),
+  })
+  .strict();
+export type LegacyRunRecord = z.infer<typeof LegacyRunRecordSchema>;
+
+export const RunListItemSchema = z.discriminatedUnion('kind', [ManagedRunRecordSchema, LegacyRunRecordSchema]);
+export type RunListItem = z.infer<typeof RunListItemSchema>;
+
+export const AgentMetricsSchema = z
+  .object({
+    status: z.enum(['in-progress', 'success', 'failed']).optional(),
+    final_duration_ms: z.number().optional(),
+    total_cost_usd: z.number().optional(),
+  })
+  .passthrough();
+
+export const LegacySessionSchema = z
+  .object({
+    session: z
+      .object({
+        id: z.string().min(1),
+        webUrl: httpUrlSchema,
+        repoPath: z.string().optional(),
+        status: z.enum(['in-progress', 'completed', 'failed', 'cancelled']),
+        createdAt: z.string(),
+        completedAt: z.string().optional(),
+        originalWorkflowId: z.string().optional(),
+        resumeAttempts: z.array(z.object({ workflowId: z.string() }).passthrough()).optional(),
+      })
+      .passthrough(),
+    metrics: z
+      .object({
+        total_duration_ms: z.number().optional(),
+        total_cost_usd: z.number().optional(),
+        agents: z.record(z.string(), AgentMetricsSchema).optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+export type LegacySession = z.infer<typeof LegacySessionSchema>;
+
+export const WorkflowProgressSchema = z
+  .object({
+    status: z.enum(['running', 'completed', 'failed', 'cancelled']),
+    currentPhase: z.string().nullable(),
+    currentAgent: z.string().nullable(),
+    activeAgents: z.array(z.string()).optional(),
+    activeTestCategories: z.array(VulnerabilityClassSchema).optional(),
+    completedAgents: z.array(z.string()),
+    failedAgent: z.string().nullable(),
+    error: z.string().nullable(),
+    workflowId: z.string().optional(),
+    elapsedMs: z.number().nonnegative().optional(),
+    startTime: z.number().optional(),
+    triageRan: z.boolean().optional(),
+    summary: z
+      .object({
+        totalCostUsd: z.number(),
+        totalDurationMs: z.number(),
+        totalTurns: z.number(),
+        agentCount: z.number(),
+      })
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+export type WorkflowProgress = z.infer<typeof WorkflowProgressSchema>;
+
+export const TriageVerdictSchema = z
+  .object({
+    id: z.string().min(1),
+    vulnType: z.string().min(1),
+    title: z.string().min(1),
+    verdict: z.enum(['PASS', 'DOWNGRADE', 'KILL', 'CHAIN_REQUIRED']),
+    severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
+    claimedSeverity: z.enum(['critical', 'high', 'medium', 'low', 'info']).optional(),
+    reason: z.string().min(1),
+    evidenceFile: z.string().min(1),
+  })
+  .strict();
+
+export const TriageVerdictsSchema = z
+  .object({
+    version: z.literal(1),
+    verdicts: z.array(TriageVerdictSchema),
+  })
+  .strict();
+export type TriageVerdicts = z.infer<typeof TriageVerdictsSchema>;
+
+export interface RunDetail {
+  run: RunListItem;
+  progress: WorkflowProgress | null;
+  metrics: LegacySession['metrics'] | null;
+  triage: TriageVerdicts | null;
+  unvalidatedFindings: UnvalidatedFinding[];
+  reportAvailable: boolean;
+  reportArtifacts: ReportArtifact[];
+  evidenceFiles: string[];
+}
+
+export const REPORT_ARTIFACT_KINDS = ['markdown', 'pdf', 'sarif'] as const;
+export type ReportArtifactKind = (typeof REPORT_ARTIFACT_KINDS)[number];
+
+export interface ReportArtifact {
+  kind: ReportArtifactKind;
+  filename: string;
+  contentType: string;
+}
+
+export interface UnvalidatedFinding {
+  id: string;
+  vulnType: VulnerabilityClass;
+  title: string;
+  reason: string;
+}
+
+export interface ActivityChunk {
+  offset: number;
+  text: string;
+  done: boolean;
+}
+
+export interface ReportData {
+  filename: string;
+  markdown: string;
+  sourceMode: SourceMode;
+  coverageNotice: string | null;
+}

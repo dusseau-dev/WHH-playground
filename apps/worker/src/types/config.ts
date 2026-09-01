@@ -23,6 +23,9 @@ export interface Rules {
 
 export type VulnClass = 'injection' | 'xss' | 'auth' | 'authz' | 'ssrf';
 
+/** Whether a run can inspect source code or is limited to the live target. */
+export type SourceMode = 'source-assisted' | 'url-only';
+
 export const ALL_VULN_CLASSES: readonly VulnClass[] = ['injection', 'xss', 'auth', 'authz', 'ssrf'];
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
@@ -32,7 +35,11 @@ export interface ReportConfig {
   min_severity?: Severity;
   min_confidence?: Confidence;
   guidance?: string;
+  /** Emit a SARIF 2.1.0 artifact when the run satisfies the safety and triage gates. */
+  sarif?: boolean | 'true' | 'false';
 }
+
+export type DistributedReportConfig = Omit<ReportConfig, 'sarif'> & { sarif: boolean };
 
 export type LoginType = 'form' | 'sso' | 'api' | 'basic';
 
@@ -68,7 +75,10 @@ export interface Config {
   pipeline?: PipelineConfig;
   description?: string;
   vuln_classes?: VulnClass[];
-  exploit?: 'true' | 'false';
+  /** Whether to run safe, authorized demonstrations of confirmed findings. */
+  safe_demonstration?: boolean | 'true' | 'false';
+  /** @deprecated Use safe_demonstration. */
+  exploit?: boolean | 'true' | 'false';
   report?: ReportConfig;
   rules_of_engagement?: string;
 }
@@ -86,8 +96,9 @@ export interface DistributedConfig {
   authentication: Authentication | null;
   description: string;
   vuln_classes: VulnClass[];
-  exploit: boolean;
-  report: ReportConfig;
+  /** Whether to run safe, authorized demonstrations of confirmed findings. */
+  safeDemonstration: boolean;
+  report: DistributedReportConfig;
   rules_of_engagement: string;
 }
 
@@ -99,16 +110,24 @@ export interface DistributedConfig {
  */
 export interface ProviderConfig {
   readonly providerType?: string;
+  /** Provider id when providerType is "generic" (for example, "google"). */
+  readonly providerId?: string;
+  /** One model id for the whole run. modelOverrides remains the tier-compatible fallback. */
+  readonly model?: string;
   readonly apiKey?: string;
   readonly awsRegion?: string;
   readonly awsAccessKeyId?: string;
   readonly awsSecretAccessKey?: string;
+  /** Optional temporary-session token accompanying the AWS access-key pair. */
+  readonly awsSessionToken?: string;
   readonly gcpRegion?: string;
   readonly gcpProjectId?: string;
   readonly gcpCredentialsPath?: string;
   readonly baseUrl?: string;
   readonly authToken?: string;
   readonly modelOverrides?: Record<string, string>;
+  /** OpenAI-compatible gateway wire format. */
+  readonly openAIFormat?: 'chat-completions' | 'responses';
   readonly supportsStructuredOutput?: boolean;
 }
 
@@ -119,7 +138,7 @@ export interface ProviderConfig {
  * can override OSS defaults without modifying source files.
  */
 export interface ContainerConfig {
-  /** Subdirectory for deliverables relative to repoPath. Default: '.shannon/deliverables' */
+  /** Subdirectory for deliverables relative to the working directory. Default: '.shannon/deliverables' */
   readonly deliverablesSubdir: string;
   /** Directory for audit logs. Default: './workspaces' */
   readonly auditDir: string;
