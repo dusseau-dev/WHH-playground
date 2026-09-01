@@ -8,6 +8,7 @@ import type {
   StructuredStep,
 } from '../collectors/finding-collector.js';
 import { ALL_VULN_CLASSES, type SourceMode, type VulnClass } from '../types/config.js';
+import { ASSESSMENT_SCOPE_REGISTRY, type ScopeCoverage } from '../types/scopes.js';
 import type { RuledOutFinding, TriageStatus } from './report-reconciliation.js';
 
 export interface ReportMeta {
@@ -26,6 +27,7 @@ export interface ReportData {
   readonly findings: readonly AddFindingInput[];
   readonly ruled_out: readonly RuledOutFinding[];
   readonly not_assessed: readonly VulnClass[];
+  readonly scope_coverage?: readonly ScopeCoverage[];
   readonly triage_status: TriageStatus;
   readonly validation_issues?: readonly string[];
 }
@@ -197,6 +199,27 @@ function renderNotAssessed(classes: readonly VulnClass[]): string {
   ].join('\n');
 }
 
+function renderOwaspCoverage(coverage: readonly ScopeCoverage[]): string {
+  const availabilityLabels = { available: 'Available', partial: 'Partial', 'coming-soon': 'Coming soon' } as const;
+  const statusLabels = {
+    completed: 'Completed',
+    incomplete: 'Incomplete',
+    'not-selected': 'Not selected',
+    'coming-soon': 'Coming soon',
+  } as const;
+  const scopeLabels = new Map(ASSESSMENT_SCOPE_REGISTRY.map(({ id, label }) => [id, label]));
+  return [
+    '## OWASP Coverage',
+    '',
+    '| Category | Support | Selected checks | Run status |',
+    '| --- | --- | --- | --- |',
+    ...coverage.map((entry) => {
+      const selected = entry.selected_scopes.map((scope) => scopeLabels.get(scope) ?? scope).join(', ') || '—';
+      return `| ${entry.owasp_id} ${entry.title} | ${availabilityLabels[entry.availability]} | ${selected} | ${statusLabels[entry.status]} |`;
+    }),
+  ].join('\n');
+}
+
 function renderRuledOut(entries: readonly RuledOutFinding[]): string {
   const lines = ['## Considered & Ruled Out', ''];
   if (entries.length === 0) return [...lines, '_Nothing was ruled out._'].join('\n');
@@ -234,6 +257,7 @@ export function renderReport(data: ReportData): string {
     '',
     MODE_COVERAGE[meta.source_mode],
     '',
+    ...(data.scope_coverage ? [renderOwaspCoverage(data.scope_coverage), ''] : []),
     renderValidation(data),
   ];
 

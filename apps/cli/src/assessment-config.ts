@@ -42,6 +42,8 @@ function safeDemonstrationAliases(raw: Record<string, unknown>): {
 export function normalizeAssessmentConfigObject(config: Record<string, unknown>): AssessmentConfig {
   if (
     'testCategories' in config ||
+    'testScopes' in config ||
+    'testSurfaces' in config ||
     'safeDemonstration' in config ||
     'demonstrate' in config ||
     'rulesOfEngagement' in config
@@ -62,6 +64,8 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
     ...(Array.isArray(config.test_categories) && { testCategories: config.test_categories }),
     ...(Array.isArray(config.vuln_classes) &&
       !Array.isArray(config.test_categories) && { testCategories: config.vuln_classes }),
+    ...(Array.isArray(config.test_scopes) && { testScopes: config.test_scopes }),
+    ...(Array.isArray(config.test_surfaces) && { testSurfaces: config.test_surfaces }),
     ...safeDemonstrationAliases(config),
     ...(pipeline && {
       pipeline: {

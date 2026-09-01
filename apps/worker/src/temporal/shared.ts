@@ -5,6 +5,7 @@ export type { AgentMetrics } from '../types/metrics.js';
 import type { DistributedConfig, PipelineConfig, ProviderConfig, SourceMode, VulnClass } from '../types/config.js';
 import type { ErrorCode } from '../types/errors.js';
 import type { AgentMetrics } from '../types/metrics.js';
+import { type AssessmentScope, type AssessmentSurface, normalizeAssessmentScope } from '../types/scopes.js';
 
 export interface PipelineInput {
   webUrl: string;
@@ -39,6 +40,10 @@ export interface PipelineInput {
   /** Opaque reference to provider credentials in the worker-local run store. */
   secretRef?: string;
   vulnClasses?: VulnClass[]; // omitted = all five
+  /** Granular checks selected for this run. */
+  testScopes?: AssessmentScope[];
+  /** Browser/API surfaces selected for this run. */
+  testSurfaces?: AssessmentSurface[];
   safeDemonstration?: boolean; // false skips the safe-demonstration phase
   /** @deprecated Use safeDemonstration. */
   exploit?: boolean;
@@ -194,12 +199,20 @@ export function normalizeCliPipelineInput(input: PipelineInput): NormalizedPipel
   const workingDirectory =
     input.workingDirectory ?? (sourceMode === 'url-only' ? DEFAULT_URL_ONLY_WORKING_DIRECTORY : input.repoPath);
   const safeDemonstration = resolveSafeDemonstrationInput(input);
+  const assessmentScope = normalizeAssessmentScope({
+    ...(input.testScopes && { testScopes: input.testScopes }),
+    ...(input.testSurfaces && { testSurfaces: input.testSurfaces }),
+    ...(input.vulnClasses && { vulnClasses: input.vulnClasses }),
+  });
   const { exploit: _legacyExploit, ...inputWithoutLegacyFlag } = input;
 
   const normalized: PipelineInput = {
     ...inputWithoutLegacyFlag,
     sourceMode,
     safeDemonstration,
+    testScopes: assessmentScope.testScopes,
+    testSurfaces: assessmentScope.testSurfaces,
+    vulnClasses: assessmentScope.vulnClasses,
     ...(workingDirectory !== undefined && { workingDirectory }),
   };
 

@@ -10,15 +10,9 @@ import type { FormatsPlugin } from 'ajv-formats';
 import yaml from 'js-yaml';
 import { fs } from 'zx';
 import { PentestError } from './services/error-handling.js';
-import {
-  ALL_VULN_CLASSES,
-  type Authentication,
-  type Config,
-  type DistributedConfig,
-  type Rule,
-  type SourceMode,
-} from './types/config.js';
+import type { Authentication, Config, DistributedConfig, Rule, SourceMode } from './types/config.js';
 import { ErrorCode } from './types/errors.js';
+import { normalizeAssessmentScope } from './types/scopes.js';
 
 // Handle ESM/CJS interop for ajv-formats using require
 const require = createRequire(import.meta.url);
@@ -125,8 +119,16 @@ export function normalizeDistributedConfig(
     ...rest
   } = config;
   const sarif = report?.sarif as BooleanLike | undefined;
+  const scope = normalizeAssessmentScope({
+    ...(config.test_scopes && { testScopes: config.test_scopes }),
+    ...(config.test_surfaces && { testSurfaces: config.test_surfaces }),
+    ...(config.vuln_classes && { vulnClasses: config.vuln_classes }),
+  });
   return {
     ...rest,
+    vuln_classes: scope.vulnClasses,
+    test_scopes: scope.testScopes,
+    test_surfaces: scope.testSurfaces,
     safeDemonstration: resolveSafeDemonstrationFlag(config),
     report: {
       ...report,
@@ -490,6 +492,21 @@ const validateConfig = (config: Config): void => {
   }
 
   resolveSafeDemonstrationFlag(config);
+  try {
+    normalizeAssessmentScope({
+      ...(config.test_scopes && { testScopes: config.test_scopes }),
+      ...(config.test_surfaces && { testSurfaces: config.test_surfaces }),
+      ...(config.vuln_classes && { vulnClasses: config.vuln_classes }),
+    });
+  } catch (error) {
+    throw new PentestError(
+      error instanceof Error ? error.message : String(error),
+      'config',
+      false,
+      {},
+      ErrorCode.CONFIG_VALIDATION_FAILED,
+    );
+  }
   performSecurityValidation(config);
 
   const hasAnySteering =
@@ -497,6 +514,8 @@ const validateConfig = (config: Config): void => {
     !!config.authentication ||
     !!config.description ||
     !!config.vuln_classes ||
+    !!config.test_scopes ||
+    !!config.test_surfaces ||
     config.safe_demonstration !== undefined ||
     config.exploit !== undefined ||
     !!config.report ||
@@ -779,8 +798,11 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
   const authentication = config?.authentication || null;
   const description = config?.description?.trim() || '';
 
-  const vuln_classes =
-    config?.vuln_classes && config.vuln_classes.length > 0 ? [...config.vuln_classes] : [...ALL_VULN_CLASSES];
+  const scope = normalizeAssessmentScope({
+    ...(config?.test_scopes && { testScopes: config.test_scopes }),
+    ...(config?.test_surfaces && { testSurfaces: config.test_surfaces }),
+    ...(config?.vuln_classes && { vulnClasses: config.vuln_classes }),
+  });
 
   const safeDemonstration = resolveSafeDemonstrationFlag(config);
 
@@ -798,7 +820,9 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
     focus: focus.map(sanitizeRule),
     authentication: authentication ? sanitizeAuthentication(authentication) : null,
     description,
-    vuln_classes,
+    vuln_classes: scope.vulnClasses,
+    test_scopes: scope.testScopes,
+    test_surfaces: scope.testSurfaces,
     safeDemonstration,
     report,
     rules_of_engagement,

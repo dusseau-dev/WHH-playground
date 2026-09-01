@@ -40,6 +40,7 @@ import { getWorkspacesDir, initHome } from './home.js';
 import { isLocal } from './mode.js';
 import { FINAL_REPORT_FILENAME, INTERNAL_DIR } from './paths.js';
 import { SecretRedactor, safeErrorMessage, sanitizeReportMarkdown } from './redaction.js';
+import type { AssessmentTestScope, AssessmentTestSurface } from './security-scopes.js';
 import {
   assertSafeIdentifier,
   atomicWriteFile,
@@ -146,6 +147,8 @@ export interface TemporalPipelineInput {
     max_concurrent_pipelines?: number;
   };
   vulnClasses?: VulnerabilityClass[];
+  testScopes?: AssessmentTestScope[];
+  testSurfaces?: AssessmentTestSurface[];
   safeDemonstration?: boolean;
   /** @deprecated Inline credentials are staged locally before Temporal submission. */
   apiKey?: string;
@@ -288,9 +291,7 @@ function providerCredentialValues(providerConfig: ProviderConfig | undefined): s
 function withoutProviderCredentials(providerConfig: ProviderConfig | undefined): ProviderConfig | undefined {
   if (!providerConfig) return undefined;
   const safe = Object.fromEntries(
-    Object.entries(providerConfig).filter(
-      ([key]) => !(PROVIDER_CREDENTIAL_FIELDS as readonly string[]).includes(key),
-    ),
+    Object.entries(providerConfig).filter(([key]) => !(PROVIDER_CREDENTIAL_FIELDS as readonly string[]).includes(key)),
   );
   return Object.keys(safe).length > 0 ? (safe as ProviderConfig) : undefined;
 }
@@ -350,6 +351,8 @@ function workerConfig(config: AssessmentConfig, secrets: TargetSecrets): Record<
   return {
     ...(config.description && { description: config.description }),
     ...(config.testCategories && { vuln_classes: config.testCategories }),
+    ...(config.testScopes && { test_scopes: config.testScopes }),
+    ...(config.testSurfaces && { test_surfaces: config.testSurfaces }),
     ...(config.safeDemonstration !== undefined && { safe_demonstration: config.safeDemonstration }),
     ...(config.pipeline && {
       pipeline: {
@@ -1057,6 +1060,8 @@ export class ScanController {
         },
       }),
       ...(run.snapshot.config.testCategories && { vulnClasses: [...run.snapshot.config.testCategories] }),
+      ...(run.snapshot.config.testScopes && { testScopes: [...run.snapshot.config.testScopes] }),
+      ...(run.snapshot.config.testSurfaces && { testSurfaces: [...run.snapshot.config.testSurfaces] }),
       ...(run.snapshot.config.safeDemonstration !== undefined && {
         safeDemonstration: run.snapshot.config.safeDemonstration,
       }),

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseAssessmentConfigYaml } from '../src/assessment-config.js';
+import { AssessmentConfigSchema } from '../src/contracts.js';
 import { ProfileStore } from '../src/profiles.js';
 import { createSecretStore, MemorySecretStore } from '../src/secret-store.js';
 
@@ -66,6 +67,32 @@ authentication:
 
   it('rejects conflicting demonstration aliases', () => {
     expect(() => parseAssessmentConfigYaml('safe_demonstration: true\nexploit: false')).toThrow(/conflicts/);
+  });
+
+  it('accepts granular scopes and derives legacy execution categories', () => {
+    const parsed = parseAssessmentConfigYaml(`
+test_scopes: [reflected-xss, csrf]
+test_surfaces: [api-graphql]
+`);
+    expect(parsed.config.testScopes).toEqual(['csrf', 'reflected-xss']);
+    expect(parsed.config.testSurfaces).toEqual(['api-graphql']);
+    expect(parsed.config.testCategories).toEqual(['xss', 'authz']);
+  });
+
+  it('expands legacy categories to all owned checks', () => {
+    const parsed = parseAssessmentConfigYaml('test_categories: [authz]');
+    expect(parsed.config.testScopes).toContain('csrf');
+    expect(parsed.config.testScopes).toContain('object-access');
+    expect(parsed.config.testScopes).not.toContain('rate-limiting');
+    expect(parsed.config.testSurfaces).toEqual(['browser', 'api-graphql']);
+  });
+
+  it('rejects conflicting and unavailable API scope input', () => {
+    expect(() => AssessmentConfigSchema.parse({ testCategories: ['auth'], testScopes: ['csrf'] })).toThrow(/conflict/i);
+    expect(() => AssessmentConfigSchema.parse({ testScopes: ['dependency-risk'] })).toThrow(/coming soon/i);
+    expect(() => AssessmentConfigSchema.parse({ testScopes: ['csrf'], testSurfaces: ['websockets'] })).toThrow(
+      /coming soon/i,
+    );
   });
 });
 

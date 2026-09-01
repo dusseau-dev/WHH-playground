@@ -49,6 +49,8 @@ const promptConfig: DistributedConfig = {
   },
   description: 'Authorized target',
   vuln_classes: ['injection', 'xss', 'auth', 'authz', 'ssrf'],
+  test_scopes: ['object-access', 'ssrf', 'security-headers', 'transport-session-protection', 'sql-nosql-injection'],
+  test_surfaces: ['browser', 'api-graphql'],
   safeDemonstration: false,
   report: {},
   rules_of_engagement: '',
@@ -156,6 +158,66 @@ describe('URL-only prompt isolation', () => {
       );
       expect(prompt).not.toMatch(forbiddenUrlOnlyPromptText);
       expect(prompt).not.toMatch(/\{\{[^}]+\}\}/);
+    }
+  });
+
+  it('makes the selected per-agent checks and surfaces authoritative', async () => {
+    const prompt = await loadPrompt(
+      'vuln-injection',
+      {
+        webUrl: 'https://target.example',
+        workingDirectory: '/app/target',
+        AUTH_STATE_FILE: '/app/target/.auth.json',
+      },
+      {
+        ...promptConfig,
+        vuln_classes: ['injection'],
+        test_scopes: ['xxe'],
+        test_surfaces: ['api-graphql'],
+      },
+      false,
+      logger,
+      promptsRoot,
+      'url-only',
+    );
+
+    const scopeBlock = prompt.match(/<assessment_scope>[\s\S]*?<\/assessment_scope>/)?.[0] ?? '';
+    expect(scopeBlock).toContain('Only perform the checks listed below');
+    expect(scopeBlock).toContain('XML external entities (`xxe`)');
+    expect(scopeBlock).toContain('API and GraphQL (`api-graphql`)');
+    expect(scopeBlock).not.toContain('Command injection (`command-injection`)');
+  });
+
+  it('applies the authoritative per-agent scope in every prompt mode', async () => {
+    for (const sourceMode of ['source-assisted', 'url-only'] as const) {
+      for (const pipelineTestingMode of [false, true]) {
+        const prompt = await loadPrompt(
+          'vuln-injection',
+          {
+            webUrl: 'https://target.example',
+            workingDirectory: '/app/target',
+            ...(sourceMode === 'source-assisted' && { repoPath: '/app/target' }),
+            AUTH_STATE_FILE: '/app/target/.auth.json',
+          },
+          {
+            ...promptConfig,
+            vuln_classes: ['injection'],
+            test_scopes: ['xxe'],
+            test_surfaces: ['api-graphql'],
+          },
+          pipelineTestingMode,
+          logger,
+          promptsRoot,
+          sourceMode,
+        );
+        const scopeBlock = prompt.match(/<assessment_scope>[\s\S]*?<\/assessment_scope>/)?.[0] ?? '';
+        expect(scopeBlock).toContain('XML external entities (`xxe`)');
+        expect(scopeBlock).toContain('API and GraphQL (`api-graphql`)');
+        expect(scopeBlock).not.toContain('Command injection (`command-injection`)');
+        expect(prompt).not.toMatch(
+          /\{\{(?:WEB_URL|REPO_PATH|WORKING_DIRECTORY|SAFE_DEMONSTRATION|ASSESSMENT_SCOPES|ASSESSMENT_SURFACES)\}\}/,
+        );
+      }
     }
   });
 });

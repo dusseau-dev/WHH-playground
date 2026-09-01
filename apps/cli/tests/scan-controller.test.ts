@@ -37,6 +37,8 @@ describe('managed run launch', () => {
       profileRef: { id: 'profile-1', version: 1, updatedAt: '2026-08-23T12:00:00.000Z' },
       config: {
         testCategories: ['injection', 'authz'],
+        testScopes: ['csrf', 'xxe'],
+        testSurfaces: ['api-graphql'],
         safeDemonstration: false,
         pipeline: { maxConcurrentPipelines: 2 },
         report: { sarif: true },
@@ -59,6 +61,11 @@ describe('managed run launch', () => {
       profileRef: { id: 'profile-1' },
       requiredSecretFields: ['password'],
       secretRefs: { password: 'keychain:profile-1:password' },
+      config: {
+        testCategories: ['injection', 'authz'],
+        testScopes: ['csrf', 'xxe'],
+        testSurfaces: ['api-graphql'],
+      },
     });
     expect(run.snapshotHash).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(run.attempts).toHaveLength(1);
@@ -76,6 +83,8 @@ describe('managed run launch', () => {
       workingDirectory: '/app/target',
       sessionId: 'url-only-run',
       vulnClasses: ['injection', 'authz'],
+      testScopes: ['csrf', 'xxe'],
+      testSurfaces: ['api-graphql'],
       safeDemonstration: false,
       pipelineConfig: { max_concurrent_pipelines: 2 },
     });
@@ -100,6 +109,10 @@ describe('managed run launch', () => {
     expect(snapshot).not.toContain('runtime-only-password');
     expect(runtimeConfig).toContain('runtime-only-password');
     expect(runtimeConfig).toContain('sarif: true');
+    expect(runtimeConfig).toContain('test_scopes:');
+    expect(runtimeConfig).toContain('csrf');
+    expect(runtimeConfig).toContain('test_surfaces:');
+    expect(runtimeConfig).toContain('api-graphql');
     expect(JSON.stringify(temporal.starts)).not.toContain('runtime-only-password');
     if (process.platform !== 'win32') {
       expect((await fs.stat(runPath)).mode & 0o777).toBe(0o600);
@@ -306,6 +319,8 @@ describe('resume and cancellation', () => {
       sourceMode: original.sourceMode,
       resumeFromWorkspace: 'resume-run',
       vulnClasses: ['xss'],
+      testScopes: ['security-headers', 'reflected-xss', 'stored-xss', 'dom-xss'],
+      testSurfaces: ['browser', 'api-graphql'],
       safeDemonstration: true,
     });
     expect(runtime.launches).toHaveLength(2);
@@ -337,13 +352,17 @@ describe('resume and cancellation', () => {
     });
     await controller.cancelRun(started.runId);
 
-    const resumed = await controller.resumeRun(started.runId, {}, {
-      model: '~anthropic/claude-sonnet-latest',
-      openAIFormat: 'chat-completions',
-      baseUrl: 'https://openrouter.ai/api/v1',
-      providerType: 'openai',
-      apiKey: 'sk-or-v1-resume-provider-key',
-    });
+    const resumed = await controller.resumeRun(
+      started.runId,
+      {},
+      {
+        model: '~anthropic/claude-sonnet-latest',
+        openAIFormat: 'chat-completions',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        providerType: 'openai',
+        apiKey: 'sk-or-v1-resume-provider-key',
+      },
+    );
 
     expect(resumed.attempts).toHaveLength(2);
     expect(temporal.starts[1]?.input.providerConfig).toMatchObject({

@@ -3,6 +3,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parseAssessmentConfigYaml } from '../assessment-config.js';
+import { AssessmentConfigSchema } from '../contracts.js';
 import { getWorkspacesDir } from '../home.js';
 import { isLocal } from '../mode.js';
 import { ScanController } from '../scan-controller.js';
@@ -22,7 +23,7 @@ export interface StartArgs {
 export async function start(args: StartArgs): Promise<void> {
   const parsedConfig = args.config
     ? parseAssessmentConfigYaml(await fs.readFile(path.resolve(args.config), 'utf8'))
-    : { config: {}, secrets: {} };
+    : { config: AssessmentConfigSchema.parse({}), secrets: {} };
   const controller = new ScanController({ version: args.version });
   await controller.initialize();
 

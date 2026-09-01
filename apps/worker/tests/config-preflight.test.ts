@@ -30,6 +30,34 @@ describe('configuration compatibility', () => {
     const config = parseConfigYAML('pipeline:\n  max_concurrent_pipelines: "3"');
     expect(config.pipeline).toEqual({ max_concurrent_pipelines: 3 });
   });
+
+  it('normalizes granular checks and surfaces while deriving execution lanes', () => {
+    const distributed = distributeConfig(
+      parseConfigYAML(`
+test_scopes: [reflected-xss, csrf]
+test_surfaces: [api-graphql]
+`),
+    );
+    expect(distributed.test_scopes).toEqual(['csrf', 'reflected-xss']);
+    expect(distributed.test_surfaces).toEqual(['api-graphql']);
+    expect(distributed.vuln_classes).toEqual(['xss', 'authz']);
+  });
+
+  it('expands legacy classes into granular checks', () => {
+    const distributed = distributeConfig(parseConfigYAML('vuln_classes: [authz]'));
+    expect(distributed.test_scopes).toContain('csrf');
+    expect(distributed.test_scopes).toContain('object-access');
+    expect(distributed.test_scopes).not.toContain('rate-limiting');
+    expect(distributed.test_surfaces).toEqual(['browser', 'api-graphql']);
+  });
+
+  it('rejects conflicting, duplicate, empty, and unavailable scope configuration', () => {
+    expect(() => parseConfigYAML('vuln_classes: [auth]\ntest_scopes: [csrf]')).toThrow(/conflict/i);
+    expect(() => parseConfigYAML('test_scopes: [csrf, csrf]')).toThrow(/duplicate/i);
+    expect(() => parseConfigYAML('test_scopes: []')).toThrow(/at least 1/i);
+    expect(() => parseConfigYAML('test_surfaces: [websockets]')).toThrow(/coming soon/i);
+    expect(() => parseConfigYAML('test_scopes: [dependency-risk]')).toThrow(/coming soon/i);
+  });
 });
 
 describe('source-mode preflight rules', () => {

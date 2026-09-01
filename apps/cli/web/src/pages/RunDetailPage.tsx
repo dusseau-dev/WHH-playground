@@ -72,7 +72,7 @@ function RunMetrics({ run }: { run: RunDetail }) {
   const metrics = [
     { label: "Elapsed", value: formatDuration(run.metrics?.elapsedMs), icon: Clock3 },
     { label: "Cost", value: formatCost(run.metrics?.costUsd), icon: CircleDollarSign },
-    { label: "Test categories", value: String(run.scope.testCategories.length), icon: RefreshCw },
+    { label: "Selected checks", value: String(run.scope.testScopes.length), icon: RefreshCw },
     { label: "Findings", value: String(run.metrics?.findings ?? run.findings.length), icon: ShieldAlert },
     {
       label: "Active tests",

@@ -3,6 +3,39 @@ import { expect, type Page, type Route, test } from '@playwright/test';
 
 type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
+const availableScopeIds = [
+  'object-access',
+  'privilege-boundaries',
+  'tenant-isolation',
+  'csrf',
+  'ssrf',
+  'cors',
+  'security-headers',
+  'open-redirects',
+  'sensitive-data-exposure',
+  'transport-session-protection',
+  'sql-nosql-injection',
+  'command-injection',
+  'template-injection',
+  'xxe',
+  'path-traversal-file-inclusion',
+  'reflected-xss',
+  'stored-xss',
+  'dom-xss',
+  'business-logic',
+  'workflow-bypass',
+  'file-upload',
+  'rate-limiting',
+  'account-enumeration',
+  'login-controls',
+  'account-recovery-mfa',
+  'session-lifecycle',
+  'unsafe-deserialization',
+  'upload-integrity',
+  'verbose-errors',
+  'fail-open',
+] as const;
+
 interface MockRun {
   kind: 'managed';
   runId: string;
@@ -14,6 +47,8 @@ interface MockRun {
     repoPath?: string;
     config: {
       testCategories: string[];
+      testScopes: string[];
+      testSurfaces: string[];
       safeDemonstration: boolean;
       pipeline: { maxConcurrentPipelines: number };
     };
@@ -72,6 +107,8 @@ function run(
       ...(sourceMode === 'source-assisted' && { repoPath: '/Users/operator/project' }),
       config: {
         testCategories: ['injection', 'xss', 'auth', 'authz', 'ssrf'],
+        testScopes: [...availableScopeIds],
+        testSurfaces: ['browser', 'api-graphql'],
         safeDemonstration: true,
         pipeline: { maxConcurrentPipelines: 3 },
       },
@@ -162,6 +199,7 @@ class MockApi {
   readonly runs = new Map<string, MockDetail>();
   readonly profiles = new Map<string, Record<string, unknown>>();
   lastStartBody: Record<string, unknown> | null = null;
+  lastProfileBody: Record<string, unknown> | null = null;
   resumeRequiresSecrets = false;
 
   constructor(private readonly page: Page) {}
@@ -220,6 +258,7 @@ class MockApi {
     }
     if (path === '/profiles' && method === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
+      this.lastProfileBody = body;
       const profile = {
         version: 1,
         id: 'profile-browser',
@@ -337,13 +376,49 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByRole('button', { name: 'New profile' }).click();
   await page.getByLabel('Profile name').fill('Staging target');
   await page.getByLabel('Target URL').fill('https://staging.example.test');
+  await page.getByRole('button', { name: 'Expand A05:2025 Injection' }).click();
+  await page.getByText('Command injection', { exact: true }).click();
+  await expect(page.getByLabel('Command injection')).not.toBeChecked();
+  await page.getByText('API / GraphQL', { exact: true }).click();
+  await expect(page.getByLabel('API / GraphQL')).not.toBeChecked();
   await page.getByRole('button', { name: 'Save profile' }).click();
   await expect(page.getByText('Staging target').first()).toBeVisible();
+  expect(api.lastProfileBody).toMatchObject({
+    config: {
+      testSurfaces: ['browser'],
+    },
+  });
+  expect((api.lastProfileBody?.config as Record<string, unknown>).testScopes as string[]).not.toContain(
+    'command-injection',
+  );
 
   if ((page.viewportSize()?.width ?? 0) < 760) {
     await page.getByRole('button', { name: 'Open navigation' }).click();
   }
   await page.getByRole('link', { name: 'New assessment' }).click();
+  await page.getByLabel('Load profile').selectOption('profile-browser');
+  await expect(page.getByLabel('Target URL')).toHaveValue('https://staging.example.test');
+  await page.getByRole('button', { name: 'Expand A05:2025 Injection' }).click();
+  await expect(page.getByLabel('Command injection')).not.toBeChecked();
+  await expect(page.getByLabel('API / GraphQL')).not.toBeChecked();
+  await page.getByRole('button', { name: 'Select all available checks' }).click();
+  await page.getByText('Command injection', { exact: true }).click();
+  const injectionParent = page.getByRole('checkbox', { name: 'A05:2025 Injection', exact: true });
+  await expect(injectionParent).not.toBeChecked();
+  expect(await injectionParent.evaluate((element) => (element as HTMLInputElement).indeterminate)).toBe(true);
+  await page.getByRole('button', { name: 'Clear all checks' }).click();
+  const accessControlParent = page.getByRole('checkbox', {
+    name: 'A01:2025 Broken Access Control',
+    exact: true,
+  });
+  await page.locator('label.owasp-parent-check').filter({ has: accessControlParent }).click();
+  await expect(accessControlParent).toBeChecked();
+  await page.getByRole('button', { name: 'Expand A03:2025 Software Supply Chain Failures' }).click();
+  await expect(
+    page.getByRole('checkbox', { name: 'A03:2025 Software Supply Chain Failures', exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByLabel('Dependency risk')).toBeDisabled();
+  await expect(page.getByLabel('WebSockets')).toBeDisabled();
   await expect(page.getByText('URL-only mode uses browser and API observations; code-level coverage')).toBeVisible();
   await page.getByText('Source assisted', { exact: true }).click();
   await expect(page.getByLabel('Source assisted')).toBeChecked();
@@ -355,8 +430,6 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByLabel('Model source').selectOption('openrouter');
   await page.getByLabel('Model ID').fill('~anthropic/claude-sonnet-latest');
   await page.getByLabel('Provider API key', { exact: true }).fill('sk-or-v1-runtime-only-provider-key');
-  await page.getByText('Cross-site scripting', { exact: true }).click();
-  await expect(page.getByLabel('Cross-site scripting')).not.toBeChecked();
   await page.getByRole('button', { name: 'Decrease concurrency' }).click();
   await page.getByText('Rules and reporting').click();
   await page.getByText('SARIF report', { exact: true }).click();
@@ -366,6 +439,13 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByRole('button', { name: 'Start assessment' }).click();
   await expect(page).toHaveURL(/\/runs\/new-assessment$/);
   expect(api.lastStartBody).toMatchObject({ sourceMode: 'url-only', targetUrl: 'https://new.example.test' });
+  expect(api.lastStartBody).toMatchObject({
+    config: {
+      testCategories: ['authz', 'ssrf'],
+      testScopes: ['object-access', 'privilege-boundaries', 'tenant-isolation', 'csrf', 'ssrf'],
+      testSurfaces: ['browser'],
+    },
+  });
   expect(api.lastStartBody).toMatchObject({
     providerConfig: {
       providerType: 'openai',

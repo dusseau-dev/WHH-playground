@@ -9,6 +9,13 @@ import { PROMPTS_DIR } from '../paths.js';
 import { PLAYWRIGHT_SESSION_MAPPING } from '../session-manager.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 import type { Authentication, DistributedConfig, ReportConfig, Rule, SourceMode, VulnClass } from '../types/config.js';
+import {
+  ASSESSMENT_SCOPE_REGISTRY,
+  ASSESSMENT_SURFACE_REGISTRY,
+  type AssessmentScope,
+  type AssessmentSurface,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 import { isGlobPattern } from '../utils/glob.js';
 import { handlePromptError, PentestError } from './error-handling.js';
 
@@ -121,6 +128,53 @@ interface PromptVariables {
   repoPath?: string;
   AUTH_STATE_FILE: string;
   PLAYWRIGHT_SESSION?: string;
+  testScopes?: AssessmentScope[];
+  testSurfaces?: AssessmentSurface[];
+}
+
+function promptExecutionLane(promptName: string): VulnClass | undefined {
+  return (Object.keys(VULN_SUMMARY_SPECS) as VulnClass[]).find(
+    (lane) => promptName === `vuln-${lane}` || promptName === `exploit-${lane}`,
+  );
+}
+
+function renderAssessmentScopeBlock(
+  promptName: string,
+  variables: PromptVariables,
+  config: DistributedConfig | null,
+): string {
+  const useVariableScopes = variables.testScopes !== undefined;
+  const scope = normalizeAssessmentScope({
+    ...(variables.testScopes !== undefined
+      ? { testScopes: variables.testScopes }
+      : config?.test_scopes
+        ? { testScopes: config.test_scopes }
+        : {}),
+    ...(variables.testSurfaces !== undefined
+      ? { testSurfaces: variables.testSurfaces }
+      : config?.test_surfaces
+        ? { testSurfaces: config.test_surfaces }
+        : {}),
+    ...(!useVariableScopes && config?.vuln_classes ? { vulnClasses: config.vuln_classes } : {}),
+  });
+  const lane = promptExecutionLane(promptName);
+  const checks = ASSESSMENT_SCOPE_REGISTRY.filter((definition) => {
+    if (!scope.testScopes.includes(definition.id)) return false;
+    if (!lane) return true;
+    return 'agent' in definition && definition.agent === lane;
+  });
+  const surfaces = ASSESSMENT_SURFACE_REGISTRY.filter(({ id }) => scope.testSurfaces.includes(id));
+  return [
+    '<assessment_scope>',
+    'Only perform the checks listed below. Checks not listed are outside this run scope, even if referenced elsewhere in this prompt.',
+    '',
+    'Selected checks:',
+    ...(checks.length > 0 ? checks.map(({ label, id }) => `- ${label} (\`${id}\`)`) : ['- None']),
+    '',
+    'Enabled surfaces:',
+    ...surfaces.map(({ label, id }) => `- ${label} (\`${id}\`)`),
+    '</assessment_scope>',
+  ].join('\n');
 }
 
 interface IncludeReplacement {
@@ -452,7 +506,8 @@ export async function loadPrompt(
     template = await processIncludes(template, promptsDir);
 
     // 5. Interpolate variables and return final prompt
-    return await interpolateVariables(template, enhancedVariables, config, logger, basePromptsDir);
+    const interpolated = await interpolateVariables(template, enhancedVariables, config, logger, basePromptsDir);
+    return `${renderAssessmentScopeBlock(promptName, enhancedVariables, config)}\n\n${interpolated}`;
   } catch (error) {
     if (error instanceof PentestError) {
       throw error;

@@ -56,6 +56,7 @@ import {
 } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
 import { isErr } from '../types/result.js';
+import { type AssessmentScope, type AssessmentSurface, normalizeAssessmentScope } from '../types/scopes.js';
 import { atomicWrite, fileExists, readJson } from '../utils/file-io.js';
 import { createActivityLogger } from './activity-logger.js';
 import { clearPipelineCredentials, resolvePipelineCredentials } from './pipeline-secrets.js';
@@ -106,6 +107,10 @@ export interface ActivityInput {
   secretRef?: string;
   /** Exact vulnerability classes selected by the workflow for this run. */
   vulnClasses?: VulnClass[];
+  /** Exact granular checks selected by the workflow for this run. */
+  testScopes?: AssessmentScope[];
+  /** Exact interaction surfaces selected by the workflow for this run. */
+  testSurfaces?: AssessmentSurface[];
 }
 
 interface AgentActivityExtensions {
@@ -259,6 +264,8 @@ async function runAgentActivity(
         ...(input.promptDir !== undefined && { promptDir: input.promptDir }),
         ...(input.configYAML !== undefined && { configYAML: input.configYAML }),
         ...(input.configData !== undefined && { configData: input.configData }),
+        ...(input.testScopes !== undefined && { testScopes: input.testScopes }),
+        ...(input.testSurfaces !== undefined && { testSurfaces: input.testSurfaces }),
         ...(extensions.callerTools !== undefined && { callerTools: extensions.callerTools }),
         ...(extensions.postExecutionFinalizer !== undefined && {
           postExecutionFinalizer: extensions.postExecutionFinalizer,
@@ -376,6 +383,7 @@ export async function runReportAgent(
     safeDemonstration,
     triageRan,
     selectedVulnClasses: input.vulnClasses ?? input.configData?.vuln_classes ?? ALL_VULN_CLASSES,
+    ...(input.testScopes && { selectedTestScopes: input.testScopes }),
   });
   return runAgentActivity('report', input, {
     callerTools: reportSession.tools,
@@ -782,6 +790,8 @@ export async function checkExploitationQueue(input: ActivityInput, vulnType: Vul
 
 interface RunScope {
   vulnClasses: VulnClass[];
+  testScopes?: AssessmentScope[];
+  testSurfaces?: AssessmentSurface[];
   safeDemonstration?: boolean;
   /** @deprecated Legacy session scope field. */
   exploit?: boolean;
@@ -976,7 +986,25 @@ function nonSecretRunConfig(config: DistributedConfig | null): unknown {
   };
 }
 
-async function computeRunConfigHash(input: ActivityInput, sessionMetadata: SessionMetadata): Promise<string> {
+interface RunConfigHashes {
+  current: string;
+  preGranular: string;
+}
+
+function hashRunConfig(value: unknown): string {
+  return crypto.createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function withoutGranularScopeFields(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { test_scopes: _testScopes, test_surfaces: _testSurfaces, ...legacyConfig } = value as Record<string, unknown>;
+  return legacyConfig;
+}
+
+async function computeRunConfigHashes(
+  input: ActivityInput,
+  sessionMetadata: SessionMetadata,
+): Promise<RunConfigHashes> {
   const container = getOrCreateContainer(input.workflowId, sessionMetadata, buildContainerConfig(input));
   const configResult = await container.configLoader.loadOptional(
     input.configPath,
@@ -989,10 +1017,11 @@ async function computeRunConfigHash(input: ActivityInput, sessionMetadata: Sessi
       { phase: 'scope-validation' },
     ]);
   }
-  return crypto
-    .createHash('sha256')
-    .update(stableStringify(nonSecretRunConfig(configResult.value)))
-    .digest('hex');
+  const normalizedConfig = nonSecretRunConfig(configResult.value);
+  return {
+    current: hashRunConfig(normalizedConfig),
+    preGranular: hashRunConfig(withoutGranularScopeFields(normalizedConfig)),
+  };
 }
 
 /** First run records scope into session.json; resume runs throw if it differs. */
@@ -1002,8 +1031,14 @@ export async function persistOrValidateRunScope(
   safeDemonstration: boolean,
 ): Promise<void> {
   const input = await hydratePipelineCredentials(rawInput);
+  const currentScope = normalizeAssessmentScope({
+    ...(input.testScopes && { testScopes: input.testScopes }),
+    ...(input.testSurfaces && { testSurfaces: input.testSurfaces }),
+    vulnClasses,
+  });
   const sessionMetadata = buildSessionMetadata(input);
-  const configHash = await computeRunConfigHash(input, sessionMetadata);
+  const configHashes = await computeRunConfigHashes(input, sessionMetadata);
+  const configHash = configHashes.current;
   const auditSession = new AuditSession(sessionMetadata);
   await auditSession.initialize(input.workflowId);
 
@@ -1025,34 +1060,59 @@ export async function persistOrValidateRunScope(
 
   if (session.session.scope) {
     const recorded = session.session.scope;
+    const recordedScope = normalizeAssessmentScope({
+      ...(recorded.testScopes && { testScopes: recorded.testScopes }),
+      ...(recorded.testSurfaces && { testSurfaces: recorded.testSurfaces }),
+      vulnClasses: recorded.vulnClasses,
+    });
     const recordedSafeDemonstration = recorded.safeDemonstration ?? recorded.exploit ?? true;
     const sameClasses =
-      recorded.vulnClasses.length === vulnClasses.length &&
-      recorded.vulnClasses.every((c) => vulnClasses.includes(c)) &&
-      vulnClasses.every((c) => recorded.vulnClasses.includes(c));
+      recordedScope.vulnClasses.length === currentScope.vulnClasses.length &&
+      recordedScope.vulnClasses.every((value) => currentScope.vulnClasses.includes(value));
+    const sameTestScopes =
+      recordedScope.testScopes.length === currentScope.testScopes.length &&
+      recordedScope.testScopes.every((value) => currentScope.testScopes.includes(value));
+    const sameTestSurfaces =
+      recordedScope.testSurfaces.length === currentScope.testSurfaces.length &&
+      recordedScope.testSurfaces.every((value) => currentScope.testSurfaces.includes(value));
 
     const recordedSourceMode = recorded.sourceMode ?? (session.session.repoPath ? 'source-assisted' : 'url-only');
-    const sameConfig = !recorded.configHash || recorded.configHash === configHash;
+    const preGranularSession = recorded.testScopes === undefined && recorded.testSurfaces === undefined;
+    const sameConfig =
+      !recorded.configHash ||
+      recorded.configHash === configHash ||
+      (preGranularSession && recorded.configHash === configHashes.preGranular);
     if (
       !sameClasses ||
+      !sameTestScopes ||
+      !sameTestSurfaces ||
       recordedSafeDemonstration !== safeDemonstration ||
       recordedSourceMode !== input.sourceMode ||
       !sameConfig
     ) {
       throw ApplicationFailure.nonRetryable(
         `Resume scope mismatch for workspace ${input.sessionId}.\n` +
-          `  Original: source_mode=${recordedSourceMode}, vuln_classes=[${recorded.vulnClasses.join(', ')}], safe_demonstration=${recordedSafeDemonstration}, config_hash=${recorded.configHash ?? '<missing>'}\n` +
-          `  Provided: source_mode=${input.sourceMode}, vuln_classes=[${vulnClasses.join(', ')}], safe_demonstration=${safeDemonstration}, config_hash=${configHash}\n` +
+          `  Original: source_mode=${recordedSourceMode}, vuln_classes=[${recordedScope.vulnClasses.join(', ')}], test_scopes=[${recordedScope.testScopes.join(', ')}], test_surfaces=[${recordedScope.testSurfaces.join(', ')}], safe_demonstration=${recordedSafeDemonstration}, config_hash=${recorded.configHash ?? '<missing>'}\n` +
+          `  Provided: source_mode=${input.sourceMode}, vuln_classes=[${currentScope.vulnClasses.join(', ')}], test_scopes=[${currentScope.testScopes.join(', ')}], test_surfaces=[${currentScope.testSurfaces.join(', ')}], safe_demonstration=${safeDemonstration}, config_hash=${configHash}\n` +
           `Resume requires the same scope as the original run. Start a new workspace if you want different scope.`,
         'ScopeMismatchError',
       );
     }
-    if (!recorded.sourceMode || !recorded.configHash || recorded.safeDemonstration === undefined) {
+    if (
+      !recorded.sourceMode ||
+      !recorded.configHash ||
+      recorded.safeDemonstration === undefined ||
+      !recorded.testScopes ||
+      !recorded.testSurfaces
+    ) {
       const { exploit: _legacyExploit, ...scopeWithoutLegacy } = recorded;
       session.session.scope = {
         ...scopeWithoutLegacy,
         safeDemonstration: recordedSafeDemonstration,
         sourceMode: recordedSourceMode,
+        vulnClasses: recordedScope.vulnClasses,
+        testScopes: recordedScope.testScopes,
+        testSurfaces: recordedScope.testSurfaces,
         configHash,
       };
       session.session.sourceMode = recordedSourceMode;
@@ -1063,7 +1123,9 @@ export async function persistOrValidateRunScope(
 
   session.session.sourceMode = input.sourceMode;
   session.session.scope = {
-    vulnClasses: [...vulnClasses],
+    vulnClasses: currentScope.vulnClasses,
+    testScopes: currentScope.testScopes,
+    testSurfaces: currentScope.testSurfaces,
     safeDemonstration,
     sourceMode: input.sourceMode,
     configHash,

@@ -831,6 +831,9 @@ textarea:focus {
 
 .segmented-control input,
 .check-tile input,
+.owasp-parent-check input,
+.granular-scope-check input,
+.surface-option input,
 .switch input,
 .authorization-check input,
 .compact-check input {
@@ -841,6 +844,249 @@ textarea:focus {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+}
+
+.scope-fieldset,
+.surface-fieldset {
+  gap: 10px;
+}
+
+.scope-toolbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.scope-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.scope-action {
+  min-height: 32px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scope-action:hover {
+  border-color: #777367;
+  color: var(--text);
+}
+
+.scope-action:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.owasp-scope-list {
+  border: 1px solid var(--border-strong);
+  background: var(--border);
+}
+
+.owasp-scope-row {
+  background: #0e0e0c;
+}
+
+.owasp-scope-row + .owasp-scope-row {
+  border-top: 1px solid var(--border-strong);
+}
+
+.owasp-parent-row {
+  display: grid;
+  min-height: 52px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(54px, auto) 38px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 12px;
+}
+
+.owasp-parent-check {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.owasp-parent-check:has(input:disabled) {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.scope-checkbox {
+  display: grid;
+  width: 19px;
+  height: 19px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  color: var(--amber-ink);
+  background: #0a0a09;
+  pointer-events: none;
+}
+
+.owasp-parent-check:has(input:checked) .scope-checkbox,
+.owasp-parent-check.is-indeterminate .scope-checkbox,
+.granular-scope-check:has(input:checked) .scope-checkbox,
+.surface-option:has(input:checked) .scope-checkbox {
+  border-color: var(--amber);
+  background: var(--amber);
+}
+
+.owasp-parent-check:has(input:focus-visible),
+.granular-scope-check:has(input:focus-visible),
+.surface-option:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.owasp-parent-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.owasp-parent-copy strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.owasp-code {
+  flex: none;
+  color: var(--text-dim);
+  font-family: "Saira Condensed", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.scope-availability {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  color: var(--text-muted);
+  font-family: "Saira Condensed", sans-serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.scope-availability--available {
+  color: var(--green);
+}
+
+.scope-availability--partial {
+  color: var(--blue);
+}
+
+.scope-availability--coming-soon {
+  color: var(--text-dim);
+}
+
+.scope-count {
+  color: var(--text-dim);
+  font-size: 0.73rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.owasp-expand.icon-button {
+  width: 36px;
+  min-height: 36px;
+}
+
+.granular-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  padding: 1px 0 0 41px;
+  border-top: 1px solid var(--border);
+  background: var(--border);
+}
+
+.granular-scope-check {
+  position: relative;
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: 19px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.granular-scope-check:hover:not(:has(input:disabled)) {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.granular-scope-check:has(input:disabled) {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.granular-scope-check small,
+.surface-option small {
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.surface-fieldset {
+  margin-top: 8px;
+}
+
+.surface-selector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.surface-option {
+  position: relative;
+  display: grid;
+  min-height: 54px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  background: #0e0e0c;
+  cursor: pointer;
+}
+
+.surface-option:has(input:checked) {
+  border-color: var(--amber);
+  color: var(--text);
+  background: #211b11;
+}
+
+.surface-option:has(input:disabled) {
+  color: var(--text-dim);
+  cursor: not-allowed;
 }
 
 .toggle-grid {
@@ -1846,10 +2092,65 @@ label:has(input:focus-visible) > .switch {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .scope-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .scope-toolbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .owasp-parent-row {
+    grid-template-columns: minmax(0, 1fr) 36px;
+  }
+
+  .scope-availability,
+  .scope-count {
+    grid-row: 2;
+  }
+
+  .scope-availability {
+    grid-column: 1;
+    width: max-content;
+    margin-left: 29px;
+  }
+
+  .scope-count {
+    display: none;
+  }
+
+  .owasp-expand {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .granular-scope-grid {
+    grid-template-columns: 1fr;
+    padding-left: 0;
+  }
+
+  .surface-selector {
+    grid-template-columns: 1fr;
+  }
+
   .control-row,
   .switch-row,
   .stepper-field {
     align-items: flex-start;
+  }
+
+  .control-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .control-row > .switch-row,
+  .control-row > .stepper-field {
+    width: 100%;
+    align-items: center;
   }
 
   .profiles-layout {

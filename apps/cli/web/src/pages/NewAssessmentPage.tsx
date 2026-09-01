@@ -12,7 +12,14 @@ import {
 } from "../components/AssessmentConfigFields";
 import { Button, ErrorState, PageHeader } from "../components/Primitives";
 import { api } from "../lib/api";
-import type { CreateRunRequest, Profile, ProviderConfig, SecurityTestCategory } from "../types/api";
+import {
+  deriveTestCategories,
+  type AssessmentTestScope,
+  type AssessmentTestSurface,
+  type CreateRunRequest,
+  type Profile,
+  type ProviderConfig,
+} from "../types/api";
 
 function lines(value: string): string[] {
   return value
@@ -22,7 +29,11 @@ function lines(value: string): string[] {
 }
 
 function selected<T extends string>(values: Record<T, boolean>): T[] {
-  return (Object.entries(values) as Array<[T, boolean]>).filter(([, enabled]) => enabled).map(([key]) => key);
+  const result: T[] = [];
+  for (const [key, enabled] of Object.entries(values) as Array<[T, boolean]>) {
+    if (enabled) result.push(key);
+  }
+  return result;
 }
 
 function providerConfig(values: AssessmentFormValues): ProviderConfig | undefined {
@@ -55,6 +66,8 @@ function providerConfig(values: AssessmentFormValues): ProviderConfig | undefine
 
 function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunRequest {
   const selectedProviderConfig = providerConfig(values);
+  const testScopes = selected<AssessmentTestScope>(values.testScopes);
+  const testSurfaces = selected<AssessmentTestSurface>(values.testSurfaces);
   const authentication = values.authenticationEnabled
     ? {
         enabled: true,
@@ -75,7 +88,9 @@ function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunR
     sourceMode: values.sourceMode,
     ...(values.sourceMode === "source-assisted" ? { repoPath: values.repoPath } : {}),
     scope: {
-      testCategories: selected<SecurityTestCategory>(values.testCategories),
+      testCategories: deriveTestCategories(testScopes),
+      testScopes,
+      testSurfaces,
       safeDemonstration: values.safeDemonstration,
       concurrency: values.concurrency,
     },
@@ -99,17 +114,25 @@ function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunR
 
 function profileToForm(profile: Profile): AssessmentFormValues {
   const defaults = structuredClone(assessmentDefaults);
+  const selectedScopes = new Set(profile.scope.testScopes);
+  const selectedSurfaces = new Set(profile.scope.testSurfaces);
   return {
     ...defaults,
     targetUrl: profile.targetUrl,
     sourceMode: profile.sourceMode,
     repoPath: profile.repoPath ?? "",
-    testCategories: Object.fromEntries(
-      Object.keys(defaults.testCategories).map((key) => [
+    testScopes: Object.fromEntries(
+      Object.keys(defaults.testScopes).map((key) => [
         key,
-        profile.scope.testCategories.includes(key as SecurityTestCategory),
+        selectedScopes.has(key as AssessmentTestScope),
       ]),
-    ) as AssessmentFormValues["testCategories"],
+    ) as AssessmentFormValues["testScopes"],
+    testSurfaces: Object.fromEntries(
+      Object.keys(defaults.testSurfaces).map((key) => [
+        key,
+        selectedSurfaces.has(key as AssessmentTestSurface),
+      ]),
+    ) as AssessmentFormValues["testSurfaces"],
     safeDemonstration: profile.scope.safeDemonstration,
     concurrency: profile.scope.concurrency,
     authenticationEnabled: profile.authentication?.enabled ?? false,
@@ -221,7 +244,7 @@ export function NewAssessmentPage() {
         <footer className="form-footer">
           <div className="launch-summary" aria-live="polite">
             <Play size={16} aria-hidden="true" />
-            {selected(form.watch("testCategories")).length} categories · concurrency {form.watch("concurrency")}
+            {selected(form.watch("testScopes")).length} checks · concurrency {form.watch("concurrency")}
           </div>
           <Button
             type="submit"

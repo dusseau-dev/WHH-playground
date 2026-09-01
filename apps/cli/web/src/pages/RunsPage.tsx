@@ -93,7 +93,7 @@ export function RunsPage() {
                   </td>
                   <td data-label="Scope">
                     <div className="scope-summary">
-                      <span>{run.scope.testCategories.length} categories</span>
+                      <span>{run.scope.testScopes.length} checks</span>
                       <small>{run.scope.safeDemonstration ? "Demonstration on" : "Demonstration off"}</small>
                     </div>
                   </td>

@@ -1,3 +1,21 @@
+import type { AssessmentTestScope, AssessmentTestSurface, OwaspCategory } from '../../../src/security-scopes';
+
+export {
+  assessmentScopeCatalog,
+  assessmentScopeDefinitions,
+  assessmentTestScopeIds,
+  assessmentTestSurfaceIds,
+  availableTestScopes,
+  availableTestSurfaces,
+  deriveTestCategories,
+  expandTestCategories,
+  getOwaspCategorySelection,
+  normalizeTestScopeSelection,
+  setOwaspCategorySelected,
+  testSurfaceDefinitions,
+} from '../../../src/security-scopes';
+export type { AssessmentTestScope, AssessmentTestSurface, OwaspCategory };
+
 export const securityTestCategories = ['injection', 'xss', 'auth', 'authz', 'ssrf'] as const;
 export type SecurityTestCategory = (typeof securityTestCategories)[number];
 
@@ -28,6 +46,8 @@ export interface BootstrapResponse {
 
 export interface RunScope {
   testCategories: SecurityTestCategory[];
+  testScopes: AssessmentTestScope[];
+  testSurfaces: AssessmentTestSurface[];
   safeDemonstration: boolean;
   concurrency: number;
 }

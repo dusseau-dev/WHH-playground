@@ -7,6 +7,7 @@ import { createReportMetaCollector, type ReportMetaInput } from '../collectors/r
 import { toolResult } from '../collectors/schema.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 import { ALL_VULN_CLASSES, type SourceMode, type VulnClass } from '../types/config.js';
+import { type AssessmentScope, buildScopeCoverage, normalizeAssessmentScope } from '../types/scopes.js';
 import { atomicWrite, ensureDirectory } from '../utils/file-io.js';
 import { redactSecrets } from '../utils/redactSecrets.js';
 import { attachQueueCodeLocations } from './code-location-join.js';
@@ -33,6 +34,7 @@ export interface StructuredReportSessionOptions {
   readonly safeDemonstration: boolean;
   readonly triageRan: boolean;
   readonly selectedVulnClasses: readonly VulnClass[];
+  readonly selectedTestScopes?: readonly AssessmentScope[];
 }
 
 export interface StructuredReportSession {
@@ -135,6 +137,7 @@ export function isReportData(value: unknown): value is ReportData {
     return false;
   }
   if (!value.not_assessed.every((entry) => ALL_VULN_CLASSES.includes(entry as VulnClass))) return false;
+  if (value.scope_coverage !== undefined && !Array.isArray(value.scope_coverage)) return false;
   if (value.validation_issues !== undefined && !Array.isArray(value.validation_issues)) return false;
   return value.findings.every(
     (finding) =>
@@ -207,6 +210,10 @@ function composeReportData(
   reconciliation: ReturnType<typeof reconcileReportFindings>,
   notAssessed: readonly VulnClass[],
 ): ReportData {
+  const scope = normalizeAssessmentScope({
+    ...(options.selectedTestScopes && { testScopes: options.selectedTestScopes }),
+    vulnClasses: options.selectedVulnClasses,
+  });
   return {
     report_meta: {
       ...metadata,
@@ -218,6 +225,7 @@ function composeReportData(
     findings: reconciliation.findings,
     ruled_out: reconciliation.ruled_out,
     not_assessed: notAssessed,
+    scope_coverage: buildScopeCoverage(scope.testScopes, notAssessed),
     triage_status: reconciliation.triage_status,
     ...(reconciliation.validation_issues.length > 0 && {
       validation_issues: reconciliation.validation_issues,

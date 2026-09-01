@@ -5,7 +5,15 @@
 description: "Next.js e-commerce app on PostgreSQL. Local dev environment — .env files contain local-only credentials, not deployed to production."
 
 # Limit which vulnerability classes run end-to-end (optional, default: all five)
+# When test_scopes is also set, both selections must resolve to the same classes.
 # vuln_classes: [injection, xss, auth, authz, ssrf]
+
+# Select granular checks in OWASP registry order (optional, default: every available check).
+# test_scopes: [object-access, csrf, sql-nosql-injection, reflected-xss]
+
+# Select live interaction surfaces (optional, default: browser and api-graphql).
+# WebSocket assessment is visible in the UI but is not yet available.
+# test_surfaces: [browser, api-graphql]
 
 # Run safe, authorized demonstrations of confirmed findings (optional, default: true)
 # safe_demonstration: true

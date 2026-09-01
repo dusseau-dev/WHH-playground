@@ -10,6 +10,7 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import {
+  AssessmentConfigSchema,
   ProfileDraftSchema,
   type ProfileReference,
   REPORT_ARTIFACT_KINDS,
@@ -269,7 +270,7 @@ export function createApp(options: CreateAppOptions): Hono {
     let targetUrl = request.targetUrl;
     let sourceMode = request.sourceMode;
     let repoPath = request.repoPath;
-    let config = request.config ?? {};
+    let config = request.config ?? AssessmentConfigSchema.parse({});
     let secrets = request.secrets ?? {};
     let profileRef: ProfileReference | undefined;
     let secretRefs: SecretReferences = {};
