@@ -303,6 +303,7 @@ export function createApp(options: CreateAppOptions): Hono {
       config,
       secrets,
       secretRefs,
+      ...(request.providerConfig && { providerConfig: request.providerConfig }),
       ...(request.workspace && { workspace: request.workspace }),
       ...(request.outputPath && { outputPath: request.outputPath }),
       ...(request.pipelineTesting !== undefined && { pipelineTesting: request.pipelineTesting }),
@@ -320,10 +321,15 @@ export function createApp(options: CreateAppOptions): Hono {
   app.post(`${API_PREFIX}/runs/:id/resume`, async (context) => {
     const request = await parseJson(context.req.raw, ResumeRunRequestSchema);
     try {
-      return context.json({ data: await controller.resumeRun(context.req.param('id'), request.secrets ?? {}) }, 202);
+      return context.json(
+        {
+          data: await controller.resumeRun(context.req.param('id'), request.secrets ?? {}, request.providerConfig),
+        },
+        202,
+      );
     } catch (error) {
       const message = safeErrorMessage(error);
-      if (message.includes('Target secrets must be supplied again')) {
+      if (message.includes('Target secrets must be supplied again') || message.includes('Provider credentials')) {
         throw new ApiError(message, 409, 'missing_secrets');
       }
       throw error;

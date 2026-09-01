@@ -13,6 +13,7 @@ export type FindingVerdict = 'confirmed' | 'unvalidated' | 'needs-review' | 'rul
 export type SecretPersistence = 'keychain' | 'session' | 'unavailable';
 export type TargetSecretField = 'password' | 'totpSecret' | 'emailPassword' | 'emailTotpSecret';
 export type TargetSecrets = Partial<Record<TargetSecretField, string>>;
+export type OpenAIFormat = 'chat-completions' | 'responses';
 
 export interface BootstrapResponse {
   csrfToken: string;
@@ -169,8 +170,24 @@ export interface AssessmentConfiguration {
   secrets?: { password?: string; totpSecret?: string };
 }
 
+export interface ProviderConfig {
+  providerType?: string;
+  providerId?: string;
+  model: string;
+  apiKey?: string;
+  authToken?: string;
+  awsRegion?: string;
+  awsAccessKeyId?: string;
+  awsSecretAccessKey?: string;
+  awsSessionToken?: string;
+  baseUrl?: string;
+  openAIFormat?: OpenAIFormat;
+  supportsStructuredOutput?: boolean;
+}
+
 export interface CreateRunRequest extends AssessmentConfiguration {
   profileId?: string;
+  providerConfig?: ProviderConfig;
   saveProfile?: { name: string };
   authorizationConfirmed: true;
 }

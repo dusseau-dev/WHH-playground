@@ -352,6 +352,9 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByText('URL only', { exact: true }).click();
   await expect(page.getByLabel('URL only')).toBeChecked();
   await expect(page.getByLabel('Repository path')).toHaveCount(0);
+  await page.getByLabel('Model source').selectOption('openrouter');
+  await page.getByLabel('Model ID').fill('~anthropic/claude-sonnet-latest');
+  await page.getByLabel('Provider API key', { exact: true }).fill('sk-or-v1-runtime-only-provider-key');
   await page.getByText('Cross-site scripting', { exact: true }).click();
   await expect(page.getByLabel('Cross-site scripting')).not.toBeChecked();
   await page.getByRole('button', { name: 'Decrease concurrency' }).click();
@@ -363,6 +366,15 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByRole('button', { name: 'Start assessment' }).click();
   await expect(page).toHaveURL(/\/runs\/new-assessment$/);
   expect(api.lastStartBody).toMatchObject({ sourceMode: 'url-only', targetUrl: 'https://new.example.test' });
+  expect(api.lastStartBody).toMatchObject({
+    providerConfig: {
+      providerType: 'openai',
+      model: '~anthropic/claude-sonnet-latest',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      openAIFormat: 'chat-completions',
+      apiKey: 'sk-or-v1-runtime-only-provider-key',
+    },
+  });
   expect(api.lastStartBody).toMatchObject({ config: { safeDemonstration: true } });
   expect(api.lastStartBody).toMatchObject({ config: { report: { sarif: true } } });
   expect((api.lastStartBody?.config as Record<string, unknown>).demonstrate).toBeUndefined();

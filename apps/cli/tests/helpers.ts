@@ -90,6 +90,7 @@ export class FakeTemporal implements TemporalGateway {
   readonly cancelled: string[] = [];
   readonly workflows = new Map<string, TemporalWorkflowState>();
   unavailable = false;
+  cancelNeverResponds = false;
   cancelResult: TemporalWorkflowState['status'] | null = 'cancelled';
 
   async startWorkflow(request: TemporalWorkflowStart): Promise<StartedWorkflow> {
@@ -107,6 +108,7 @@ export class FakeTemporal implements TemporalGateway {
   async cancelWorkflow(workflowId: string): Promise<boolean> {
     if (this.unavailable) throw new Error('Temporal unavailable');
     this.cancelled.push(workflowId);
+    if (this.cancelNeverResponds) return new Promise<boolean>(() => undefined);
     if (!this.workflows.has(workflowId)) return false;
     if (this.cancelResult) this.setStatus(workflowId, this.cancelResult);
     return true;
@@ -120,6 +122,7 @@ export class FakeTemporal implements TemporalGateway {
 export interface TestControllerOptions {
   runtime?: FakeRuntime;
   temporal?: FakeTemporal;
+  cancelGraceMs?: number;
   secretValues?: Readonly<Record<string, string>>;
   secretResolver?: (references: SecretReferences) => Promise<TargetSecrets>;
 }
@@ -135,7 +138,7 @@ export function testController(workspacesDir: string, options: TestControllerOpt
     temporal,
     suffix: () => `attempt${runtime.launches.length + 1}`,
     credentialLoader: () => undefined,
-    cancelGraceMs: 0,
+    cancelGraceMs: options.cancelGraceMs ?? 0,
     secretResolver:
       options.secretResolver ??
       (async (references: SecretReferences): Promise<TargetSecrets> => {

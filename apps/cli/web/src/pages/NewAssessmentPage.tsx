@@ -12,7 +12,7 @@ import {
 } from "../components/AssessmentConfigFields";
 import { Button, ErrorState, PageHeader } from "../components/Primitives";
 import { api } from "../lib/api";
-import type { CreateRunRequest, Profile, SecurityTestCategory } from "../types/api";
+import type { CreateRunRequest, Profile, ProviderConfig, SecurityTestCategory } from "../types/api";
 
 function lines(value: string): string[] {
   return value
@@ -25,7 +25,36 @@ function selected<T extends string>(values: Record<T, boolean>): T[] {
   return (Object.entries(values) as Array<[T, boolean]>).filter(([, enabled]) => enabled).map(([key]) => key);
 }
 
+function providerConfig(values: AssessmentFormValues): ProviderConfig | undefined {
+  if (values.modelSource === "environment") return undefined;
+  const common = { model: values.modelId, apiKey: values.providerApiKey };
+  switch (values.modelSource) {
+    case "openrouter":
+      return {
+        ...common,
+        providerType: "openai",
+        baseUrl: "https://openrouter.ai/api/v1",
+        openAIFormat: "chat-completions",
+      };
+    case "anthropic":
+      return { ...common, providerType: "anthropic" };
+    case "openai":
+      return { ...common, providerType: "openai" };
+    case "xai":
+      return { ...common, providerType: "xai" };
+    case "custom":
+      return {
+        ...common,
+        providerType: "generic",
+        providerId: values.customProviderId,
+        baseUrl: values.customBaseUrl,
+        openAIFormat: values.customOpenAIFormat,
+      };
+  }
+}
+
 function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunRequest {
+  const selectedProviderConfig = providerConfig(values);
   const authentication = values.authenticationEnabled
     ? {
         enabled: true,
@@ -50,6 +79,7 @@ function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunR
       safeDemonstration: values.safeDemonstration,
       concurrency: values.concurrency,
     },
+    ...(selectedProviderConfig && { providerConfig: selectedProviderConfig }),
     ...(authentication ? { authentication } : {}),
     rules: {
       focus: lines(values.focusRules),
@@ -138,13 +168,13 @@ export function NewAssessmentPage() {
     }
   };
 
-  const submit = form.handleSubmit(async (values) => {
+  const submit = form.handleSubmit((values) => {
     if (!values.authorizedTesting) {
       form.setError("authorizedTesting", { message: "Authorization confirmation is required" });
       document.querySelector<HTMLInputElement>('input[name="authorizedTesting"]')?.focus();
       return;
     }
-    await launchMutation.mutateAsync(toRequest(values, loadedProfileId));
+    launchMutation.mutate(toRequest(values, loadedProfileId));
   });
 
   return (
@@ -175,7 +205,7 @@ export function NewAssessmentPage() {
       />
 
       <form className="assessment-form" onSubmit={(event) => void submit(event)} noValidate>
-        <AssessmentConfigFields form={form} showSaveProfile showAuthorization />
+        <AssessmentConfigFields form={form} showSaveProfile showAuthorization showModelConfig />
         {form.formState.errors.authorizedTesting ? (
           <div className="form-submit-error" role="alert">
             {form.formState.errors.authorizedTesting.message}
