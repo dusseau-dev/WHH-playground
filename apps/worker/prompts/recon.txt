@@ -42,6 +42,8 @@ Areas to Focus On:
 
 @include(shared/_rules-of-engagement.txt)
 
+@include(shared/_nextjs-api-review.txt)
+
 <scope_boundaries>
 # Penetration Test Scope & Boundaries
 

@@ -1,5 +1,17 @@
 import { z } from 'zod';
-import { assessmentTestScopeIds, assessmentTestSurfaceIds, normalizeTestScopeSelection } from './security-scopes.js';
+import {
+  assertExclusiveHttpLoadExecution,
+  assertHttpLoadAuthorization,
+  HTTP_LOAD_EMERGENCY_LIMITS,
+  normalizeHttpLoadSettings,
+} from './http-load.js';
+import {
+  assessmentModuleIds,
+  assessmentTestScopeIds,
+  assessmentTestSurfaceIds,
+  normalizeAssessmentModules,
+  normalizeTestScopeSelection,
+} from './security-scopes.js';
 
 export const SOURCE_MODES = ['source-assisted', 'url-only'] as const;
 export const SourceModeSchema = z.enum(SOURCE_MODES);
@@ -128,9 +140,31 @@ const SafeProviderConfigSchema = ProviderConfigBaseSchema.omit({
 const AssessmentConfigBaseSchema = z
   .object({
     description: z.string().trim().min(1).max(500).optional(),
-    testCategories: z.array(VulnerabilityClassSchema).min(1).max(5).optional(),
+    testCategories: z.array(VulnerabilityClassSchema).max(5).optional(),
     testScopes: z.array(z.enum(assessmentTestScopeIds)).min(1).optional(),
     testSurfaces: z.array(z.enum(assessmentTestSurfaceIds)).min(1).optional(),
+    httpLoad: z
+      .object({
+        concurrency: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.concurrency).optional(),
+        requestsPerSecond: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.requestsPerSecond).optional(),
+        durationSeconds: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.durationSeconds).optional(),
+      })
+      .strict()
+      .optional(),
+    assessmentModules: z.array(z.enum(assessmentModuleIds)).optional(),
+    moduleSafety: z
+      .object({
+        targetEnvironment: z.enum(['production', 'staging']).optional(),
+        allowActiveDast: z.boolean().optional(),
+        acknowledgeLoadRisk: z.boolean().optional(),
+        maxRequestsPerSecond: z.number().int().min(1).max(10).optional(),
+        maxConcurrency: z.number().int().min(1).max(25).optional(),
+        loadStageDurationSeconds: z.number().int().min(10).max(600).optional(),
+        loadErrorRateThreshold: z.number().min(0.001).max(0.5).optional(),
+        loadP95LatencyMsThreshold: z.number().int().min(100).max(60000).optional(),
+      })
+      .strict()
+      .optional(),
     safeDemonstration: z.boolean().optional(),
     /** @deprecated Use safeDemonstration. */
     demonstrate: z.boolean().optional(),
@@ -180,11 +214,13 @@ const AssessmentConfigBaseSchema = z
       });
     }
     try {
-      normalizeTestScopeSelection({
+      const scope = normalizeTestScopeSelection({
         ...(value.testScopes && { testScopes: value.testScopes }),
         ...(value.testSurfaces && { testSurfaces: value.testSurfaces }),
         ...(value.testCategories && { testCategories: value.testCategories }),
       });
+      assertExclusiveHttpLoadExecution(scope.testScopes, value.assessmentModules ?? []);
+      normalizeHttpLoadSettings(scope.testScopes, value.httpLoad);
     } catch (error) {
       context.addIssue({
         code: 'custom',
@@ -192,21 +228,52 @@ const AssessmentConfigBaseSchema = z
         message: error instanceof Error ? error.message : String(error),
       });
     }
+    try {
+      normalizeAssessmentModules({
+        ...(value.assessmentModules && { assessmentModules: value.assessmentModules }),
+        ...(value.moduleSafety && { moduleSafety: value.moduleSafety }),
+      });
+    } catch (error) {
+      context.addIssue({
+        code: 'custom',
+        path: ['moduleSafety'],
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
 export const AssessmentConfigSchema = AssessmentConfigBaseSchema.transform(
-  ({ safeDemonstration, demonstrate, exploit, ...config }) => {
+  ({
+    safeDemonstration,
+    demonstrate,
+    exploit,
+    httpLoad: httpLoadInput,
+    assessmentModules,
+    moduleSafety,
+    ...config
+  }) => {
     const resolvedSafeDemonstration = safeDemonstration ?? demonstrate ?? exploit;
     const scope = normalizeTestScopeSelection({
       ...(config.testScopes && { testScopes: config.testScopes }),
       ...(config.testSurfaces && { testSurfaces: config.testSurfaces }),
       ...(config.testCategories && { testCategories: config.testCategories }),
     });
+    const httpLoad = normalizeHttpLoadSettings(scope.testScopes, httpLoadInput);
+    const modules =
+      assessmentModules !== undefined || moduleSafety !== undefined
+        ? normalizeAssessmentModules({
+            ...(assessmentModules && { assessmentModules }),
+            ...(moduleSafety && { moduleSafety }),
+          })
+        : undefined;
+    assertExclusiveHttpLoadExecution(scope.testScopes, modules?.assessmentModules ?? []);
     return {
       ...config,
       testCategories: scope.testCategories,
       testScopes: scope.testScopes,
       testSurfaces: scope.testSurfaces,
+      ...(httpLoad && { httpLoad }),
+      ...(modules && modules),
       ...(resolvedSafeDemonstration !== undefined && { safeDemonstration: resolvedSafeDemonstration }),
     };
   },
@@ -315,6 +382,7 @@ export const StartRunRequestSchema = z
     pipelineTesting: z.boolean().optional(),
     debug: z.boolean().optional(),
     authorizationConfirmed: z.literal(true),
+    elevatedLoadConfirmed: z.literal(true).optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -332,6 +400,8 @@ export const ResumeRunRequestSchema = z
   .object({
     secrets: TargetSecretsSchema.optional(),
     providerConfig: ProviderConfigSchema.optional(),
+    authorizationConfirmed: z.literal(true).optional(),
+    elevatedLoadConfirmed: z.literal(true).optional(),
   })
   .strict();
 export type ResumeRunRequest = z.infer<typeof ResumeRunRequestSchema>;
@@ -359,17 +429,53 @@ const RunLaunchSpecBaseSchema = z
     outputPath: z.string().trim().min(1).max(4096).optional(),
     pipelineTesting: z.boolean().optional(),
     debug: z.boolean().optional(),
+    authorizationConfirmed: z.literal(true).optional(),
+    elevatedLoadConfirmed: z.literal(true).optional(),
   })
   .strict();
 
-export const RunLaunchSpecSchema = RunLaunchSpecBaseSchema.superRefine(validateSourceMode);
+export const RunLaunchSpecSchema = RunLaunchSpecBaseSchema.superRefine((value, context) => {
+  validateSourceMode(value, context);
+  try {
+    normalizeAssessmentModules({
+      ...(value.config.assessmentModules && { assessmentModules: value.config.assessmentModules }),
+      ...(value.config.moduleSafety && { moduleSafety: value.config.moduleSafety }),
+      sourceMode: value.sourceMode,
+    });
+  } catch (error) {
+    context.addIssue({
+      code: 'custom',
+      path: ['config', 'moduleSafety'],
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    assertHttpLoadAuthorization(
+      value.config.httpLoad,
+      value.authorizationConfirmed === true,
+      value.elevatedLoadConfirmed === true,
+    );
+  } catch (error) {
+    context.addIssue({
+      code: 'custom',
+      path: ['authorizationConfirmed'],
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
 export type RunLaunchSpec = z.infer<typeof RunLaunchSpecSchema>;
 
 export const RUN_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
 export const RunStatusSchema = z.enum(RUN_STATUSES);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
-export const RunSnapshotSchema = RunLaunchSpecBaseSchema.omit({ secrets: true, workspace: true, secretRefs: true })
+export const RunSnapshotSchema = RunLaunchSpecBaseSchema.omit({
+  secrets: true,
+  workspace: true,
+  secretRefs: true,
+  authorizationConfirmed: true,
+  elevatedLoadConfirmed: true,
+})
   .extend({
     providerConfig: SafeProviderConfigSchema.optional(),
     secretRefs: SecretReferencesSchema,
@@ -474,6 +580,17 @@ export const WorkflowProgressSchema = z
     currentAgent: z.string().nullable(),
     activeAgents: z.array(z.string()).optional(),
     activeTestCategories: z.array(VulnerabilityClassSchema).optional(),
+    activeModules: z.array(z.enum(assessmentModuleIds)).optional(),
+    moduleResults: z
+      .array(
+        z.object({
+          id: z.enum(assessmentModuleIds),
+          status: z.enum(['completed', 'partial', 'failed', 'skipped', 'unavailable']),
+          evidencePath: z.string().optional(),
+        }),
+      )
+      .optional(),
+    httpLoadStatus: z.enum(['completed', 'interrupted', 'incomplete']).nullable().optional(),
     completedAgents: z.array(z.string()),
     failedAgent: z.string().nullable(),
     error: z.string().nullable(),

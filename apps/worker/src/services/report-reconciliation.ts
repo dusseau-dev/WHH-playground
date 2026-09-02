@@ -82,6 +82,9 @@ export function reconcileReportFindings(
   triage: TriageVerdicts | unknown | null,
   options: ReconciliationOptions,
 ): ReconciledReportFindings {
+  if (findings.length === 0 && (options.knownFindingIds?.length ?? 0) === 0) {
+    return { findings: [], ruled_out: [], triage_status: 'validated', validation_issues: [] };
+  }
   if (!options.triageRan) {
     return allUnvalidated(findings, 'Triage gate did not run; report findings are unvalidated.');
   }

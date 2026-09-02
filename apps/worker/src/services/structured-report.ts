@@ -7,9 +7,18 @@ import { createReportMetaCollector, type ReportMetaInput } from '../collectors/r
 import { toolResult } from '../collectors/schema.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 import { ALL_VULN_CLASSES, type SourceMode, type VulnClass } from '../types/config.js';
-import { type AssessmentScope, buildScopeCoverage, normalizeAssessmentScope } from '../types/scopes.js';
+import { HTTP_LOAD_SCOPE, type HttpLoadResult, parseHttpLoadResult } from '../types/http-load.js';
+import {
+  type AssessmentModule,
+  type AssessmentScope,
+  buildModuleCoverage,
+  buildScopeCoverage,
+  type ModuleExecutionResult,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 import { atomicWrite, ensureDirectory } from '../utils/file-io.js';
 import { redactSecrets } from '../utils/redactSecrets.js';
+import { loadAssessmentModuleResults } from './assessment-module-runner.js';
 import { attachQueueCodeLocations } from './code-location-join.js';
 import { reconcileReportFindings } from './report-reconciliation.js';
 import { type ReportData, renderReport } from './report-renderer.js';
@@ -35,6 +44,8 @@ export interface StructuredReportSessionOptions {
   readonly triageRan: boolean;
   readonly selectedVulnClasses: readonly VulnClass[];
   readonly selectedTestScopes?: readonly AssessmentScope[];
+  readonly selectedAssessmentModules?: readonly AssessmentModule[];
+  readonly httpLoadResult?: HttpLoadResult;
 }
 
 export interface StructuredReportSession {
@@ -138,7 +149,15 @@ export function isReportData(value: unknown): value is ReportData {
   }
   if (!value.not_assessed.every((entry) => ALL_VULN_CLASSES.includes(entry as VulnClass))) return false;
   if (value.scope_coverage !== undefined && !Array.isArray(value.scope_coverage)) return false;
+  if (value.module_coverage !== undefined && !Array.isArray(value.module_coverage)) return false;
   if (value.validation_issues !== undefined && !Array.isArray(value.validation_issues)) return false;
+  if (value.http_load_capacity !== undefined) {
+    try {
+      parseHttpLoadResult(value.http_load_capacity);
+    } catch {
+      return false;
+    }
+  }
   return value.findings.every(
     (finding) =>
       isRecord(finding) &&
@@ -167,6 +186,31 @@ export async function writeStructuredReportFiles(deliverablesPath: string, data:
   const redactedData = redactSecrets(data);
   await atomicWrite(path.join(deliverablesPath, REPORT_DATA_FILENAME), redactedData);
   await writeReportMarkdownFiles(deliverablesPath, renderReport(redactedData));
+}
+
+/** Reconcile a resumed HTTP load artifact into an already-generated canonical report. */
+export async function synchronizeHttpLoadReportFiles(
+  deliverablesPath: string,
+  selectedTestScopes: readonly AssessmentScope[],
+  result: HttpLoadResult,
+): Promise<boolean> {
+  const reportPath = path.join(deliverablesPath, REPORT_DATA_FILENAME);
+  if (!(await fs.pathExists(reportPath))) return false;
+
+  const raw = (await fs.readJson(reportPath)) as unknown;
+  if (!isReportData(raw)) throw new Error('Cannot synchronize HTTP load evidence into invalid report.json');
+  const parsedResult = parseHttpLoadResult(result);
+  const updated: ReportData = {
+    ...raw,
+    scope_coverage: buildScopeCoverage(
+      selectedTestScopes,
+      raw.not_assessed,
+      parsedResult.status === 'completed' ? [HTTP_LOAD_SCOPE] : [],
+    ),
+    http_load_capacity: parsedResult,
+  };
+  await writeStructuredReportFiles(deliverablesPath, updated);
+  return true;
 }
 
 /** Validate canonical JSON and both deterministic Markdown renderings. */
@@ -209,6 +253,7 @@ function composeReportData(
   options: StructuredReportSessionOptions,
   reconciliation: ReturnType<typeof reconcileReportFindings>,
   notAssessed: readonly VulnClass[],
+  moduleResults: readonly ModuleExecutionResult[],
 ): ReportData {
   const scope = normalizeAssessmentScope({
     ...(options.selectedTestScopes && { testScopes: options.selectedTestScopes }),
@@ -225,7 +270,15 @@ function composeReportData(
     findings: reconciliation.findings,
     ruled_out: reconciliation.ruled_out,
     not_assessed: notAssessed,
-    scope_coverage: buildScopeCoverage(scope.testScopes, notAssessed),
+    scope_coverage: buildScopeCoverage(
+      scope.testScopes,
+      notAssessed,
+      options.httpLoadResult?.status === 'completed' ? [HTTP_LOAD_SCOPE] : [],
+    ),
+    ...(options.httpLoadResult && { http_load_capacity: options.httpLoadResult }),
+    ...(options.selectedAssessmentModules && {
+      module_coverage: buildModuleCoverage(options.selectedAssessmentModules, moduleResults),
+    }),
     triage_status: reconciliation.triage_status,
     ...(reconciliation.validation_issues.length > 0 && {
       validation_issues: reconciliation.validation_issues,
@@ -241,6 +294,7 @@ export async function createStructuredReportSession(
   options: StructuredReportSessionOptions,
 ): Promise<StructuredReportSession> {
   const inventory = await loadQueueInventory(options.deliverablesPath, options.selectedVulnClasses);
+  const moduleResults = await loadAssessmentModuleResults(options.deliverablesPath);
   const metadataCollector = createReportMetaCollector();
   const findingCollector = createFindingCollector(options.safeDemonstration);
   const findingTool = findingCollector.tools[0];
@@ -260,7 +314,7 @@ export async function createStructuredReportSession(
         triageRan: options.triageRan,
         knownFindingIds: inventory.knownFindingIds,
       });
-      const data = composeReportData(metadata, options, reconciliation, inventory.notAssessed);
+      const data = composeReportData(metadata, options, reconciliation, inventory.notAssessed, moduleResults);
       await writeStructuredReportFiles(options.deliverablesPath, data);
       return data;
     },

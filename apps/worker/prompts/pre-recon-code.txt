@@ -39,6 +39,8 @@ Downstream vulnerability analysis will cover these classes: {{VULN_CLASSES_TESTE
 
 @include(shared/_rules-of-engagement.txt)
 
+@include(shared/_nextjs-api-review.txt)
+
 <system_architecture>
 **PENTESTING WORKFLOW - YOUR POSITION:**
 

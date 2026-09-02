@@ -27,6 +27,7 @@ const scopeDefinitions = [
   ['workflow-bypass', 'Workflow bypass', 'A06:2025', 'authz'],
   ['file-upload', 'File upload handling', 'A06:2025', 'injection'],
   ['rate-limiting', 'Rate limiting', 'A06:2025', 'auth'],
+  ['http-load-capacity', 'HTTP load and capacity', 'A06:2025', null],
   ['account-enumeration', 'Account enumeration', 'A07:2025', 'auth'],
   ['login-controls', 'Login controls', 'A07:2025', 'auth'],
   ['account-recovery-mfa', 'Account recovery and MFA', 'A07:2025', 'auth'],
@@ -61,15 +62,24 @@ export const assessmentScopeCatalog = [
 
 export type OwaspCategory = (typeof assessmentScopeCatalog)[number]['id'];
 
-export const assessmentScopeDefinitions = scopeDefinitions.map(([id, label, owaspId, agent]) => ({
-  id,
-  label,
-  owaspId,
-  availability: agent ? ('available' as const) : ('coming-soon' as const),
-  ...(agent && { agent }),
-}));
+export const assessmentScopeDefinitions = scopeDefinitions.map(([id, label, owaspId, agent]) => {
+  const isHttpLoad = id === 'http-load-capacity';
+  return {
+    id,
+    label,
+    owaspId,
+    availability: agent || isHttpLoad ? ('available' as const) : ('coming-soon' as const),
+    ...(agent && { agent }),
+    ...(isHttpLoad && { executor: 'http-load' as const, bulkSelectable: false as const }),
+  };
+});
 
 export const availableTestScopes: AssessmentTestScope[] = assessmentScopeDefinitions
+  .filter(({ availability, bulkSelectable }) => availability === 'available' && bulkSelectable !== false)
+  .map(({ id }) => id);
+
+/** Every individually selectable check, including explicit opt-in checks omitted from bulk actions. */
+export const selectableTestScopes: AssessmentTestScope[] = assessmentScopeDefinitions
   .filter(({ availability }) => availability === 'available')
   .map(({ id }) => id);
 
@@ -85,6 +95,141 @@ export const assessmentTestSurfaceIds = testSurfaceDefinitions.map(({ id }) => i
   ...AssessmentTestSurface[],
 ];
 export const availableTestSurfaces: AssessmentTestSurface[] = ['browser', 'api-graphql'];
+
+export const assessmentModuleDefinitions = [
+  {
+    id: 'passive-exposure',
+    title: 'Passive exposure review',
+    description:
+      'Headers, TLS, DNS, public assets, source maps, robots.txt, exposed routes, and leaked-secret indicators.',
+    tools: ['native'],
+    sourceModes: ['source-assisted', 'url-only'],
+    stagingOnly: false,
+  },
+  {
+    id: 'automated-dast',
+    title: 'Automated vulnerability scan',
+    description:
+      'OWASP ZAP passive scanning followed by optional bounded active scanning and curated Nuclei templates.',
+    tools: ['owasp-zap', 'nuclei'],
+    sourceModes: ['source-assisted', 'url-only'],
+    stagingOnly: false,
+  },
+  {
+    id: 'supply-chain',
+    title: 'Dependency and supply-chain review',
+    description: 'Package audit, lockfile review, secret scanning, and repository security configuration checks.',
+    tools: ['package-audit', 'gitleaks'],
+    sourceModes: ['source-assisted'],
+    stagingOnly: false,
+  },
+  {
+    id: 'http-load-capacity',
+    title: 'Controlled load test',
+    description: 'Staging-only k6 ramp with explicit traffic limits and threshold-based automatic aborts.',
+    tools: ['k6'],
+    sourceModes: ['source-assisted', 'url-only'],
+    stagingOnly: true,
+  },
+] as const;
+
+export type AssessmentModule = (typeof assessmentModuleDefinitions)[number]['id'];
+export const assessmentModuleIds = assessmentModuleDefinitions.map(({ id }) => id) as [
+  AssessmentModule,
+  ...AssessmentModule[],
+];
+export type TargetEnvironment = 'production' | 'staging';
+export const defaultAssessmentModules: AssessmentModule[] = ['passive-exposure'];
+
+export interface ModuleSafetyInput {
+  readonly targetEnvironment?: TargetEnvironment | undefined;
+  readonly allowActiveDast?: boolean | undefined;
+  readonly acknowledgeLoadRisk?: boolean | undefined;
+  readonly maxRequestsPerSecond?: number | undefined;
+  readonly maxConcurrency?: number | undefined;
+  readonly loadStageDurationSeconds?: number | undefined;
+  readonly loadErrorRateThreshold?: number | undefined;
+  readonly loadP95LatencyMsThreshold?: number | undefined;
+}
+
+export interface ModuleSafetyConfig {
+  readonly targetEnvironment: TargetEnvironment;
+  readonly allowActiveDast: boolean;
+  readonly acknowledgeLoadRisk: boolean;
+  readonly maxRequestsPerSecond: number;
+  readonly maxConcurrency: number;
+  readonly loadStageDurationSeconds: number;
+  readonly loadErrorRateThreshold: number;
+  readonly loadP95LatencyMsThreshold: number;
+}
+
+export interface NormalizedAssessmentModules {
+  readonly assessmentModules: AssessmentModule[];
+  readonly moduleSafety: ModuleSafetyConfig;
+}
+
+const defaultModuleSafety: ModuleSafetyConfig = {
+  targetEnvironment: 'production',
+  allowActiveDast: false,
+  acknowledgeLoadRisk: false,
+  maxRequestsPerSecond: 2,
+  maxConcurrency: 2,
+  loadStageDurationSeconds: 60,
+  loadErrorRateThreshold: 0.05,
+  loadP95LatencyMsThreshold: 2000,
+};
+
+function boundedNumber(value: number, name: string, minimum: number, maximum: number): void {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+}
+
+export function normalizeAssessmentModules(input: {
+  readonly assessmentModules?: readonly AssessmentModule[];
+  readonly moduleSafety?: ModuleSafetyInput;
+  readonly sourceMode?: 'source-assisted' | 'url-only';
+}): NormalizedAssessmentModules {
+  const requested = input.assessmentModules ?? defaultAssessmentModules;
+  rejectDuplicates(requested, 'assessmentModules');
+  const known = new Set(assessmentModuleDefinitions.map(({ id }) => id));
+  for (const value of requested) {
+    if (!known.has(value)) throw new Error(`Unknown assessment module: ${value}`);
+  }
+  const assessmentModules = assessmentModuleDefinitions.filter(({ id }) => requested.includes(id)).map(({ id }) => id);
+  const moduleSafety: ModuleSafetyConfig = {
+    targetEnvironment: input.moduleSafety?.targetEnvironment ?? defaultModuleSafety.targetEnvironment,
+    allowActiveDast: input.moduleSafety?.allowActiveDast ?? defaultModuleSafety.allowActiveDast,
+    acknowledgeLoadRisk: input.moduleSafety?.acknowledgeLoadRisk ?? defaultModuleSafety.acknowledgeLoadRisk,
+    maxRequestsPerSecond: input.moduleSafety?.maxRequestsPerSecond ?? defaultModuleSafety.maxRequestsPerSecond,
+    maxConcurrency: input.moduleSafety?.maxConcurrency ?? defaultModuleSafety.maxConcurrency,
+    loadStageDurationSeconds:
+      input.moduleSafety?.loadStageDurationSeconds ?? defaultModuleSafety.loadStageDurationSeconds,
+    loadErrorRateThreshold: input.moduleSafety?.loadErrorRateThreshold ?? defaultModuleSafety.loadErrorRateThreshold,
+    loadP95LatencyMsThreshold:
+      input.moduleSafety?.loadP95LatencyMsThreshold ?? defaultModuleSafety.loadP95LatencyMsThreshold,
+  };
+
+  boundedNumber(moduleSafety.maxRequestsPerSecond, 'Maximum requests per second', 1, 10);
+  boundedNumber(moduleSafety.maxConcurrency, 'Maximum concurrency', 1, 25);
+  boundedNumber(moduleSafety.loadStageDurationSeconds, 'Load stage duration', 10, 600);
+  boundedNumber(moduleSafety.loadErrorRateThreshold, 'Load error rate threshold', 0.001, 0.5);
+  boundedNumber(moduleSafety.loadP95LatencyMsThreshold, 'Load p95 latency threshold', 100, 60_000);
+
+  if (assessmentModules.includes('supply-chain') && input.sourceMode === 'url-only') {
+    throw new Error('Supply-chain review requires source-assisted mode');
+  }
+  if (moduleSafety.allowActiveDast && moduleSafety.targetEnvironment !== 'staging') {
+    throw new Error('Active DAST is allowed only against a staging target');
+  }
+  if (assessmentModules.includes('http-load-capacity')) {
+    if (moduleSafety.targetEnvironment !== 'staging') throw new Error('Controlled load testing is staging-only');
+    if (!moduleSafety.acknowledgeLoadRisk) {
+      throw new Error('Controlled load testing requires explicit acknowledgement of load-test risk');
+    }
+  }
+  return { assessmentModules, moduleSafety };
+}
 
 const laneOrder: readonly ExecutionLane[] = ['injection', 'xss', 'auth', 'authz', 'ssrf'];
 
@@ -116,7 +261,8 @@ export function getOwaspCategorySelection(
   owaspId: OwaspCategory,
 ): OwaspCategorySelection {
   const children = assessmentScopeDefinitions.filter(
-    ({ owaspId: parentId, availability }) => parentId === owaspId && availability === 'available',
+    ({ owaspId: parentId, availability, bulkSelectable }) =>
+      parentId === owaspId && availability === 'available' && bulkSelectable !== false,
   );
   const selectedCount = children.filter(({ id }) => selectedScopes.includes(id)).length;
   return {
@@ -135,7 +281,10 @@ export function setOwaspCategorySelected(
 ): AssessmentTestScope[] {
   const categoryScopes = new Set(
     assessmentScopeDefinitions
-      .filter(({ owaspId: parentId, availability }) => parentId === owaspId && availability === 'available')
+      .filter(
+        ({ owaspId: parentId, availability, bulkSelectable }) =>
+          parentId === owaspId && availability === 'available' && bulkSelectable !== false,
+      )
       .map(({ id }) => id),
   );
   if (categoryScopes.size === 0) return [...selectedScopes];
@@ -188,7 +337,9 @@ function normalizeSurfaces(values: readonly AssessmentTestSurface[]): Assessment
 /** Normalize public granular and legacy selections into one persisted run scope. */
 export function normalizeTestScopeSelection(input: TestScopeSelection): NormalizedTestScopeSelection {
   if (input.testCategories) {
-    if (input.testCategories.length === 0) throw new Error('testCategories must include at least one value');
+    if (input.testCategories.length === 0 && input.testScopes === undefined) {
+      throw new Error('testCategories must include at least one value');
+    }
     rejectDuplicates(input.testCategories, 'testCategories');
     for (const value of input.testCategories) {
       if (!laneOrder.includes(value)) throw new Error(`Unknown test category: ${value}`);

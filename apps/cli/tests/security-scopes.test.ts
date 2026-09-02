@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assessmentModuleDefinitions,
   assessmentScopeCatalog,
+  assessmentScopeDefinitions,
   availableTestScopes,
   availableTestSurfaces,
+  defaultAssessmentModules,
   deriveTestCategories,
   expandTestCategories,
   getOwaspCategorySelection,
+  normalizeAssessmentModules,
   normalizeTestScopeSelection,
   setOwaspCategorySelected,
 } from '../src/security-scopes.js';
@@ -33,6 +37,18 @@ describe('CLI security scope catalog', () => {
     expect(availableTestScopes).toContain('csrf');
     expect(availableTestScopes).not.toContain('dependency-risk');
     expect(availableTestSurfaces).toEqual(['browser', 'api-graphql']);
+  });
+
+  it('keeps HTTP load and capacity explicitly selectable but outside bulk defaults', () => {
+    expect(assessmentScopeDefinitions.find(({ id }) => id === 'http-load-capacity')).toEqual({
+      id: 'http-load-capacity',
+      label: 'HTTP load and capacity',
+      owaspId: 'A06:2025',
+      availability: 'available',
+      executor: 'http-load',
+      bulkSelectable: false,
+    });
+    expect(availableTestScopes).not.toContain('http-load-capacity');
   });
 
   it('round-trips legacy category expansion through execution-lane derivation', () => {
@@ -85,5 +101,31 @@ describe('CLI security scope catalog', () => {
   it('rejects unknown granular and legacy identifiers from untyped callers', () => {
     expect(() => normalizeTestScopeSelection({ testScopes: ['unknown-scope' as never] })).toThrow(/unknown/i);
     expect(() => normalizeTestScopeSelection({ testCategories: ['unknown-lane' as never] })).toThrow(/unknown/i);
+  });
+});
+
+describe('CLI assessment module catalog', () => {
+  it('exposes separate assessment methods with passive review enabled by default', () => {
+    expect(assessmentModuleDefinitions.map(({ id }) => id)).toEqual([
+      'passive-exposure',
+      'automated-dast',
+      'supply-chain',
+      'http-load-capacity',
+    ]);
+    expect(defaultAssessmentModules).toEqual(['passive-exposure']);
+  });
+
+  it('enforces production-safe defaults and staging-only active testing', () => {
+    expect(normalizeAssessmentModules({ sourceMode: 'url-only' })).toMatchObject({
+      assessmentModules: ['passive-exposure'],
+      moduleSafety: { targetEnvironment: 'production', allowActiveDast: false },
+    });
+    expect(() =>
+      normalizeAssessmentModules({
+        sourceMode: 'url-only',
+        assessmentModules: ['automated-dast'],
+        moduleSafety: { targetEnvironment: 'production', allowActiveDast: true },
+      }),
+    ).toThrow(/active.*staging/i);
   });
 });

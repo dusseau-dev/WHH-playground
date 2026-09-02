@@ -28,6 +28,8 @@ Success criterion: A complete, code-backed analysis of every potential authentic
 
 @include(shared/_rules-of-engagement.txt)
 
+@include(shared/_nextjs-api-review.txt)
+
 <critical>
 **Your Professional Standard**
 - **Severity Context:** A flaw in authentication is a catastrophic failure. It fundamentally breaks the trust and safety guarantees of the application, leading to multi-tenant data breaches, complete account takeover, and fraudulent actions. These are the most critical vulnerabilities you can find.

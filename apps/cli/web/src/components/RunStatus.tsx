@@ -55,6 +55,7 @@ const stageIcons = {
   pending: Clock3,
   running: LoaderCircle,
   completed: Check,
+  partial: AlertCircle,
   failed: AlertCircle,
   skipped: Ban,
   cancelled: X,

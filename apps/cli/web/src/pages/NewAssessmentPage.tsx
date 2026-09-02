@@ -14,9 +14,12 @@ import { Button, ErrorState, PageHeader } from "../components/Primitives";
 import { api } from "../lib/api";
 import {
   deriveTestCategories,
+  type AssessmentModule,
   type AssessmentTestScope,
   type AssessmentTestSurface,
+  type ConfiguredModelDescription,
   type CreateRunRequest,
+  HTTP_LOAD_SCOPE,
   type Profile,
   type ProviderConfig,
 } from "../types/api";
@@ -36,8 +39,15 @@ function selected<T extends string>(values: Record<T, boolean>): T[] {
   return result;
 }
 
-function providerConfig(values: AssessmentFormValues): ProviderConfig | undefined {
-  if (values.modelSource === "environment") return undefined;
+function providerConfig(
+  values: AssessmentFormValues,
+  configuredModel?: ConfiguredModelDescription,
+): ProviderConfig | undefined {
+  if (values.modelSource === "environment") {
+    const model = values.modelId.trim();
+    if (!model || model === configuredModel?.modelId || !configuredModel) return undefined;
+    return { ...configuredModel.providerConfig, model };
+  }
   const common = { model: values.modelId, apiKey: values.providerApiKey };
   switch (values.modelSource) {
     case "openrouter":
@@ -64,10 +74,15 @@ function providerConfig(values: AssessmentFormValues): ProviderConfig | undefine
   }
 }
 
-function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunRequest {
-  const selectedProviderConfig = providerConfig(values);
+function toRequest(
+  values: AssessmentFormValues,
+  profileId?: string,
+  configuredModel?: ConfiguredModelDescription,
+): CreateRunRequest {
+  const selectedProviderConfig = providerConfig(values, configuredModel);
   const testScopes = selected<AssessmentTestScope>(values.testScopes);
   const testSurfaces = selected<AssessmentTestSurface>(values.testSurfaces);
+  const assessmentModules = selected<AssessmentModule>(values.assessmentModules);
   const authentication = values.authenticationEnabled
     ? {
         enabled: true,
@@ -93,6 +108,24 @@ function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunR
       testSurfaces,
       safeDemonstration: values.safeDemonstration,
       concurrency: values.concurrency,
+      ...(testScopes.includes("http-load-capacity") && {
+        httpLoad: {
+          concurrency: values.httpLoadConcurrency,
+          requestsPerSecond: values.httpLoadRequestsPerSecond,
+          durationSeconds: values.httpLoadDurationSeconds,
+        },
+      }),
+      assessmentModules,
+      moduleSafety: {
+        targetEnvironment: values.targetEnvironment,
+        allowActiveDast: values.allowActiveDast,
+        acknowledgeLoadRisk: values.acknowledgeLoadRisk,
+        maxRequestsPerSecond: values.moduleMaxRequestsPerSecond,
+        maxConcurrency: values.moduleMaxConcurrency,
+        loadStageDurationSeconds: values.loadStageDurationSeconds,
+        loadErrorRateThreshold: values.loadErrorRateThreshold,
+        loadP95LatencyMsThreshold: values.loadP95LatencyMsThreshold,
+      },
     },
     ...(selectedProviderConfig && { providerConfig: selectedProviderConfig }),
     ...(authentication ? { authentication } : {}),
@@ -109,6 +142,7 @@ function toRequest(values: AssessmentFormValues, profileId?: string): CreateRunR
     },
     ...(values.saveProfile ? { saveProfile: { name: values.profileName } } : {}),
     authorizationConfirmed: true,
+    ...(values.elevatedLoadConfirmed && { elevatedLoadConfirmed: true }),
   };
 }
 
@@ -116,6 +150,8 @@ function profileToForm(profile: Profile): AssessmentFormValues {
   const defaults = structuredClone(assessmentDefaults);
   const selectedScopes = new Set(profile.scope.testScopes);
   const selectedSurfaces = new Set(profile.scope.testSurfaces);
+  const selectedModules = new Set(profile.scope.assessmentModules);
+  if (selectedModules.delete(HTTP_LOAD_SCOPE)) selectedScopes.add(HTTP_LOAD_SCOPE);
   return {
     ...defaults,
     targetUrl: profile.targetUrl,
@@ -133,8 +169,26 @@ function profileToForm(profile: Profile): AssessmentFormValues {
         selectedSurfaces.has(key as AssessmentTestSurface),
       ]),
     ) as AssessmentFormValues["testSurfaces"],
+    assessmentModules: Object.fromEntries(
+      Object.keys(defaults.assessmentModules).map((key) => [
+        key,
+        selectedModules.has(key as AssessmentModule),
+      ]),
+    ) as AssessmentFormValues["assessmentModules"],
+    targetEnvironment: profile.scope.moduleSafety.targetEnvironment,
+    allowActiveDast: profile.scope.moduleSafety.allowActiveDast,
+    acknowledgeLoadRisk: profile.scope.moduleSafety.acknowledgeLoadRisk,
+    moduleMaxRequestsPerSecond: profile.scope.moduleSafety.maxRequestsPerSecond,
+    moduleMaxConcurrency: profile.scope.moduleSafety.maxConcurrency,
+    loadStageDurationSeconds: profile.scope.moduleSafety.loadStageDurationSeconds,
+    loadErrorRateThreshold: profile.scope.moduleSafety.loadErrorRateThreshold,
+    loadP95LatencyMsThreshold: profile.scope.moduleSafety.loadP95LatencyMsThreshold,
     safeDemonstration: profile.scope.safeDemonstration,
     concurrency: profile.scope.concurrency,
+    httpLoadConcurrency: profile.scope.httpLoad?.concurrency ?? defaults.httpLoadConcurrency,
+    httpLoadRequestsPerSecond: profile.scope.httpLoad?.requestsPerSecond ?? defaults.httpLoadRequestsPerSecond,
+    httpLoadDurationSeconds: profile.scope.httpLoad?.durationSeconds ?? defaults.httpLoadDurationSeconds,
+    elevatedLoadConfirmed: false,
     authenticationEnabled: profile.authentication?.enabled ?? false,
     loginType: profile.authentication?.loginType ?? "form",
     loginUrl: profile.authentication?.loginUrl ?? "",
@@ -164,6 +218,13 @@ export function NewAssessmentPage() {
     mode: "onBlur",
   });
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: api.listProfiles });
+  const bootstrapQuery = useQuery({ queryKey: ["bootstrap"], queryFn: () => api.bootstrap() });
+  const modelsQuery = useQuery({
+    queryKey: ["models", bootstrapQuery.data?.model.providerId],
+    queryFn: api.listModels,
+    enabled: bootstrapQuery.data?.model.catalogAvailable === true,
+    staleTime: 5 * 60_000,
+  });
   const launchMutation = useMutation({
     mutationFn: api.createRun,
     onSuccess: (run) => {
@@ -197,7 +258,7 @@ export function NewAssessmentPage() {
       document.querySelector<HTMLInputElement>('input[name="authorizedTesting"]')?.focus();
       return;
     }
-    launchMutation.mutate(toRequest(values, loadedProfileId));
+    launchMutation.mutate(toRequest(values, loadedProfileId, bootstrapQuery.data?.model));
   });
 
   return (
@@ -228,7 +289,16 @@ export function NewAssessmentPage() {
       />
 
       <form className="assessment-form" onSubmit={(event) => void submit(event)} noValidate>
-        <AssessmentConfigFields form={form} showSaveProfile showAuthorization showModelConfig />
+        <AssessmentConfigFields
+          form={form}
+          showSaveProfile
+          showAuthorization
+          showModelConfig
+          modelConfiguration={bootstrapQuery.data?.model}
+          modelOptions={modelsQuery.data?.items}
+          modelCatalogLoading={modelsQuery.isLoading}
+          modelCatalogUnavailable={modelsQuery.isError}
+        />
         {form.formState.errors.authorizedTesting ? (
           <div className="form-submit-error" role="alert">
             {form.formState.errors.authorizedTesting.message}

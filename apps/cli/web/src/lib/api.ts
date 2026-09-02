@@ -1,11 +1,15 @@
 import type {
   ActivityEntry,
   ApiErrorBody,
+  AssessmentModule,
   AssessmentTestScope,
   AssessmentTestSurface,
   BootstrapResponse,
   CreateRunRequest,
   Finding,
+  ModelCatalog,
+  ModuleExecutionStatus,
+  ModuleSafetyConfig,
   PaginatedRuns,
   PipelineStage,
   Profile,
@@ -23,7 +27,12 @@ import type {
   TargetSecretField,
   TargetSecrets,
 } from '../types/api';
-import { normalizeTestScopeSelection, securityTestCategories } from '../types/api';
+import {
+  assessmentModuleDefinitions,
+  normalizeAssessmentModules,
+  normalizeTestScopeSelection,
+  securityTestCategories,
+} from '../types/api';
 
 const API_ROOT = '/api/v1';
 
@@ -31,6 +40,9 @@ interface RawConfig {
   testCategories?: SecurityTestCategory[];
   testScopes?: AssessmentTestScope[];
   testSurfaces?: AssessmentTestSurface[];
+  httpLoad?: import('../types/api').HttpLoadSettings;
+  assessmentModules?: AssessmentModule[];
+  moduleSafety?: ModuleSafetyConfig;
   safeDemonstration?: boolean;
   /** @deprecated Use safeDemonstration. */
   demonstrate?: boolean;
@@ -106,6 +118,13 @@ interface RawProgress {
   currentAgent: string | null;
   activeAgents?: string[];
   activeTestCategories?: SecurityTestCategory[];
+  activeModules?: AssessmentModule[];
+  moduleResults?: Array<{
+    id: AssessmentModule;
+    status: ModuleExecutionStatus;
+    evidencePath?: string;
+  }>;
+  httpLoadStatus?: 'completed' | 'interrupted' | 'incomplete' | null;
   expectedAgents?: string[];
   completedAgents: string[];
   failedAgent: string | null;
@@ -158,6 +177,7 @@ interface RawBootstrap {
   version: string;
   platform: string;
   secretStore: { persistence: 'keychain' | 'memory'; available: boolean };
+  model: BootstrapResponse['model'];
 }
 
 export class ApiError extends Error {
@@ -217,6 +237,7 @@ export async function bootstrap(force = false): Promise<BootstrapResponse> {
         label: secretPersistence === 'keychain' ? 'macOS Keychain' : 'Session-only secrets',
         available: raw.secretStore.available,
       },
+      model: raw.model,
     };
     return bootstrapValue;
   });
@@ -311,12 +332,22 @@ function stageLane(agent: string): string {
     : 'Core';
 }
 
+function httpLoadStageStatus(run: RawRunRecord, progress: RawProgress | null): PipelineStage['status'] {
+  if (progress?.httpLoadStatus === 'completed') return 'completed';
+  if (progress?.httpLoadStatus === 'interrupted' || progress?.httpLoadStatus === 'incomplete') return 'partial';
+  if (run.status === 'failed' && progress?.currentPhase === 'http-load-capacity') return 'failed';
+  if (run.status === 'cancelled') return 'cancelled';
+  if (progress?.currentPhase === 'http-load-capacity') return 'running';
+  if (run.status === 'completed') return 'unavailable';
+  return 'pending';
+}
+
 function toStages(raw: RawRunDetail): PipelineStage[] {
   const progress = raw.progress;
   const planned = progress?.expectedAgents ?? expectedAgents(raw.run);
   const completed = new Set(progress?.completedAgents ?? []);
   const active = new Set(progress?.activeAgents ?? []);
-  return planned.map((agent) => {
+  const agentStages = planned.map((agent) => {
     let status: PipelineStage['status'] = 'pending';
     if (!progress && raw.run.status === 'completed') status = 'unavailable';
     else if (completed.has(agent)) status = 'completed';
@@ -332,6 +363,46 @@ function toStages(raw: RawRunDetail): PipelineStage[] {
       ...(status === 'unavailable' && { detail: 'Status unavailable' }),
     };
   });
+  const spec = runSpec(raw.run);
+  const moduleSelection = normalizeAssessmentModules({
+    ...(spec.config.assessmentModules && { assessmentModules: spec.config.assessmentModules }),
+    ...(spec.config.moduleSafety && { moduleSafety: spec.config.moduleSafety }),
+    sourceMode: spec.sourceMode,
+  });
+  const activeModules = new Set(progress?.activeModules ?? []);
+  const moduleResults = new Map((progress?.moduleResults ?? []).map((result) => [result.id, result]));
+  const moduleStages: PipelineStage[] = assessmentModuleDefinitions
+    .filter(({ id }) => moduleSelection.assessmentModules.includes(id))
+    .map((definition) => {
+      const result = moduleResults.get(definition.id);
+      let status: PipelineStage['status'] = 'pending';
+      if (activeModules.has(definition.id)) status = 'running';
+      else if (result) status = result.status;
+      else if (!progress && raw.run.status === 'completed') status = 'unavailable';
+      else if (raw.run.status === 'cancelled') status = 'cancelled';
+      else if (raw.run.status === 'completed') status = 'unavailable';
+      return {
+        id: `module-${definition.id}`,
+        label: definition.title,
+        lane: 'Assessment methods',
+        status,
+        ...(result?.evidencePath && { detail: result.evidencePath }),
+        ...(!result && status === 'unavailable' && { detail: 'No module evidence was recorded' }),
+      };
+    });
+  const scope = normalizedRunScope(spec.config);
+  const loadStages: PipelineStage[] = scope.testScopes.includes('http-load-capacity')
+    ? [
+        {
+          id: 'http-load-capacity',
+          label: 'HTTP load and capacity',
+          lane: 'Capacity',
+          status: httpLoadStageStatus(raw.run, progress),
+          ...(progress?.httpLoadStatus && { detail: `Result: ${progress.httpLoadStatus}` }),
+        },
+      ]
+    : [];
+  return [...agentStages, ...moduleStages, ...loadStages];
 }
 
 function toFinding(verdict: RawVerdict): Finding {
@@ -372,6 +443,17 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
   const elapsedMs = progress?.elapsedMs ?? detail?.metrics?.total_duration_ms;
   const costUsd = progress?.summary?.totalCostUsd ?? detail?.metrics?.total_cost_usd;
   const normalizedScope = normalizedRunScope(spec.config);
+  const normalizedModules = normalizeAssessmentModules({
+    ...(spec.config.assessmentModules && { assessmentModules: spec.config.assessmentModules }),
+    ...(spec.config.moduleSafety && { moduleSafety: spec.config.moduleSafety }),
+    sourceMode: spec.sourceMode,
+  });
+  const moduleResults = progress?.moduleResults ?? [];
+  const completedModuleCount = moduleResults.length;
+  const httpLoadSelected = normalizedScope.testScopes.includes('http-load-capacity');
+  const completedHttpLoadCount = httpLoadSelected && progress?.httpLoadStatus ? 1 : 0;
+  const totalStages = plan.length + normalizedModules.assessmentModules.length + (httpLoadSelected ? 1 : 0);
+  const completedStages = completedCount + completedModuleCount + completedHttpLoadCount;
   const result: RunDetail = {
     id: run.runId,
     workspaceId: run.runId,
@@ -385,13 +467,18 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
       testSurfaces: normalizedScope.testSurfaces,
       safeDemonstration: spec.config.safeDemonstration ?? spec.config.demonstrate ?? true,
       concurrency: spec.config.pipeline?.maxConcurrentPipelines ?? 5,
+      ...(spec.config.httpLoad && { httpLoad: spec.config.httpLoad }),
+      ...normalizedModules,
     },
     progress: {
-      completed: completedCount,
-      total: plan.length,
-      percent: plan.length > 0 ? (completedCount / plan.length) * 100 : 0,
+      completed: completedStages,
+      total: totalStages,
+      percent: totalStages > 0 ? (completedStages / totalStages) * 100 : 0,
       activeAgents,
       activeTestCategories: progress?.activeTestCategories ?? [],
+      activeModules: progress?.activeModules ?? [],
+      moduleResults,
+      httpLoadStatus: progress?.httpLoadStatus ?? null,
     },
     metrics: {
       ...(elapsedMs !== undefined && { elapsedMs }),
@@ -440,6 +527,11 @@ function toProfile(raw: RawProfile): Profile {
   const secretPersistence = bootstrapValue?.secretStore.persistence ?? 'session';
   const auth = raw.config.authentication;
   const normalizedScope = normalizedRunScope(raw.config);
+  const normalizedModules = normalizeAssessmentModules({
+    ...(raw.config.assessmentModules && { assessmentModules: raw.config.assessmentModules }),
+    ...(raw.config.moduleSafety && { moduleSafety: raw.config.moduleSafety }),
+    sourceMode: raw.sourceMode,
+  });
   return {
     version: 1,
     id: raw.id,
@@ -458,6 +550,8 @@ function toProfile(raw: RawProfile): Profile {
       testSurfaces: normalizedScope.testSurfaces,
       safeDemonstration: raw.config.safeDemonstration ?? raw.config.demonstrate ?? true,
       concurrency: raw.config.pipeline?.maxConcurrentPipelines ?? 5,
+      ...(raw.config.httpLoad && { httpLoad: raw.config.httpLoad }),
+      ...normalizedModules,
     },
     ...(auth && {
       authentication: {
@@ -493,6 +587,9 @@ function configBody(input: CreateRunRequest | SaveProfileRequest): RawConfig {
     testCategories: input.scope.testCategories,
     testScopes: input.scope.testScopes,
     testSurfaces: input.scope.testSurfaces,
+    ...(input.scope.httpLoad && { httpLoad: input.scope.httpLoad }),
+    assessmentModules: input.scope.assessmentModules,
+    moduleSafety: input.scope.moduleSafety,
     safeDemonstration: input.scope.safeDemonstration,
     pipeline: { maxConcurrentPipelines: input.scope.concurrency },
     rules: { focus: input.rules.focus.map(rule), avoid: input.rules.avoid.map(rule) },
@@ -551,6 +648,7 @@ async function createRun(input: CreateRunRequest): Promise<RunDetail> {
       secrets: targetSecrets(input),
       ...(input.providerConfig && { providerConfig: input.providerConfig }),
       authorizationConfirmed: true,
+      ...(input.elevatedLoadConfirmed && { elevatedLoadConfirmed: true }),
     }),
   });
   return getRun(run.runId);
@@ -558,6 +656,7 @@ async function createRun(input: CreateRunRequest): Promise<RunDetail> {
 
 export const api = {
   bootstrap,
+  listModels: async (): Promise<ModelCatalog> => request<ModelCatalog>('/models'),
   listRuns: async (search = ''): Promise<PaginatedRuns> => {
     const raw = await request<RawRunRecord[]>('/runs');
     const needle = search.toLowerCase();
@@ -572,10 +671,18 @@ export const api = {
     const run = await request<RawRunRecord>(`/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
     return getRun(run.runId);
   },
-  resumeRun: async (id: string, secrets: TargetSecrets = {}) => {
+  resumeRun: async (
+    id: string,
+    secrets: TargetSecrets = {},
+    loadAuthorization: { authorizationConfirmed?: boolean; elevatedLoadConfirmed?: boolean } = {},
+  ) => {
     const run = await request<RawRunRecord>(`/runs/${encodeURIComponent(id)}/resume`, {
       method: 'POST',
-      ...jsonBody({ ...(Object.keys(secrets).length > 0 && { secrets }) }),
+      ...jsonBody({
+        ...(Object.keys(secrets).length > 0 && { secrets }),
+        ...(loadAuthorization.authorizationConfirmed && { authorizationConfirmed: true }),
+        ...(loadAuthorization.elevatedLoadConfirmed && { elevatedLoadConfirmed: true }),
+      }),
     });
     return getRun(run.runId);
   },

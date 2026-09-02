@@ -5,6 +5,7 @@
  * within their own workflow context.
  */
 
+export type { HttpLoadSettings } from '../types/http-load.js';
 export type {
   AssessmentScope,
   AssessmentSurface,

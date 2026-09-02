@@ -20,6 +20,8 @@ import {
   StartRunRequestSchema,
   type TargetSecrets,
 } from '../contracts.js';
+import { loadEnv } from '../env.js';
+import { describeConfiguredModel, listConfiguredModels } from '../model-catalog.js';
 import { ProfileStore } from '../profiles.js';
 import { safeErrorMessage } from '../redaction.js';
 import { ScanController } from '../scan-controller.js';
@@ -226,11 +228,20 @@ export function createApp(options: CreateAppOptions): Hono {
           persistence: profiles.secretPersistence,
           available: profiles.secretPersistence === 'keychain',
         },
+        model: describeConfiguredModel(),
         profiles: await profiles.list(),
         runs: await controller.listRuns(),
       },
     }),
   );
+
+  app.get(`${API_PREFIX}/models`, async (context) => {
+    try {
+      return context.json({ data: { provider: describeConfiguredModel(), items: await listConfiguredModels() } });
+    } catch {
+      throw new ApiError('The configured provider model catalog is unavailable', 502, 'model_catalog_unavailable');
+    }
+  });
 
   app.get(`${API_PREFIX}/profiles`, async (context) => context.json({ data: await profiles.list() }));
   app.get(`${API_PREFIX}/profiles/:id`, async (context) =>
@@ -309,6 +320,8 @@ export function createApp(options: CreateAppOptions): Hono {
       ...(request.outputPath && { outputPath: request.outputPath }),
       ...(request.pipelineTesting !== undefined && { pipelineTesting: request.pipelineTesting }),
       ...(request.debug !== undefined && { debug: request.debug }),
+      authorizationConfirmed: request.authorizationConfirmed,
+      ...(request.elevatedLoadConfirmed && { elevatedLoadConfirmed: true }),
     });
     return context.json({ data: run }, 202);
   });
@@ -324,7 +337,10 @@ export function createApp(options: CreateAppOptions): Hono {
     try {
       return context.json(
         {
-          data: await controller.resumeRun(context.req.param('id'), request.secrets ?? {}, request.providerConfig),
+          data: await controller.resumeRun(context.req.param('id'), request.secrets ?? {}, request.providerConfig, {
+            authorizationConfirmed: request.authorizationConfirmed === true,
+            elevatedLoadConfirmed: request.elevatedLoadConfirmed === true,
+          }),
         },
         202,
       );
@@ -444,6 +460,7 @@ export function createApp(options: CreateAppOptions): Hono {
 }
 
 export async function startUiServer(options: StartUiServerOptions): Promise<UiServerHandle> {
+  loadEnv();
   const secretStore = await createSecretStore();
   const profiles = options.profiles ?? new ProfileStore({ secretStore });
   const controller =

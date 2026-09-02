@@ -15,8 +15,10 @@ import { api } from "../lib/api";
 import { formatTimestamp } from "../lib/presentation";
 import {
   deriveTestCategories,
+  type AssessmentModule,
   type AssessmentTestScope,
   type AssessmentTestSurface,
+  HTTP_LOAD_SCOPE,
   type Profile,
   type SaveProfileRequest,
 } from "../types/api";
@@ -40,6 +42,8 @@ function profileValues(profile: Profile): AssessmentFormValues {
   const defaults = structuredClone(assessmentDefaults);
   const selectedScopes = new Set(profile.scope.testScopes);
   const selectedSurfaces = new Set(profile.scope.testSurfaces);
+  const selectedModules = new Set(profile.scope.assessmentModules);
+  if (selectedModules.delete(HTTP_LOAD_SCOPE)) selectedScopes.add(HTTP_LOAD_SCOPE);
   return {
     ...defaults,
     name: profile.name,
@@ -58,8 +62,23 @@ function profileValues(profile: Profile): AssessmentFormValues {
         selectedSurfaces.has(key as AssessmentTestSurface),
       ]),
     ) as AssessmentFormValues["testSurfaces"],
+    assessmentModules: Object.fromEntries(
+      Object.keys(defaults.assessmentModules).map((key) => [key, selectedModules.has(key as AssessmentModule)]),
+    ) as AssessmentFormValues["assessmentModules"],
+    targetEnvironment: profile.scope.moduleSafety.targetEnvironment,
+    allowActiveDast: profile.scope.moduleSafety.allowActiveDast,
+    acknowledgeLoadRisk: profile.scope.moduleSafety.acknowledgeLoadRisk,
+    moduleMaxRequestsPerSecond: profile.scope.moduleSafety.maxRequestsPerSecond,
+    moduleMaxConcurrency: profile.scope.moduleSafety.maxConcurrency,
+    loadStageDurationSeconds: profile.scope.moduleSafety.loadStageDurationSeconds,
+    loadErrorRateThreshold: profile.scope.moduleSafety.loadErrorRateThreshold,
+    loadP95LatencyMsThreshold: profile.scope.moduleSafety.loadP95LatencyMsThreshold,
     safeDemonstration: profile.scope.safeDemonstration,
     concurrency: profile.scope.concurrency,
+    httpLoadConcurrency: profile.scope.httpLoad?.concurrency ?? defaults.httpLoadConcurrency,
+    httpLoadRequestsPerSecond: profile.scope.httpLoad?.requestsPerSecond ?? defaults.httpLoadRequestsPerSecond,
+    httpLoadDurationSeconds: profile.scope.httpLoad?.durationSeconds ?? defaults.httpLoadDurationSeconds,
+    elevatedLoadConfirmed: false,
     authenticationEnabled: profile.authentication?.enabled ?? false,
     loginType: profile.authentication?.loginType ?? "form",
     loginUrl: profile.authentication?.loginUrl ?? "",
@@ -81,6 +100,7 @@ function profileValues(profile: Profile): AssessmentFormValues {
 function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
   const testScopes = selected<AssessmentTestScope>(values.testScopes);
   const testSurfaces = selected<AssessmentTestSurface>(values.testSurfaces);
+  const assessmentModules = selected<AssessmentModule>(values.assessmentModules);
   const authentication = values.authenticationEnabled
     ? {
         enabled: true,
@@ -108,6 +128,17 @@ function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
       testSurfaces,
       safeDemonstration: values.safeDemonstration,
       concurrency: values.concurrency,
+      assessmentModules,
+      moduleSafety: {
+        targetEnvironment: values.targetEnvironment,
+        allowActiveDast: values.allowActiveDast,
+        acknowledgeLoadRisk: values.acknowledgeLoadRisk,
+        maxRequestsPerSecond: values.moduleMaxRequestsPerSecond,
+        maxConcurrency: values.moduleMaxConcurrency,
+        loadStageDurationSeconds: values.loadStageDurationSeconds,
+        loadErrorRateThreshold: values.loadErrorRateThreshold,
+        loadP95LatencyMsThreshold: values.loadP95LatencyMsThreshold,
+      },
     },
     ...(authentication ? { authentication } : {}),
     rules: {

@@ -19,6 +19,12 @@ export { ConfigLoaderService } from './config-loader.js';
 export type { ContainerDependencies } from './container.js';
 export { Container, getContainer, getOrCreateContainer, removeContainer, setContainerFactory } from './container.js';
 export { ExploitationCheckerService } from './exploitation-checker.js';
+export {
+  HTTP_LOAD_RESULT_PATH,
+  readCompletedHttpLoadResult,
+  readHttpLoadResult,
+  runHttpLoadCapacity,
+} from './http-load-runner.js';
 export { renderReportPdf } from './pdf-renderer.js';
 export { loadPrompt } from './prompt-manager.js';
 export {

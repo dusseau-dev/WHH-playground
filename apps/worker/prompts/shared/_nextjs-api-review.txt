@@ -1,0 +1,7 @@
+<nextjs_api_review>
+When the application uses Next.js, explicitly inventory App Router route handlers (`app/**/route.*`), Pages Router APIs (`pages/api/**`), and Server Actions (`"use server"`). Cross-check each network-reachable handler against the OWASP Web Security Testing Guide categories applicable to its inputs and trust boundaries.
+
+For each handler in your assigned vulnerability class, verify server-side schema validation, authorization before object access, response-field minimization, safe redirect allowlists, bounded upload type/size handling, and safe outbound request construction. Treat `NEXT_PUBLIC_*` values as intentionally public but check public bundles and responses for non-public environment values or secrets. For Server Actions, confirm identity and tenant context come from the verified server session—not a client-supplied user ID, role, organization, or ownership claim.
+
+When Clerk is present, map Clerk middleware and server helpers to every protected route. Verify signup, recovery, logout/session revocation, organization membership, and role/permission decisions at the application boundary; do not assume the identity provider protects an application route unless the route itself enforces the boundary.
+</nextjs_api_review>

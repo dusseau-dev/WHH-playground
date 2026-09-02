@@ -8,13 +8,38 @@ import { createReportMetaCollector } from '../src/collectors/report-meta-collect
 import { injectAssessmentModeSections, injectModelIntoReport } from '../src/services/reporting.js';
 import {
   createStructuredReportSession,
+  isReportData,
   PUBLIC_REPORT_MARKDOWN_FILENAME,
   REPORT_MARKDOWN_FILENAME,
+  synchronizeHttpLoadReportFiles,
   validateStructuredReportFiles,
 } from '../src/services/structured-report.js';
+import type { HttpLoadResult } from '../src/types/http-load.js';
 
 const roots: string[] = [];
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+const completedHttpLoadResult: HttpLoadResult = {
+  version: 1,
+  status: 'completed',
+  started_at: '2026-08-24T12:00:00.000Z',
+  completed_at: '2026-08-24T12:00:15.000Z',
+  target: 'https://target.test/',
+  concurrency: 5,
+  requests_per_second: 10,
+  duration_seconds: 15,
+  elapsed_seconds: 15,
+  sent: 150,
+  completed: 150,
+  success: 150,
+  failure: 0,
+  errors: 0,
+  bytes_read: 15_000,
+  average_latency_ms: 25,
+  minimum_latency_ms: 10,
+  maximum_latency_ms: 50,
+  status_counts: { '200': 150 },
+};
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
@@ -85,6 +110,91 @@ describe('report metadata collector', () => {
 });
 
 describe('structured report pipeline finalizer', () => {
+  it('rejects malformed optional HTTP load report data', () => {
+    expect(
+      isReportData({
+        report_meta: {
+          target: 'https://target.test',
+          assessment_date: '2026-08-24',
+          scope: 'load',
+          executive_summary: 'Summary.',
+          safe_demonstration: false,
+          source_mode: 'url-only',
+          validation_state: 'validated',
+        },
+        findings: [],
+        ruled_out: [],
+        not_assessed: [],
+        triage_status: 'validated',
+        http_load_capacity: { status: 'completed' },
+      }),
+    ).toBe(false);
+  });
+
+  it('persists completed HTTP load evidence and completes its OWASP check', async () => {
+    const deliverablesPath = await makeDeliverables();
+    const session = await createStructuredReportSession({
+      deliverablesPath,
+      webUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      safeDemonstration: false,
+      triageRan: false,
+      selectedVulnClasses: [],
+      selectedTestScopes: ['http-load-capacity'],
+      httpLoadResult: completedHttpLoadResult,
+    });
+    await callTool(requiredTool(session.tools, 0), {
+      target: 'https://target.test',
+      assessment_date: '2026-08-24',
+      scope: 'HTTP load and capacity',
+      executive_summary: 'A bounded load observation was collected.',
+    });
+
+    const report = await session.finalize(logger);
+    const a06 = report.scope_coverage?.find(({ owasp_id }) => owasp_id === 'A06:2025');
+    expect(report.http_load_capacity).toEqual(completedHttpLoadResult);
+    expect(a06).toMatchObject({ status: 'completed', completed_scopes: ['http-load-capacity'] });
+    expect(await fs.readFile(path.join(deliverablesPath, REPORT_MARKDOWN_FILENAME), 'utf8')).toContain(
+      '## HTTP Load and Capacity',
+    );
+  });
+
+  it('repairs an existing structured report after a resumed load activity completes', async () => {
+    const deliverablesPath = await makeDeliverables();
+    const session = await createStructuredReportSession({
+      deliverablesPath,
+      webUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      safeDemonstration: false,
+      triageRan: false,
+      selectedVulnClasses: [],
+      selectedTestScopes: ['http-load-capacity'],
+    });
+    await callTool(requiredTool(session.tools, 0), {
+      target: 'https://target.test',
+      assessment_date: '2026-08-24',
+      scope: 'HTTP load and capacity',
+      executive_summary: 'A load observation was selected.',
+    });
+    const initial = await session.finalize(logger);
+    expect(initial.http_load_capacity).toBeUndefined();
+    expect(initial.scope_coverage?.find(({ owasp_id }) => owasp_id === 'A06:2025')?.status).toBe('incomplete');
+
+    expect(
+      await synchronizeHttpLoadReportFiles(deliverablesPath, ['http-load-capacity'], completedHttpLoadResult),
+    ).toBe(true);
+
+    const repaired = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'report.json'), 'utf8'));
+    expect(repaired.http_load_capacity).toEqual(completedHttpLoadResult);
+    expect(repaired.scope_coverage.find(({ owasp_id }: { owasp_id: string }) => owasp_id === 'A06:2025')).toMatchObject(
+      {
+        status: 'completed',
+        completed_scopes: ['http-load-capacity'],
+      },
+    );
+    expect(await validateStructuredReportFiles(deliverablesPath, logger)).toBe(true);
+  });
+
   it('writes validated canonical JSON and Markdown with exact IDs, locations, filters, and extra verdicts', async () => {
     const deliverablesPath = await makeDeliverables();
     await fs.writeFile(
@@ -125,6 +235,28 @@ describe('structured report pipeline finalizer', () => {
         ],
       }),
     );
+    await fs.mkdir(path.join(deliverablesPath, 'modules'), { recursive: true });
+    await fs.writeFile(
+      path.join(deliverablesPath, 'modules', 'manifest.json'),
+      JSON.stringify({
+        schema_version: 1,
+        selected_modules: ['passive-exposure', 'automated-dast'],
+        results: [
+          { id: 'passive-exposure', status: 'completed', evidencePath: 'modules/passive-exposure.json' },
+          { id: 'automated-dast', status: 'partial', evidencePath: 'modules/automated-dast.json' },
+        ],
+      }),
+    );
+    await Promise.all([
+      fs.writeFile(
+        path.join(deliverablesPath, 'modules', 'passive-exposure.json'),
+        JSON.stringify({ schema_version: 1, module: 'passive-exposure', status: 'completed' }),
+      ),
+      fs.writeFile(
+        path.join(deliverablesPath, 'modules', 'automated-dast.json'),
+        JSON.stringify({ schema_version: 1, module: 'automated-dast', status: 'partial' }),
+      ),
+    ]);
 
     const session = await createStructuredReportSession({
       deliverablesPath,
@@ -133,6 +265,7 @@ describe('structured report pipeline finalizer', () => {
       safeDemonstration: false,
       triageRan: true,
       selectedVulnClasses: ['injection', 'xss'],
+      selectedAssessmentModules: ['passive-exposure', 'automated-dast'],
     });
     expect(session.tools.map((tool) => tool.name)).toEqual(['set_report_meta', 'add_finding']);
     await callTool(requiredTool(session.tools, 0), {
@@ -166,7 +299,13 @@ describe('structured report pipeline finalizer', () => {
     });
     expect(raw.ruled_out.map((entry: { finding_id: string }) => entry.finding_id)).toEqual(['FILTERED-VULN-02']);
     expect(raw.not_assessed).toEqual(['xss']);
+    expect(raw.module_coverage).toEqual([
+      expect.objectContaining({ id: 'passive-exposure', status: 'completed' }),
+      expect.objectContaining({ id: 'automated-dast', status: 'partial' }),
+    ]);
     expect(markdown).toContain('## Mode\n\nSource-Assisted');
+    expect(markdown).toContain('## Assessment Methods');
+    expect(markdown).toContain('| Automated vulnerability scan | Partial | modules/automated\\-dast\\.json |');
     expect(markdown).toContain('src/search\\.ts:42');
     expect(publicMarkdown).toBe(markdown);
     expect(await validateStructuredReportFiles(deliverablesPath, logger)).toBe(true);

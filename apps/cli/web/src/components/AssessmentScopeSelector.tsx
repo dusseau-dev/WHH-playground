@@ -6,6 +6,7 @@ import {
   availableTestScopes,
   getOwaspCategorySelection,
   setOwaspCategorySelected,
+  selectableTestScopes,
   testSurfaceDefinitions,
   type AssessmentTestScope,
   type AssessmentTestSurface,
@@ -74,11 +75,11 @@ export function AssessmentScopeSelector({
         <legend className="field-label">OWASP Top 10:2025 checks</legend>
         <div className="scope-toolbar">
           <span aria-live="polite">
-            {selectedScopes.length} of {availableTestScopes.length} selected
+            {selectedScopes.length} of {selectableTestScopes.length} selected
           </span>
           <div className="scope-toolbar-actions">
             <button type="button" className="scope-action" onClick={() => onScopesChange([...availableTestScopes])}>
-              Select all available checks
+              Select all standard checks
             </button>
             <button type="button" className="scope-action" onClick={() => onScopesChange([])}>
               Clear all checks
@@ -151,7 +152,11 @@ export function AssessmentScopeSelector({
                             {checked ? <Check size={13} /> : null}
                           </span>
                           <span>{scope.label}</span>
-                          {scopeUnavailable ? <small>Coming soon</small> : null}
+                          {scopeUnavailable ? (
+                            <small>Coming soon</small>
+                          ) : scope.bulkSelectable === false ? (
+                            <small>Explicit opt-in</small>
+                          ) : null}
                         </label>
                       );
                     })}

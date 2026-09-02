@@ -4,8 +4,23 @@ export type { AgentMetrics } from '../types/metrics.js';
 
 import type { DistributedConfig, PipelineConfig, ProviderConfig, SourceMode, VulnClass } from '../types/config.js';
 import type { ErrorCode } from '../types/errors.js';
+import {
+  assertExclusiveHttpLoadExecution,
+  assertHttpLoadAuthorization,
+  type HttpLoadSettings,
+  type HttpLoadStatus,
+  normalizeHttpLoadSettings,
+} from '../types/http-load.js';
 import type { AgentMetrics } from '../types/metrics.js';
-import { type AssessmentScope, type AssessmentSurface, normalizeAssessmentScope } from '../types/scopes.js';
+import {
+  type AssessmentModule,
+  type AssessmentScope,
+  type AssessmentSurface,
+  type ModuleExecutionResult,
+  type ModuleSafetyInput,
+  normalizeAssessmentModules,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 
 export interface PipelineInput {
   webUrl: string;
@@ -44,6 +59,16 @@ export interface PipelineInput {
   testScopes?: AssessmentScope[];
   /** Browser/API surfaces selected for this run. */
   testSurfaces?: AssessmentSurface[];
+  /** Assessment methods/modules, independent from vulnerability lanes. */
+  assessmentModules?: AssessmentModule[];
+  /** Fail-closed traffic and environment policy for assessment modules. */
+  moduleSafety?: ModuleSafetyInput;
+  /** Single-host HTTP load parameters, normalized when its scope is selected. */
+  httpLoad?: Partial<HttpLoadSettings>;
+  /** Run-time ownership or written-authorization acknowledgement. */
+  httpLoadAuthorizationConfirmed?: boolean;
+  /** Additional acknowledgement required above elevated-load thresholds. */
+  elevatedLoadConfirmed?: boolean;
   safeDemonstration?: boolean; // false skips the safe-demonstration phase
   /** @deprecated Use safeDemonstration. */
   exploit?: boolean;
@@ -76,6 +101,8 @@ export interface PipelineState {
   activeAgents: string[];
   /** Security test categories currently executing in parallel. */
   activeTestCategories: VulnClass[];
+  /** Assessment methods currently executing outside vulnerability lanes. */
+  activeModules: AssessmentModule[];
   /** Configured execution plan, excluding preflight and authentication validation. */
   expectedAgents: string[];
   completedAgents: string[];
@@ -86,6 +113,10 @@ export interface PipelineState {
   agentMetrics: Record<string, AgentMetrics>;
   /** False when the triage gate failed open — the report renders an UNVALIDATED banner. */
   triageRan: boolean;
+  /** Evidence-backed module outcomes; absent evidence is never inferred as completion. */
+  moduleResults: ModuleExecutionResult[];
+  /** Evidence-backed outcome for the explicit HTTP load activity. */
+  httpLoadStatus: HttpLoadStatus | null;
   summary: PipelineSummary | null;
 }
 
@@ -204,6 +235,43 @@ export function normalizeCliPipelineInput(input: PipelineInput): NormalizedPipel
     ...(input.testSurfaces && { testSurfaces: input.testSurfaces }),
     ...(input.vulnClasses && { vulnClasses: input.vulnClasses }),
   });
+  const distributedModuleSafety = input.configData?.module_safety;
+  const requestedModules = input.assessmentModules ?? input.configData?.assessment_modules;
+  const requestedModuleSafety =
+    input.moduleSafety ??
+    (distributedModuleSafety
+      ? {
+          targetEnvironment: distributedModuleSafety.target_environment,
+          allowActiveDast: distributedModuleSafety.allow_active_dast,
+          acknowledgeLoadRisk: distributedModuleSafety.acknowledge_load_risk,
+          maxRequestsPerSecond: distributedModuleSafety.max_requests_per_second,
+          maxConcurrency: distributedModuleSafety.max_concurrency,
+          loadStageDurationSeconds: distributedModuleSafety.load_stage_duration_seconds,
+          loadErrorRateThreshold: distributedModuleSafety.load_error_rate_threshold,
+          loadP95LatencyMsThreshold: distributedModuleSafety.load_p95_latency_ms_threshold,
+        }
+      : undefined);
+  const modules = normalizeAssessmentModules({
+    ...(requestedModules && { assessmentModules: requestedModules }),
+    ...(requestedModuleSafety && { moduleSafety: requestedModuleSafety }),
+    sourceMode,
+  });
+  assertExclusiveHttpLoadExecution(assessmentScope.testScopes, modules.assessmentModules);
+  const distributedHttpLoad = input.configData?.http_load;
+  const httpLoad = normalizeHttpLoadSettings(
+    assessmentScope.testScopes,
+    input.httpLoad ??
+      (distributedHttpLoad
+        ? {
+            concurrency: distributedHttpLoad.concurrency,
+            requestsPerSecond: distributedHttpLoad.requests_per_second,
+            durationSeconds: distributedHttpLoad.duration_seconds,
+          }
+        : undefined),
+  );
+  const httpLoadAuthorizationConfirmed = httpLoad ? input.httpLoadAuthorizationConfirmed === true : false;
+  const elevatedLoadConfirmed = httpLoad ? input.elevatedLoadConfirmed === true : false;
+  assertHttpLoadAuthorization(httpLoad, httpLoadAuthorizationConfirmed, elevatedLoadConfirmed);
   const { exploit: _legacyExploit, ...inputWithoutLegacyFlag } = input;
 
   const normalized: PipelineInput = {
@@ -213,6 +281,11 @@ export function normalizeCliPipelineInput(input: PipelineInput): NormalizedPipel
     testScopes: assessmentScope.testScopes,
     testSurfaces: assessmentScope.testSurfaces,
     vulnClasses: assessmentScope.vulnClasses,
+    assessmentModules: modules.assessmentModules,
+    moduleSafety: modules.moduleSafety,
+    ...(httpLoad && { httpLoad }),
+    httpLoadAuthorizationConfirmed,
+    elevatedLoadConfirmed,
     ...(workingDirectory !== undefined && { workingDirectory }),
   };
 
@@ -253,7 +326,8 @@ export function computeExpectedAgents(
     expected.push(`${cls}-vuln`);
     if (safeDemonstration) expected.push(`${cls}-exploit`);
   }
-  expected.push('triage', 'report');
+  if (vulnClasses.length > 0) expected.push('triage');
+  expected.push('report');
   return expected;
 }
 

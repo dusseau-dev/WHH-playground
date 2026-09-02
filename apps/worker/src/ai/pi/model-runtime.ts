@@ -110,9 +110,9 @@ function providerCredential(
     if (providerConfig.awsAccessKeyId) providerEnv.AWS_ACCESS_KEY_ID = providerConfig.awsAccessKeyId;
     if (providerConfig.awsSecretAccessKey) providerEnv.AWS_SECRET_ACCESS_KEY = providerConfig.awsSecretAccessKey;
     if (providerConfig.awsSessionToken) providerEnv.AWS_SESSION_TOKEN = providerConfig.awsSessionToken;
-    return key || Object.keys(providerEnv).length > 0
-      ? { type: 'api_key', ...(key && { key }), ...(Object.keys(providerEnv).length > 0 && { env: providerEnv }) }
-      : undefined;
+    if (key || Object.keys(providerEnv).length > 0) {
+      return { type: 'api_key', ...(key && { key }), ...(Object.keys(providerEnv).length > 0 && { env: providerEnv }) };
+    }
   }
 
   if (selection.providerId === 'amazon-bedrock') return bedrockEnvironmentCredential(selection, env);

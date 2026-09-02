@@ -48,6 +48,7 @@ async function readSession(outputPath: string): Promise<{
       testScopes?: string[];
       testSurfaces?: string[];
       safeDemonstration?: boolean;
+      httpLoad?: { concurrency: number; requestsPerSecond: number; durationSeconds: number };
       exploit?: boolean;
     };
   };
@@ -61,6 +62,7 @@ async function readSession(outputPath: string): Promise<{
         testScopes?: string[];
         testSurfaces?: string[];
         safeDemonstration?: boolean;
+        httpLoad?: { concurrency: number; requestsPerSecond: number; durationSeconds: number };
         exploit?: boolean;
       };
     };
@@ -173,6 +175,41 @@ describe('persistOrValidateRunScope', () => {
     await expect(
       persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-second' }), ['xss'], true),
     ).resolves.toBeUndefined();
+  });
+
+  it('stores normalized HTTP load settings and rejects changed parameters on resume', async () => {
+    const outputPath = await makeTempRoot();
+    const loadInput = {
+      testScopes: ['http-load-capacity'] as const,
+      httpLoad: { concurrency: 5, requestsPerSecond: 10, durationSeconds: 15 },
+    };
+
+    await persistOrValidateRunScope(
+      inputFor(outputPath, { workflowId: 'workflow-load-first', ...loadInput }),
+      [],
+      true,
+    );
+    expect((await readSession(outputPath)).session.scope).toMatchObject({
+      vulnClasses: [],
+      testScopes: ['http-load-capacity'],
+      httpLoad: loadInput.httpLoad,
+    });
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-load-same', ...loadInput }), [], true),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-load-change',
+          ...loadInput,
+          httpLoad: { ...loadInput.httpLoad, durationSeconds: 30 },
+        }),
+        [],
+        true,
+      ),
+    ).rejects.toThrow(/Resume scope mismatch/);
   });
 
   it('validates and upgrades the pre-granular config hash projection', async () => {

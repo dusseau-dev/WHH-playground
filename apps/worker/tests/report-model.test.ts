@@ -6,7 +6,30 @@ import { type AddFindingInput, createFindingCollector } from '../src/collectors/
 import { attachQueueCodeLocations } from '../src/services/code-location-join.js';
 import { reconcileReportFindings } from '../src/services/report-reconciliation.js';
 import { type ReportData, renderReport } from '../src/services/report-renderer.js';
+import type { HttpLoadResult } from '../src/types/http-load.js';
 import { buildScopeCoverage } from '../src/types/scopes.js';
+
+const completedHttpLoadResult: HttpLoadResult = {
+  version: 1,
+  status: 'completed',
+  started_at: '2026-08-24T12:00:00.000Z',
+  completed_at: '2026-08-24T12:00:15.000Z',
+  target: 'https://target.test/load?token=%5BREDACTED%5D',
+  concurrency: 5,
+  requests_per_second: 10,
+  duration_seconds: 15,
+  elapsed_seconds: 15.125,
+  sent: 150,
+  completed: 149,
+  success: 145,
+  failure: 4,
+  errors: 1,
+  bytes_read: 12_345,
+  average_latency_ms: 42.125,
+  minimum_latency_ms: 12.5,
+  maximum_latency_ms: 240.75,
+  status_counts: { '200': 145, '503': 4 },
+};
 
 function finding(id: string, severity: AddFindingInput['severity'] = 'high'): AddFindingInput {
   return {
@@ -59,6 +82,15 @@ describe('finding collector', () => {
 });
 
 describe('triage reconciliation', () => {
+  it('does not require triage when no vulnerability lanes produced candidates', () => {
+    expect(reconcileReportFindings([], null, { triageRan: false, knownFindingIds: [] })).toEqual({
+      findings: [],
+      ruled_out: [],
+      triage_status: 'validated',
+      validation_issues: [],
+    });
+  });
+
   it('applies PASS and DOWNGRADE, and moves KILL/CHAIN_REQUIRED to ruled out', () => {
     const candidates = [
       finding('PASS-1', 'medium'),
@@ -224,5 +256,34 @@ describe('deterministic markdown report', () => {
     expect(rendered.indexOf('### HIGH\\-2')).toBeLessThan(rendered.indexOf('### INFO\\-1'));
     expect(renderReport(data)).toBe(rendered);
     expect(rendered.endsWith('\n')).toBe(true);
+  });
+
+  it('renders deterministic HTTP load observations without claiming proven capacity', () => {
+    const data: ReportData = {
+      report_meta: {
+        target: 'https://target.test',
+        assessment_date: '2026-08-24',
+        scope: 'HTTP load and capacity',
+        executive_summary: 'A bounded load observation was collected.',
+        safe_demonstration: false,
+        source_mode: 'url-only',
+        validation_state: 'validated',
+      },
+      findings: [],
+      ruled_out: [],
+      not_assessed: [],
+      scope_coverage: buildScopeCoverage(['http-load-capacity'], [], ['http-load-capacity']),
+      http_load_capacity: completedHttpLoadResult,
+      triage_status: 'validated',
+    };
+
+    const rendered = renderReport(data);
+    expect(rendered).toContain('## HTTP Load and Capacity');
+    expect(rendered).toContain('| Status | Completed |');
+    expect(rendered).toContain('| Configured request rate | 10 requests/second |');
+    expect(rendered).toContain('| HTTP status counts | 200: 145, 503: 4 |');
+    expect(rendered).toContain('observations from this bounded run');
+    expect(rendered).not.toContain('token');
+    expect(rendered).not.toMatch(/proved capacity|proven capacity|resilien(?:t|ce)/i);
   });
 });

@@ -86,6 +86,18 @@ describe('CLI pipeline normalization', () => {
     ).toThrow(/requires repoPath/);
   });
 
+  it('rejects duplicate HTTP load execution through both scope and legacy module', () => {
+    expect(() =>
+      normalizeCliPipelineInput({
+        webUrl: 'https://example.test',
+        testScopes: ['http-load-capacity'],
+        assessmentModules: ['http-load-capacity'],
+        moduleSafety: { targetEnvironment: 'staging', acknowledgeLoadRisk: true },
+        httpLoadAuthorizationConfirmed: true,
+      }),
+    ).toThrow(/both.*load|load.*both/i);
+  });
+
   it('normalizes canonical and legacy safe demonstration flags', () => {
     expect(normalizeCliPipelineInput({ webUrl: 'https://example.test', safeDemonstration: false })).toMatchObject({
       safeDemonstration: false,
@@ -110,6 +122,60 @@ describe('CLI pipeline normalization', () => {
       vulnClasses: ['xss', 'authz'],
     });
   });
+
+  it('normalizes assessment modules independently from vulnerability lanes', () => {
+    expect(
+      normalizeCliPipelineInput({
+        webUrl: 'https://example.test',
+        sourceMode: 'source-assisted',
+        repoPath: '/repos/app',
+        assessmentModules: ['passive-exposure', 'automated-dast', 'supply-chain'],
+        moduleSafety: {
+          targetEnvironment: 'staging',
+          allowActiveDast: true,
+          maxRequestsPerSecond: 3,
+        },
+      }),
+    ).toMatchObject({
+      assessmentModules: ['passive-exposure', 'automated-dast', 'supply-chain'],
+      moduleSafety: {
+        targetEnvironment: 'staging',
+        allowActiveDast: true,
+        maxRequestsPerSecond: 3,
+      },
+    });
+  });
+
+  it('normalizes and authorizes explicit HTTP load settings', () => {
+    expect(() =>
+      normalizeCliPipelineInput({
+        webUrl: 'https://example.test',
+        testScopes: ['http-load-capacity'],
+      }),
+    ).toThrow(/authorization/i);
+
+    expect(
+      normalizeCliPipelineInput({
+        webUrl: 'https://example.test',
+        testScopes: ['http-load-capacity'],
+        httpLoadAuthorizationConfirmed: true,
+      }),
+    ).toMatchObject({
+      testScopes: ['http-load-capacity'],
+      vulnClasses: [],
+      httpLoad: { concurrency: 5, requestsPerSecond: 10, durationSeconds: 15 },
+      httpLoadAuthorizationConfirmed: true,
+    });
+
+    expect(() =>
+      normalizeCliPipelineInput({
+        webUrl: 'https://example.test',
+        testScopes: ['http-load-capacity'],
+        httpLoad: { concurrency: 21, requestsPerSecond: 10, durationSeconds: 15 },
+        httpLoadAuthorizationConfirmed: true,
+      }),
+    ).toThrow(/elevated/i);
+  });
 });
 
 describe('execution plans', () => {
@@ -133,5 +199,9 @@ describe('execution plans', () => {
       'triage',
       'report',
     ]);
+  });
+
+  it('omits triage when an activity-backed scope derives no vulnerability lanes', () => {
+    expect(computeExpectedAgents('url-only', [], true)).toEqual(['recon', 'report']);
   });
 });

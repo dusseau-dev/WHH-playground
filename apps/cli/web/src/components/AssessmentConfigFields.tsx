@@ -1,4 +1,4 @@
-import { Eye, EyeOff, KeyRound, Minus, Plus, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ChevronDown, Eye, EyeOff, KeyRound, Minus, Plus, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { z } from "zod";
@@ -6,10 +6,20 @@ import { AssessmentScopeSelector } from "./AssessmentScopeSelector";
 import { FieldError, IconButton, InlineNotice } from "./Primitives";
 import {
   assessmentScopeDefinitions,
+  assessmentModuleDefinitions,
+  assessmentModuleIds,
   assessmentTestScopeIds,
   assessmentTestSurfaceIds,
   availableTestScopes,
   availableTestSurfaces,
+  defaultAssessmentModules,
+  HTTP_LOAD_DEFAULTS,
+  HTTP_LOAD_ELEVATED_THRESHOLDS,
+  HTTP_LOAD_EMERGENCY_LIMITS,
+  selectableTestScopes,
+  type AssessmentModule,
+  type ConfiguredModelDescription,
+  type ModelCatalogItem,
   severities,
   testSurfaceDefinitions,
   type AssessmentTestScope,
@@ -23,6 +33,7 @@ const isHttpUrl = (value: string) => {
 };
 const optionalUrl = z.string().trim().refine((value) => !value || isHttpUrl(value), "Enter an HTTP(S) URL");
 const modelSources = ["environment", "openrouter", "anthropic", "openai", "xai", "custom"] as const;
+const visibleAssessmentModuleDefinitions = assessmentModuleDefinitions;
 
 export const assessmentFormSchema = z
   .object({
@@ -38,6 +49,19 @@ export const assessmentFormSchema = z
     customOpenAIFormat: z.enum(["chat-completions", "responses"]),
     testScopes: z.record(z.enum(assessmentTestScopeIds), z.boolean()),
     testSurfaces: z.record(z.enum(assessmentTestSurfaceIds), z.boolean()),
+    assessmentModules: z.record(z.enum(assessmentModuleIds), z.boolean()),
+    targetEnvironment: z.enum(["production", "staging"]),
+    allowActiveDast: z.boolean(),
+    acknowledgeLoadRisk: z.boolean(),
+    moduleMaxRequestsPerSecond: z.number().int().min(1).max(10),
+    moduleMaxConcurrency: z.number().int().min(1).max(25),
+    loadStageDurationSeconds: z.number().int().min(10).max(600),
+    loadErrorRateThreshold: z.number().min(0.001).max(0.5),
+    loadP95LatencyMsThreshold: z.number().int().min(100).max(60000),
+    httpLoadConcurrency: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.concurrency),
+    httpLoadRequestsPerSecond: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.requestsPerSecond),
+    httpLoadDurationSeconds: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.durationSeconds),
+    elevatedLoadConfirmed: z.boolean(),
     safeDemonstration: z.boolean(),
     concurrency: z.number().int().min(1).max(5),
     authenticationEnabled: z.boolean(),
@@ -81,11 +105,49 @@ export const assessmentFormSchema = z
         context.addIssue({ code: "custom", path: ["customBaseUrl"], message: "Base URL is required" });
       }
     }
-    if (!availableTestScopes.some((scope) => value.testScopes[scope])) {
+    if (!selectableTestScopes.some((scope) => value.testScopes[scope])) {
       context.addIssue({ code: "custom", path: ["testScopes"], message: "Select at least one available check" });
     }
     if (!availableTestSurfaces.some((surface) => value.testSurfaces[surface])) {
       context.addIssue({ code: "custom", path: ["testSurfaces"], message: "Select at least one available surface" });
+    }
+    if (value.assessmentModules["supply-chain"] && value.sourceMode !== "source-assisted") {
+      context.addIssue({ code: "custom", path: ["assessmentModules"], message: "Supply-chain review requires source-assisted mode" });
+    }
+    if (value.allowActiveDast && value.targetEnvironment !== "staging") {
+      context.addIssue({ code: "custom", path: ["allowActiveDast"], message: "Active DAST is staging-only" });
+    }
+    if (value.assessmentModules["http-load-capacity"]) {
+      if (value.testScopes["http-load-capacity"]) {
+        context.addIssue({
+          code: "custom",
+          path: ["assessmentModules"],
+          message: "Choose either the HTTP load scope or the controlled-load module, not both",
+        });
+      }
+      if (value.targetEnvironment !== "staging") {
+        context.addIssue({ code: "custom", path: ["targetEnvironment"], message: "Controlled load testing is staging-only" });
+      }
+      if (!value.acknowledgeLoadRisk) {
+        context.addIssue({
+          code: "custom",
+          path: ["acknowledgeLoadRisk"],
+          message: "Acknowledge the staging load-test risk before continuing",
+        });
+      }
+    }
+    if (
+      value.testScopes["http-load-capacity"] &&
+      (value.httpLoadConcurrency > HTTP_LOAD_ELEVATED_THRESHOLDS.concurrency ||
+        value.httpLoadRequestsPerSecond > HTTP_LOAD_ELEVATED_THRESHOLDS.requestsPerSecond ||
+        value.httpLoadDurationSeconds > HTTP_LOAD_ELEVATED_THRESHOLDS.durationSeconds) &&
+      !value.elevatedLoadConfirmed
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["elevatedLoadConfirmed"],
+        message: "Confirm the elevated load envelope before continuing",
+      });
     }
     if (value.authenticationEnabled) {
       if (!value.loginUrl) context.addIssue({ code: "custom", path: ["loginUrl"], message: "Login URL is required" });
@@ -125,6 +187,22 @@ export const assessmentDefaults: AssessmentFormValues = {
     testSurfaceDefinitions.map(({ id }) => id),
     availableTestSurfaces,
   ),
+  assessmentModules: selectionRecord(
+    assessmentModuleDefinitions.map(({ id }) => id),
+    defaultAssessmentModules,
+  ),
+  targetEnvironment: "production",
+  allowActiveDast: false,
+  acknowledgeLoadRisk: false,
+  moduleMaxRequestsPerSecond: 2,
+  moduleMaxConcurrency: 2,
+  loadStageDurationSeconds: 60,
+  loadErrorRateThreshold: 0.05,
+  loadP95LatencyMsThreshold: 2000,
+  httpLoadConcurrency: HTTP_LOAD_DEFAULTS.concurrency,
+  httpLoadRequestsPerSecond: HTTP_LOAD_DEFAULTS.requestsPerSecond,
+  httpLoadDurationSeconds: HTTP_LOAD_DEFAULTS.durationSeconds,
+  elevatedLoadConfirmed: false,
   safeDemonstration: true,
   concurrency: 3,
   authenticationEnabled: false,
@@ -157,6 +235,10 @@ interface Props {
   showSaveProfile?: boolean;
   showAuthorization?: boolean;
   showModelConfig?: boolean;
+  modelConfiguration?: ConfiguredModelDescription | undefined;
+  modelOptions?: readonly ModelCatalogItem[] | undefined;
+  modelCatalogLoading?: boolean;
+  modelCatalogUnavailable?: boolean;
   passwordState?: SecretState | undefined;
   totpState?: SecretState | undefined;
 }
@@ -167,6 +249,10 @@ export function AssessmentConfigFields({
   showSaveProfile = false,
   showAuthorization = false,
   showModelConfig = false,
+  modelConfiguration,
+  modelOptions = [],
+  modelCatalogLoading = false,
+  modelCatalogUnavailable = false,
   passwordState,
   totpState,
 }: Props) {
@@ -181,13 +267,28 @@ export function AssessmentConfigFields({
   const concurrency = watch("concurrency");
   const scopeValues = watch("testScopes");
   const surfaceValues = watch("testSurfaces");
+  const moduleValues = watch("assessmentModules");
+  const targetEnvironment = watch("targetEnvironment");
+  const activeDast = watch("allowActiveDast");
+  const httpLoadConcurrency = watch("httpLoadConcurrency");
+  const httpLoadRequestsPerSecond = watch("httpLoadRequestsPerSecond");
+  const httpLoadDurationSeconds = watch("httpLoadDurationSeconds");
   const selectedScopes: AssessmentTestScope[] = [];
   for (const { id } of assessmentScopeDefinitions) {
     if (scopeValues[id]) selectedScopes.push(id);
   }
+  const httpLoadSelected = selectedScopes.includes("http-load-capacity");
+  const elevatedHttpLoad =
+    httpLoadConcurrency > HTTP_LOAD_ELEVATED_THRESHOLDS.concurrency ||
+    httpLoadRequestsPerSecond > HTTP_LOAD_ELEVATED_THRESHOLDS.requestsPerSecond ||
+    httpLoadDurationSeconds > HTTP_LOAD_ELEVATED_THRESHOLDS.durationSeconds;
   const selectedSurfaces: AssessmentTestSurface[] = [];
   for (const { id } of testSurfaceDefinitions) {
     if (surfaceValues[id]) selectedSurfaces.push(id);
+  }
+  const selectedModules: AssessmentModule[] = [];
+  for (const { id } of assessmentModuleDefinitions) {
+    if (moduleValues[id]) selectedModules.push(id);
   }
   const indexOffset = showProfileName ? 1 : 0;
   const sectionIndex = (index: number) => String(index + indexOffset).padStart(2, "0");
@@ -276,7 +377,9 @@ export function AssessmentConfigFields({
             <label className="field">
               <span className="field-label">Model source</span>
               <select {...register("modelSource")}>
-                <option value="environment">Environment default</option>
+                <option value="environment">
+                  {modelConfiguration ? `${modelConfiguration.providerLabel} (configured)` : "Environment default"}
+                </option>
                 <option value="openrouter">OpenRouter</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="openai">OpenAI</option>
@@ -285,7 +388,43 @@ export function AssessmentConfigFields({
               </select>
             </label>
             {modelSource === "environment" ? (
-              <InlineNotice tone="neutral">Uses the provider and model configured for this Shannon runner.</InlineNotice>
+              <>
+                <label className="field">
+                  <span className="field-label">Model</span>
+                  <span className="model-combobox">
+                    <input
+                      list={modelOptions.length > 0 ? "configured-model-options" : undefined}
+                      placeholder={
+                        modelCatalogLoading ? "Loading model catalog..." : (modelConfiguration?.modelId ?? "Runner default")
+                      }
+                      autoComplete="off"
+                      {...register("modelId")}
+                    />
+                    {modelOptions.length > 0 ? <ChevronDown size={18} aria-hidden="true" /> : null}
+                  </span>
+                  {modelOptions.length > 0 ? (
+                    <datalist id="configured-model-options">
+                      {modelOptions.map((model) => (
+                        <option value={model.id} key={model.id}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </datalist>
+                  ) : null}
+                </label>
+                <div className="field--wide">
+                  <InlineNotice
+                    tone={modelConfiguration?.credentialConfigured ? "success" : "warning"}
+                    icon={<KeyRound size={17} aria-hidden="true" />}
+                  >
+                    {!modelConfiguration?.credentialConfigured
+                      ? `${modelConfiguration?.providerLabel ?? "Provider"} credential is not configured on this runner.`
+                      : modelCatalogUnavailable
+                        ? `${modelConfiguration.providerLabel} credential is configured; its model catalog is unavailable.`
+                        : `${modelConfiguration.providerLabel} credential is configured on this runner.`}
+                  </InlineNotice>
+                </div>
+              </>
             ) : (
               <>
                 <label className="field">
@@ -388,6 +527,157 @@ export function AssessmentConfigFields({
           scopeError={formState.errors.testScopes?.root?.message}
           surfaceError={formState.errors.testSurfaces?.root?.message}
         />
+        {httpLoadSelected ? (
+          <fieldset className="http-load-panel field--wide">
+            <legend>HTTP load and capacity</legend>
+            <div className="http-load-heading">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <span>Authorized single-host GET traffic</span>
+            </div>
+            <div className="http-load-fields">
+              <label className="field">
+                <span className="field-label">Concurrent connections</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={HTTP_LOAD_EMERGENCY_LIMITS.concurrency}
+                  {...register("httpLoadConcurrency", { valueAsNumber: true })}
+                  aria-invalid={Boolean(formState.errors.httpLoadConcurrency)}
+                />
+                <FieldError message={formState.errors.httpLoadConcurrency?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Requests per second</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={HTTP_LOAD_EMERGENCY_LIMITS.requestsPerSecond}
+                  {...register("httpLoadRequestsPerSecond", { valueAsNumber: true })}
+                  aria-invalid={Boolean(formState.errors.httpLoadRequestsPerSecond)}
+                />
+                <FieldError message={formState.errors.httpLoadRequestsPerSecond?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Duration (seconds)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={HTTP_LOAD_EMERGENCY_LIMITS.durationSeconds}
+                  {...register("httpLoadDurationSeconds", { valueAsNumber: true })}
+                  aria-invalid={Boolean(formState.errors.httpLoadDurationSeconds)}
+                />
+                <FieldError message={formState.errors.httpLoadDurationSeconds?.message} />
+              </label>
+            </div>
+            <p className="http-load-envelope">
+              One worker host, direct connections, no source spoofing, and no redirect following.
+            </p>
+            {elevatedHttpLoad ? (
+              <label className="switch-row switch-row--standalone http-load-confirmation">
+                <span>
+                  <strong>Allow elevated load</strong>
+                  <small>These values can disrupt or exhaust the authorized target.</small>
+                </span>
+                <span className="switch">
+                  <input type="checkbox" role="switch" {...register("elevatedLoadConfirmed")} />
+                  <span aria-hidden="true" />
+                </span>
+                <FieldError message={formState.errors.elevatedLoadConfirmed?.message} />
+              </label>
+            ) : null}
+          </fieldset>
+        ) : null}
+        <fieldset className="module-selector">
+          <legend className="field-label">Assessment methods</legend>
+          <p className="field-hint">Methods run independently and report their own evidence-backed status.</p>
+          <div className="module-grid">
+            {visibleAssessmentModuleDefinitions.map((module) => {
+              const sourceUnavailable = !module.sourceModes.some((sourceMode) => sourceMode === mode);
+              return (
+                <label className={`module-option${moduleValues[module.id] ? " module-option--selected" : ""}`} key={module.id}>
+                  <input
+                    type="checkbox"
+                    disabled={sourceUnavailable}
+                    {...register(`assessmentModules.${module.id}`)}
+                  />
+                  <span>
+                    <strong>{module.title}</strong>
+                    <small>{module.description}</small>
+                    <em>{module.tools.join(" · ")}{module.stagingOnly ? " · staging only" : ""}</em>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <FieldError message={formState.errors.assessmentModules?.root?.message} />
+        </fieldset>
+        <div className="module-safety-panel">
+          <label className="field">
+            <span className="field-label">Target environment</span>
+            <select {...register("targetEnvironment")}>
+              <option value="production">Production</option>
+              <option value="staging">Staging clone</option>
+            </select>
+            <FieldError message={formState.errors.targetEnvironment?.message} />
+          </label>
+          <label className="field">
+            <span className="field-label">Module request limit</span>
+            <input type="number" min={1} max={10} {...register("moduleMaxRequestsPerSecond", { valueAsNumber: true })} />
+            <small className="field-hint">Requests per second; hard-capped at 10</small>
+          </label>
+          <label className="field">
+            <span className="field-label">Module concurrency</span>
+            <input type="number" min={1} max={25} {...register("moduleMaxConcurrency", { valueAsNumber: true })} />
+          </label>
+          {selectedModules.includes("automated-dast") ? (
+            <label className="switch-row switch-row--standalone field--wide">
+              <span>
+                <strong>Bounded active DAST</strong>
+                <small>Runs after passive ZAP; available only for staging targets</small>
+              </span>
+              <span className="switch">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  disabled={targetEnvironment !== "staging"}
+                  {...register("allowActiveDast")}
+                />
+                <span aria-hidden="true" />
+              </span>
+              <FieldError message={formState.errors.allowActiveDast?.message} />
+            </label>
+          ) : null}
+          {selectedModules.includes("http-load-capacity") ? (
+            <>
+              <label className="field">
+                <span className="field-label">Seconds per load stage</span>
+                <input type="number" min={10} max={600} {...register("loadStageDurationSeconds", { valueAsNumber: true })} />
+              </label>
+              <label className="field">
+                <span className="field-label">Abort error rate</span>
+                <input type="number" min={0.001} max={0.5} step={0.001} {...register("loadErrorRateThreshold", { valueAsNumber: true })} />
+              </label>
+              <label className="field">
+                <span className="field-label">Abort p95 latency (ms)</span>
+                <input type="number" min={100} max={60000} {...register("loadP95LatencyMsThreshold", { valueAsNumber: true })} />
+              </label>
+              <label className="switch-row switch-row--standalone field--wide">
+                <span>
+                  <strong>I acknowledge this staging load test</strong>
+                  <small>Ramp: 1 → 5 → 10 → 25 virtual users, capped by the authorized concurrency, with automatic abort thresholds</small>
+                </span>
+                <span className="switch">
+                  <input type="checkbox" role="switch" {...register("acknowledgeLoadRisk")} />
+                  <span aria-hidden="true" />
+                </span>
+                <FieldError message={formState.errors.acknowledgeLoadRisk?.message} />
+              </label>
+            </>
+          ) : null}
+          {activeDast && targetEnvironment === "staging" ? (
+            <InlineNotice tone="warning">Active scanning is rate-limited and constrained to the authorized staging host.</InlineNotice>
+          ) : null}
+        </div>
         <div className="control-row">
           <label className="switch-row">
             <span>

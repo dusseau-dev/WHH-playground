@@ -38,18 +38,85 @@ function safeDemonstrationAliases(raw: Record<string, unknown>): {
   };
 }
 
+function moduleSafetyAliases(raw: unknown): Record<string, unknown> | undefined {
+  const safety = object(raw);
+  if (!safety) return;
+  return {
+    ...(typeof safety.targetEnvironment === 'string' && { targetEnvironment: safety.targetEnvironment }),
+    ...(typeof safety.target_environment === 'string' && { targetEnvironment: safety.target_environment }),
+    ...(booleanFlag(safety.allowActiveDast) !== undefined && { allowActiveDast: booleanFlag(safety.allowActiveDast) }),
+    ...(booleanFlag(safety.allow_active_dast) !== undefined && {
+      allowActiveDast: booleanFlag(safety.allow_active_dast),
+    }),
+    ...(booleanFlag(safety.acknowledgeLoadRisk) !== undefined && {
+      acknowledgeLoadRisk: booleanFlag(safety.acknowledgeLoadRisk),
+    }),
+    ...(booleanFlag(safety.acknowledge_load_risk) !== undefined && {
+      acknowledgeLoadRisk: booleanFlag(safety.acknowledge_load_risk),
+    }),
+    ...(safety.maxRequestsPerSecond !== undefined && { maxRequestsPerSecond: Number(safety.maxRequestsPerSecond) }),
+    ...(safety.max_requests_per_second !== undefined && {
+      maxRequestsPerSecond: Number(safety.max_requests_per_second),
+    }),
+    ...(safety.maxConcurrency !== undefined && { maxConcurrency: Number(safety.maxConcurrency) }),
+    ...(safety.max_concurrency !== undefined && { maxConcurrency: Number(safety.max_concurrency) }),
+    ...(safety.loadStageDurationSeconds !== undefined && {
+      loadStageDurationSeconds: Number(safety.loadStageDurationSeconds),
+    }),
+    ...(safety.load_stage_duration_seconds !== undefined && {
+      loadStageDurationSeconds: Number(safety.load_stage_duration_seconds),
+    }),
+    ...(safety.loadErrorRateThreshold !== undefined && {
+      loadErrorRateThreshold: Number(safety.loadErrorRateThreshold),
+    }),
+    ...(safety.load_error_rate_threshold !== undefined && {
+      loadErrorRateThreshold: Number(safety.load_error_rate_threshold),
+    }),
+    ...(safety.loadP95LatencyMsThreshold !== undefined && {
+      loadP95LatencyMsThreshold: Number(safety.loadP95LatencyMsThreshold),
+    }),
+    ...(safety.load_p95_latency_ms_threshold !== undefined && {
+      loadP95LatencyMsThreshold: Number(safety.load_p95_latency_ms_threshold),
+    }),
+  };
+}
+
+function httpLoadAliases(raw: unknown): Record<string, unknown> | undefined {
+  const settings = object(raw);
+  if (!settings) return;
+  return {
+    ...(settings.concurrency !== undefined && { concurrency: Number(settings.concurrency) }),
+    ...(settings.requestsPerSecond !== undefined && { requestsPerSecond: Number(settings.requestsPerSecond) }),
+    ...(settings.requests_per_second !== undefined && {
+      requestsPerSecond: Number(settings.requests_per_second),
+    }),
+    ...(settings.durationSeconds !== undefined && { durationSeconds: Number(settings.durationSeconds) }),
+    ...(settings.duration_seconds !== undefined && { durationSeconds: Number(settings.duration_seconds) }),
+  };
+}
+
 /** Normalize current UI config objects and legacy snake_case worker YAML into one contract. */
 export function normalizeAssessmentConfigObject(config: Record<string, unknown>): AssessmentConfig {
   if (
     'testCategories' in config ||
     'testScopes' in config ||
     'testSurfaces' in config ||
+    'httpLoad' in config ||
+    'assessmentModules' in config ||
+    'moduleSafety' in config ||
     'safeDemonstration' in config ||
     'demonstrate' in config ||
     'rulesOfEngagement' in config
   ) {
     const { safeDemonstration: _safeDemonstration, demonstrate: _demonstrate, exploit: _exploit, ...rest } = config;
-    return AssessmentConfigSchema.parse({ ...rest, ...safeDemonstrationAliases(config) });
+    const httpLoad = httpLoadAliases(config.httpLoad);
+    const moduleSafety = moduleSafetyAliases(config.moduleSafety);
+    return AssessmentConfigSchema.parse({
+      ...rest,
+      ...safeDemonstrationAliases(config),
+      ...(httpLoad && { httpLoad }),
+      ...(moduleSafety && { moduleSafety }),
+    });
   }
 
   const authentication = object(config.authentication);
@@ -58,6 +125,8 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
   const successCondition = object(authentication?.success_condition);
   const pipeline = object(config.pipeline);
   const report = object(config.report);
+  const httpLoad = httpLoadAliases(config.http_load);
+  const moduleSafety = moduleSafetyAliases(config.module_safety);
 
   return AssessmentConfigSchema.parse({
     ...(typeof config.description === 'string' && { description: config.description }),
@@ -66,6 +135,9 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
       !Array.isArray(config.test_categories) && { testCategories: config.vuln_classes }),
     ...(Array.isArray(config.test_scopes) && { testScopes: config.test_scopes }),
     ...(Array.isArray(config.test_surfaces) && { testSurfaces: config.test_surfaces }),
+    ...(httpLoad && { httpLoad }),
+    ...(Array.isArray(config.assessment_modules) && { assessmentModules: config.assessment_modules }),
+    ...(moduleSafety && { moduleSafety }),
     ...safeDemonstrationAliases(config),
     ...(pipeline && {
       pipeline: {

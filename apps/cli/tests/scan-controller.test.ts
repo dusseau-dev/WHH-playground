@@ -39,6 +39,13 @@ describe('managed run launch', () => {
         testCategories: ['injection', 'authz'],
         testScopes: ['csrf', 'xxe'],
         testSurfaces: ['api-graphql'],
+        assessmentModules: ['passive-exposure', 'automated-dast'],
+        moduleSafety: {
+          targetEnvironment: 'staging',
+          allowActiveDast: true,
+          maxRequestsPerSecond: 3,
+          maxConcurrency: 2,
+        },
         safeDemonstration: false,
         pipeline: { maxConcurrentPipelines: 2 },
         report: { sarif: true },
@@ -65,6 +72,8 @@ describe('managed run launch', () => {
         testCategories: ['injection', 'authz'],
         testScopes: ['csrf', 'xxe'],
         testSurfaces: ['api-graphql'],
+        assessmentModules: ['passive-exposure', 'automated-dast'],
+        moduleSafety: expect.objectContaining({ targetEnvironment: 'staging', allowActiveDast: true }),
       },
     });
     expect(run.snapshotHash).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -85,6 +94,8 @@ describe('managed run launch', () => {
       vulnClasses: ['injection', 'authz'],
       testScopes: ['csrf', 'xxe'],
       testSurfaces: ['api-graphql'],
+      assessmentModules: ['passive-exposure', 'automated-dast'],
+      moduleSafety: expect.objectContaining({ targetEnvironment: 'staging', allowActiveDast: true }),
       safeDemonstration: false,
       pipelineConfig: { max_concurrent_pipelines: 2 },
     });
@@ -155,6 +166,50 @@ describe('managed run launch', () => {
     const persisted = await fs.readFile(path.join(workspacesDir, 'provider-run', '.shannon', 'run.json'), 'utf8');
     expect(persisted).toContain('~anthropic/claude-sonnet-latest');
     expect(persisted).not.toContain(providerApiKey);
+  });
+
+  it('reuses the configured provider credential when a run changes only the model', async () => {
+    const environmentNames = [
+      'SHANNON_AI_MODEL',
+      'SHANNON_AI_BASE_URL',
+      'SHANNON_AI_OPENAI_FORMAT',
+      'SHANNON_AI_API_KEY',
+    ] as const;
+    const previous = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
+    process.env.SHANNON_AI_MODEL = 'openai:anthropic/claude-sonnet-4.6';
+    process.env.SHANNON_AI_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.SHANNON_AI_OPENAI_FORMAT = 'chat-completions';
+    process.env.SHANNON_AI_API_KEY = 'environment-openrouter-secret';
+
+    try {
+      const workspacesDir = await temporaryDirectory();
+      const { controller, runtime, temporal } = testController(workspacesDir);
+      const providerConfig = {
+        providerType: 'openai',
+        model: 'anthropic/claude-opus-4.6',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        openAIFormat: 'chat-completions' as const,
+      };
+
+      const run = await controller.startRun({
+        targetUrl: 'https://target.test',
+        sourceMode: 'url-only',
+        workspace: 'configured-provider-run',
+        config: {},
+        providerConfig,
+      });
+
+      expect(run.snapshot.providerConfig).toEqual(providerConfig);
+      expect(temporal.starts[0]?.input.providerConfig).toEqual(providerConfig);
+      expect(runtime.launches[0]?.envFlags).toContain('SHANNON_AI_API_KEY');
+      expect(JSON.stringify(temporal.starts)).not.toContain('environment-openrouter-secret');
+    } finally {
+      for (const name of environmentNames) {
+        const value = previous[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it('does not persist run-scoped AWS provider credentials', async () => {

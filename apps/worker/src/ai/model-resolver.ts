@@ -301,11 +301,15 @@ export function resolveModelSelection(options: ResolveModelSelectionOptions = {}
     const modelId = configuredModel(options.providerConfig, providerId, tier, env);
     const baseUrl = options.providerConfig.baseUrl?.trim() || undefined;
     const openAIFormat = resolveOpenAIFormat(providerId, baseUrl, options.providerConfig.openAIFormat?.trim());
+    const configuredCredential = providerConfigCredential(options.providerConfig, providerId);
+    const credential = configuredCredential.configured
+      ? configuredCredential
+      : environmentCredential(providerId, env, baseUrl);
     return {
       providerId,
       modelId,
       source: 'provider-config',
-      credential: providerConfigCredential(options.providerConfig, providerId),
+      credential,
       ...(baseUrl && { baseUrl }),
       ...(openAIFormat && { openAIFormat }),
       environmentNames: [],
