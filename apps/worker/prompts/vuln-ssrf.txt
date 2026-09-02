@@ -29,6 +29,8 @@ Success criterion: A complete source-to-sink trace for every identified SSRF vul
 
 @include(shared/_rules-of-engagement.txt)
 
+@include(shared/_nextjs-api-review.txt)
+
 <critical>
 **Your Professional Standard**
 - **Severity Context:** An SSRF flaw is a breach of network segmentation and trust boundaries. It allows attackers to leverage the application server as a proxy to access internal services, cloud metadata endpoints, or perform reconnaissance of internal networks. These vulnerabilities can lead to data exposure, privilege escalation, and complete network compromise.

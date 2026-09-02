@@ -48,6 +48,31 @@ describe('provider-compatible model resolution', () => {
     expect(selection.environmentNames).toEqual([]);
   });
 
+  it('uses the configured environment credential for a keyless model override', () => {
+    const selection = resolveModelSelection({
+      providerConfig: {
+        providerType: 'openai',
+        model: 'anthropic/claude-opus-4.6',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        openAIFormat: 'chat-completions',
+      },
+      env: {
+        SHANNON_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
+        SHANNON_AI_BASE_URL: 'https://openrouter.ai/api/v1',
+        SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
+        SHANNON_AI_API_KEY: 'environment-openrouter-secret',
+      },
+    });
+
+    expect(selection).toMatchObject({
+      providerId: 'openai',
+      modelId: 'anthropic/claude-opus-4.6',
+      source: 'provider-config',
+      credential: { configured: true, source: 'environment', name: 'SHANNON_AI_API_KEY' },
+    });
+    expect(JSON.stringify(selection)).not.toContain('environment-openrouter-secret');
+  });
+
   it('uses SHANNON_AI_MODEL before tier variables and warns once about the mixed configuration', () => {
     const warn = vi.fn();
     const env = {

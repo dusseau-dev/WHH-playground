@@ -10,6 +10,8 @@ export type CliSelectionSource = 'shannon-ai-model' | 'legacy';
 export interface CliModelSelection extends ModelSpec {
   readonly providerMode: CliProviderMode;
   readonly source: CliSelectionSource;
+  readonly baseUrl?: string;
+  readonly openAIFormat?: 'chat-completions' | 'responses';
   readonly credentialName?: string;
   readonly credentialConfigured: boolean;
   readonly environmentNames: readonly string[];
@@ -180,11 +182,16 @@ export function resolveCliModelSelection(env: NodeJS.ProcessEnv = process.env): 
     const baseUrl =
       envValue(env, 'SHANNON_AI_BASE_URL') ??
       (spec.providerId === 'anthropic' ? envValue(env, 'ANTHROPIC_BASE_URL') : undefined);
+    const configuredFormat = envValue(env, 'SHANNON_AI_OPENAI_FORMAT');
+    const openAIFormat =
+      configuredFormat === 'chat-completions' || configuredFormat === 'responses' ? configuredFormat : undefined;
     const credential = selectedCliProviderCredential(env, spec.providerId, baseUrl);
     return {
       ...spec,
       providerMode: providerMode(spec.providerId),
       source: 'shannon-ai-model',
+      ...(baseUrl && { baseUrl }),
+      ...(openAIFormat && { openAIFormat }),
       ...(credential && { credentialName: credential.name }),
       credentialConfigured: credential !== undefined,
       environmentNames: newEnvironmentNames(env, spec.providerId, credential),
@@ -200,6 +207,7 @@ export function resolveCliModelSelection(env: NodeJS.ProcessEnv = process.env): 
     modelId: envValue(env, 'ANTHROPIC_MEDIUM_MODEL') ?? parseModelSpec(DEFAULT_MODEL_SPEC).modelId,
     providerMode: providerMode(providerId),
     source: 'legacy',
+    ...(baseUrl && { baseUrl }),
     ...(credential && { credentialName: credential.name }),
     credentialConfigured: credential !== undefined,
     environmentNames: legacyEnvironmentNames(env, providerId, baseUrl, credential),

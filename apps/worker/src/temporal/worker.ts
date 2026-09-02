@@ -24,6 +24,7 @@ import { deliverablesDir } from '../paths.js';
 import { REPORT_PDF_FILENAME, REPORT_SARIF_FILENAME } from '../services/report-output.js';
 import { PUBLIC_REPORT_MARKDOWN_FILENAME } from '../services/structured-report.js';
 import { DELIVERABLE_FILENAMES, DeliverableType } from '../types/deliverables.js';
+import { ASSESSMENT_MODULE_REGISTRY } from '../types/scopes.js';
 import * as activities from './activities.js';
 import type { PipelineInput, PipelineProgress, PipelineState } from './shared.js';
 
@@ -147,6 +148,18 @@ export function copyDeliverables(workingDirectory: string, outputPath: string): 
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
     if (!entry.isFile() || !PUBLIC_DELIVERABLE_FILENAMES.has(entry.name)) continue;
     fs.copyFileSync(path.join(source, entry.name), path.join(outputPath, entry.name));
+  }
+
+  // Module summaries are intentionally redacted and are referenced by the public
+  // report. Raw scanner assets remain private inside the assessment workspace.
+  const moduleSource = path.join(source, 'modules');
+  if (!fs.existsSync(moduleSource)) return;
+  const moduleOutput = path.join(outputPath, 'modules');
+  const publicModuleFiles = new Set(['manifest.json', ...ASSESSMENT_MODULE_REGISTRY.map(({ id }) => `${id}.json`)]);
+  for (const entry of fs.readdirSync(moduleSource, { withFileTypes: true })) {
+    if (!entry.isFile() || !publicModuleFiles.has(entry.name)) continue;
+    fs.mkdirSync(moduleOutput, { recursive: true });
+    fs.copyFileSync(path.join(moduleSource, entry.name), path.join(moduleOutput, entry.name));
   }
 }
 

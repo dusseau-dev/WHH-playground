@@ -95,6 +95,8 @@ Options for 'start':
   -w, --workspace <name>    Named workspace
       --pipeline-testing    Use minimal prompts for fast testing
       --debug               Preserve worker container after exit for log inspection
+      --i-own-this-target   Confirm authorization for HTTP load testing
+      --allow-elevated-load Confirm potentially disruptive elevated load settings
 
 Examples:
   ${prefix} start -u https://example.com
@@ -121,6 +123,8 @@ interface ParsedStartArgs {
   output?: string;
   pipelineTesting: boolean;
   debug: boolean;
+  iOwnThisTarget: boolean;
+  allowElevatedLoad: boolean;
 }
 
 function parseStartArgs(argv: string[]): ParsedStartArgs {
@@ -131,6 +135,8 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
   let output: string | undefined;
   let pipelineTesting = false;
   let debug = false;
+  let iOwnThisTarget = false;
+  let allowElevatedLoad = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -178,6 +184,12 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
       case '--debug':
         debug = true;
         break;
+      case '--i-own-this-target':
+        iOwnThisTarget = true;
+        break;
+      case '--allow-elevated-load':
+        allowElevatedLoad = true;
+        break;
       default:
         console.error(`Unknown option: ${arg}`);
         console.error(`Run "${getMode() === 'local' ? './shannon' : 'npx @keygraph/shannon'} help" for usage`);
@@ -195,6 +207,8 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
     url,
     pipelineTesting,
     debug,
+    iOwnThisTarget,
+    allowElevatedLoad,
     ...(repo && { repo }),
     ...(config && { config }),
     ...(workspace && { workspace }),

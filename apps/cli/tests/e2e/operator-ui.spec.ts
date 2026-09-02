@@ -75,6 +75,7 @@ interface MockDetail {
     error: string | null;
     elapsedMs: number;
     triageRan: boolean;
+    httpLoadStatus?: 'completed' | 'interrupted' | 'incomplete' | null;
     summary: { totalCostUsd: number; totalDurationMs: number };
   } | null;
   metrics: { total_duration_ms: number; total_cost_usd: number } | null;
@@ -231,6 +232,42 @@ class MockApi {
           version: 'test',
           platform: 'darwin',
           secretStore: { persistence: 'memory', available: false },
+          model: {
+            providerId: 'openrouter',
+            providerLabel: 'OpenRouter',
+            modelId: 'anthropic/claude-sonnet-4.6',
+            credentialConfigured: true,
+            catalogAvailable: true,
+            providerConfig: {
+              providerType: 'openai',
+              baseUrl: 'https://openrouter.ai/api/v1',
+              openAIFormat: 'chat-completions',
+            },
+          },
+        },
+      });
+      return;
+    }
+    if (path === '/models' && method === 'GET') {
+      await this.json(route, {
+        data: {
+          provider: {
+            providerId: 'openrouter',
+            providerLabel: 'OpenRouter',
+            modelId: 'anthropic/claude-sonnet-4.6',
+            credentialConfigured: true,
+            catalogAvailable: true,
+            providerConfig: {
+              providerType: 'openai',
+              baseUrl: 'https://openrouter.ai/api/v1',
+              openAIFormat: 'chat-completions',
+            },
+          },
+          items: [
+            { id: 'anthropic/claude-opus-4.6', name: 'Claude Opus 4.6', contextLength: 1_000_000 },
+            { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6', contextLength: 1_000_000 },
+            { id: 'openai/gpt-5.2', name: 'GPT 5.2', contextLength: 400_000 },
+          ],
         },
       });
       return;
@@ -247,6 +284,12 @@ class MockApi {
         this.lastStartBody.sourceMode as MockRun['snapshot']['sourceMode'],
       );
       record.snapshot.targetUrl = String(this.lastStartBody.targetUrl);
+      if (this.lastStartBody.config) {
+        record.snapshot.config = {
+          ...record.snapshot.config,
+          ...(this.lastStartBody.config as MockRun['snapshot']['config']),
+        };
+      }
       const value = detail(record);
       this.runs.set(record.runId, value);
       await this.json(route, { data: record }, 202);
@@ -401,7 +444,7 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByRole('button', { name: 'Expand A05:2025 Injection' }).click();
   await expect(page.getByLabel('Command injection')).not.toBeChecked();
   await expect(page.getByLabel('API / GraphQL')).not.toBeChecked();
-  await page.getByRole('button', { name: 'Select all available checks' }).click();
+  await page.getByRole('button', { name: 'Select all standard checks' }).click();
   await page.getByText('Command injection', { exact: true }).click();
   const injectionParent = page.getByRole('checkbox', { name: 'A05:2025 Injection', exact: true });
   await expect(injectionParent).not.toBeChecked();
@@ -413,6 +456,8 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   });
   await page.locator('label.owasp-parent-check').filter({ has: accessControlParent }).click();
   await expect(accessControlParent).toBeChecked();
+  await page.getByRole('button', { name: 'Expand A06:2025 Insecure Design' }).click();
+  await expect(page.getByLabel('HTTP load and capacity')).toBeEnabled();
   await page.getByRole('button', { name: 'Expand A03:2025 Software Supply Chain Failures' }).click();
   await expect(
     page.getByRole('checkbox', { name: 'A03:2025 Software Supply Chain Failures', exact: true }),
@@ -427,9 +472,11 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   await page.getByText('URL only', { exact: true }).click();
   await expect(page.getByLabel('URL only')).toBeChecked();
   await expect(page.getByLabel('Repository path')).toHaveCount(0);
-  await page.getByLabel('Model source').selectOption('openrouter');
-  await page.getByLabel('Model ID').fill('~anthropic/claude-sonnet-latest');
-  await page.getByLabel('Provider API key', { exact: true }).fill('sk-or-v1-runtime-only-provider-key');
+  await expect(page.getByLabel('Model source')).toHaveValue('environment');
+  await expect(page.getByLabel('Model source').locator('option:checked')).toHaveText('OpenRouter (configured)');
+  await expect(page.getByLabel('Provider API key', { exact: true })).toHaveCount(0);
+  await expect(page.locator('#configured-model-options option')).toHaveCount(3);
+  await page.getByRole('combobox', { name: 'Model', exact: true }).fill('anthropic/claude-opus-4.6');
   await page.getByRole('button', { name: 'Decrease concurrency' }).click();
   await page.getByText('Rules and reporting').click();
   await page.getByText('SARIF report', { exact: true }).click();
@@ -449,15 +496,62 @@ test('creates profiles and configures both assessment modes', async ({ page }) =
   expect(api.lastStartBody).toMatchObject({
     providerConfig: {
       providerType: 'openai',
-      model: '~anthropic/claude-sonnet-latest',
+      model: 'anthropic/claude-opus-4.6',
       baseUrl: 'https://openrouter.ai/api/v1',
       openAIFormat: 'chat-completions',
-      apiKey: 'sk-or-v1-runtime-only-provider-key',
     },
   });
+  expect(api.lastStartBody?.providerConfig).not.toHaveProperty('apiKey');
   expect(api.lastStartBody).toMatchObject({ config: { safeDemonstration: true } });
   expect(api.lastStartBody).toMatchObject({ config: { report: { sarif: true } } });
   expect((api.lastStartBody?.config as Record<string, unknown>).demonstrate).toBeUndefined();
+  await expectNoAxeViolations(page);
+});
+
+test('configures an explicitly authorized elevated HTTP load assessment', async ({ page }) => {
+  const api = new MockApi(page);
+  await api.install();
+  await page.goto('/assessments/new');
+
+  await page.getByLabel('Target URL').fill('https://load.example.test/health');
+  await page.getByRole('button', { name: 'Clear all checks' }).click();
+  await page.getByRole('button', { name: 'Expand A06:2025 Insecure Design' }).click();
+  const loadScope = page.getByLabel('HTTP load and capacity');
+  await expect(loadScope).toBeEnabled();
+  await page.getByText('HTTP load and capacity', { exact: true }).click();
+  await expect(loadScope).toBeChecked();
+
+  await expect(page.getByLabel('Concurrent connections')).toHaveValue('5');
+  await expect(page.getByLabel('Requests per second', { exact: true })).toHaveValue('10');
+  await expect(page.getByLabel('Duration (seconds)')).toHaveValue('15');
+  await expect(page.getByText('One worker host, direct connections, no source spoofing')).toBeVisible();
+  await expect(page.getByText('Controlled load test', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Controlled load test')).not.toBeChecked();
+
+  await page.getByLabel('Concurrent connections').fill('21');
+  await page.getByLabel('Requests per second', { exact: true }).fill('75');
+  await page.getByLabel('Duration (seconds)').fill('90');
+  await page.getByRole('button', { name: 'Start assessment' }).click();
+  await expect(page.getByText('Confirm the elevated load envelope before continuing')).toBeVisible();
+
+  await page.getByText('Allow elevated load', { exact: true }).click();
+  await expect(page.getByRole('switch', { name: /Allow elevated load/ })).toBeChecked();
+  await page.getByRole('button', { name: 'Start assessment' }).click();
+  await expect(page.getByText('Authorization confirmation is required')).toBeVisible();
+
+  await page.getByText('I confirm I am authorized to test this target.').click();
+  await page.getByRole('button', { name: 'Start assessment' }).click();
+  await expect(page).toHaveURL(/\/runs\/new-assessment$/);
+  expect(api.lastStartBody).toMatchObject({
+    authorizationConfirmed: true,
+    elevatedLoadConfirmed: true,
+    config: {
+      testCategories: [],
+      testScopes: ['http-load-capacity'],
+      httpLoad: { concurrency: 21, requestsPerSecond: 75, durationSeconds: 90 },
+    },
+  });
+  await expect(page.getByText('HTTP load and capacity', { exact: true }).last()).toBeVisible();
   await expectNoAxeViolations(page);
 });
 
@@ -502,9 +596,10 @@ test('labels pipeline status and marks missing historical progress unavailable',
   await page.goto('/runs/historical-run');
 
   await expect(page.getByRole('heading', { name: 'Pipeline execution status' })).toBeVisible();
-  await expect(page.locator('.stage-icon[title="unavailable"]')).toHaveCount(13);
+  await expect(page.locator('.stage-icon[title="unavailable"]')).toHaveCount(14);
   await expect(page.locator('.stage-icon[title="skipped"]')).toHaveCount(0);
   await expect(page.getByText('Status unavailable')).toHaveCount(13);
+  await expect(page.getByText('No module evidence was recorded')).toHaveCount(1);
   await expectNoAxeViolations(page);
 });
 

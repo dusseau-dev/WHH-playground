@@ -1,20 +1,47 @@
-import type { AssessmentTestScope, AssessmentTestSurface, OwaspCategory } from '../../../src/security-scopes';
+import type {
+  AssessmentModule,
+  AssessmentTestScope,
+  AssessmentTestSurface,
+  ModuleSafetyConfig,
+  OwaspCategory,
+  TargetEnvironment,
+} from '../../../src/security-scopes';
 
+export type { HttpLoadSettings } from '../../../src/http-load';
 export {
+  HTTP_LOAD_DEFAULTS,
+  HTTP_LOAD_ELEVATED_THRESHOLDS,
+  HTTP_LOAD_EMERGENCY_LIMITS,
+  HTTP_LOAD_SCOPE,
+  isElevatedHttpLoad,
+} from '../../../src/http-load';
+export {
+  assessmentModuleDefinitions,
+  assessmentModuleIds,
   assessmentScopeCatalog,
   assessmentScopeDefinitions,
   assessmentTestScopeIds,
   assessmentTestSurfaceIds,
   availableTestScopes,
   availableTestSurfaces,
+  defaultAssessmentModules,
   deriveTestCategories,
   expandTestCategories,
   getOwaspCategorySelection,
+  normalizeAssessmentModules,
   normalizeTestScopeSelection,
+  selectableTestScopes,
   setOwaspCategorySelected,
   testSurfaceDefinitions,
 } from '../../../src/security-scopes';
-export type { AssessmentTestScope, AssessmentTestSurface, OwaspCategory };
+export type {
+  AssessmentModule,
+  AssessmentTestScope,
+  AssessmentTestSurface,
+  ModuleSafetyConfig,
+  OwaspCategory,
+  TargetEnvironment,
+};
 
 export const securityTestCategories = ['injection', 'xss', 'auth', 'authz', 'ssrf'] as const;
 export type SecurityTestCategory = (typeof securityTestCategories)[number];
@@ -26,7 +53,16 @@ export type Confidence = 'low' | 'medium' | 'high';
 
 export type SourceMode = 'source-assisted' | 'url-only';
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type StageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled' | 'unavailable';
+export type StageStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+  | 'unavailable';
+export type ModuleExecutionStatus = 'completed' | 'partial' | 'failed' | 'skipped' | 'unavailable';
 export type FindingVerdict = 'confirmed' | 'unvalidated' | 'needs-review' | 'ruled-out';
 export type SecretPersistence = 'keychain' | 'session' | 'unavailable';
 export type TargetSecretField = 'password' | 'totpSecret' | 'emailPassword' | 'emailTotpSecret';
@@ -42,6 +78,27 @@ export interface BootstrapResponse {
     label: string;
     available: boolean;
   };
+  model: ConfiguredModelDescription;
+}
+
+export interface ConfiguredModelDescription {
+  providerId: string;
+  providerLabel: string;
+  modelId: string;
+  credentialConfigured: boolean;
+  catalogAvailable: boolean;
+  providerConfig: Omit<ProviderConfig, 'model' | 'apiKey' | 'authToken'>;
+}
+
+export interface ModelCatalogItem {
+  id: string;
+  name: string;
+  contextLength?: number;
+}
+
+export interface ModelCatalog {
+  provider: ConfiguredModelDescription;
+  items: ModelCatalogItem[];
 }
 
 export interface RunScope {
@@ -50,6 +107,9 @@ export interface RunScope {
   testSurfaces: AssessmentTestSurface[];
   safeDemonstration: boolean;
   concurrency: number;
+  httpLoad?: import('../../../src/http-load').HttpLoadSettings;
+  assessmentModules: AssessmentModule[];
+  moduleSafety: ModuleSafetyConfig;
 }
 
 export interface RunProgress {
@@ -58,6 +118,13 @@ export interface RunProgress {
   percent: number;
   activeAgents: string[];
   activeTestCategories: SecurityTestCategory[];
+  activeModules: AssessmentModule[];
+  moduleResults: Array<{
+    id: AssessmentModule;
+    status: ModuleExecutionStatus;
+    evidencePath?: string;
+  }>;
+  httpLoadStatus: 'completed' | 'interrupted' | 'incomplete' | null;
 }
 
 export interface RunMetrics {
@@ -210,6 +277,7 @@ export interface CreateRunRequest extends AssessmentConfiguration {
   providerConfig?: ProviderConfig;
   saveProfile?: { name: string };
   authorizationConfirmed: true;
+  elevatedLoadConfirmed?: true;
 }
 
 export interface ProfileSummary {

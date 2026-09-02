@@ -6,7 +6,7 @@ Assess horizontal, vertical, tenant, and workflow authorization boundaries throu
 </objective>
 
 <method>
-Read .shannon/deliverables/recon_deliverable.md. Build a subject-action-object matrix from identities and objects the operator is authorized to use. Compare requests across owned test objects, supplied roles, tenant contexts, direct object references, methods, and workflow steps. Prefer read-only checks; create reversible test records when a state change is required. Never access unrelated real-user data or administrative functions outside the authorized scope. Distinguish authentication failures, object-not-found behavior, and true authorization bypasses with controls.
+Read .shannon/deliverables/recon_deliverable.md. Build a subject-action-object matrix from identities and objects the operator is authorized to use. Compare requests across owned test objects, supplied roles, tenant contexts, direct object references, methods, and workflow steps, including observed Next.js Server Action requests. For each action that accepts a user, role, organization, tenant, or object identifier, safely test whether the server binds that value to the verified session rather than trusting the client. Prefer read-only checks; create reversible test records when a state change is required. Never access unrelated real-user data or administrative functions outside the authorized scope. Distinguish authentication failures, object-not-found behavior, and true authorization bypasses with controls.
 </method>
 
 <output>

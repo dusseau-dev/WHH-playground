@@ -8,7 +8,8 @@ import type {
   StructuredStep,
 } from '../collectors/finding-collector.js';
 import { ALL_VULN_CLASSES, type SourceMode, type VulnClass } from '../types/config.js';
-import { ASSESSMENT_SCOPE_REGISTRY, type ScopeCoverage } from '../types/scopes.js';
+import type { HttpLoadResult } from '../types/http-load.js';
+import { ASSESSMENT_SCOPE_REGISTRY, type ModuleCoverage, type ScopeCoverage } from '../types/scopes.js';
 import type { RuledOutFinding, TriageStatus } from './report-reconciliation.js';
 
 export interface ReportMeta {
@@ -28,6 +29,8 @@ export interface ReportData {
   readonly ruled_out: readonly RuledOutFinding[];
   readonly not_assessed: readonly VulnClass[];
   readonly scope_coverage?: readonly ScopeCoverage[];
+  readonly module_coverage?: readonly ModuleCoverage[];
+  readonly http_load_capacity?: HttpLoadResult;
   readonly triage_status: TriageStatus;
   readonly validation_issues?: readonly string[];
 }
@@ -220,6 +223,81 @@ function renderOwaspCoverage(coverage: readonly ScopeCoverage[]): string {
   ].join('\n');
 }
 
+function renderModuleCoverage(coverage: readonly ModuleCoverage[]): string {
+  const statusLabels: Record<ModuleCoverage['status'], string> = {
+    completed: 'Completed',
+    partial: 'Partial',
+    failed: 'Failed',
+    skipped: 'Skipped',
+    unavailable: 'Unavailable',
+    'not-run': 'Not run',
+  };
+  return [
+    '## Assessment Methods',
+    '',
+    'Module status is derived from module evidence, not from vulnerability-agent completion.',
+    '',
+    '| Method / module | Status | Evidence |',
+    '| --- | --- | --- |',
+    ...coverage.map(
+      (entry) =>
+        `| ${escapeMarkdown(entry.title)} | ${statusLabels[entry.status]} | ${entry.evidence_path ? escapeMarkdown(entry.evidence_path) : '—'} |`,
+    ),
+  ].join('\n');
+}
+
+function formatMetric(value: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(value);
+}
+
+function formatLatency(value: number | null): string {
+  return value === null ? 'Not observed' : `${formatMetric(value)} ms`;
+}
+
+function renderHttpLoadCapacity(result?: HttpLoadResult): string {
+  if (!result) {
+    return [
+      '## HTTP Load and Capacity',
+      '',
+      '| Metric | Observation |',
+      '| --- | --- |',
+      '| Status | Incomplete |',
+      '',
+      'No valid HTTP load result artifact was available. The selected check remains incomplete.',
+    ].join('\n');
+  }
+
+  const statusCounts =
+    Object.entries(result.status_counts)
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .map(([status, count]) => `${status}: ${formatMetric(count)}`)
+      .join(', ') || 'None observed';
+
+  return [
+    '## HTTP Load and Capacity',
+    '',
+    '| Metric | Observation |',
+    '| --- | --- |',
+    `| Status | ${titleCase(result.status)} |`,
+    `| Configured concurrency | ${formatMetric(result.concurrency)} |`,
+    `| Configured request rate | ${formatMetric(result.requests_per_second)} requests/second |`,
+    `| Configured duration | ${formatMetric(result.duration_seconds)} seconds |`,
+    `| Observed elapsed time | ${formatMetric(result.elapsed_seconds)} seconds |`,
+    `| Requests sent | ${formatMetric(result.sent)} |`,
+    `| Responses completed | ${formatMetric(result.completed)} |`,
+    `| Successful responses | ${formatMetric(result.success)} |`,
+    `| Failed responses | ${formatMetric(result.failure)} |`,
+    `| Request errors | ${formatMetric(result.errors)} |`,
+    `| Response bytes read | ${formatMetric(result.bytes_read)} |`,
+    `| Average response time | ${formatLatency(result.average_latency_ms)} |`,
+    `| Minimum response time | ${formatLatency(result.minimum_latency_ms)} |`,
+    `| Maximum response time | ${formatLatency(result.maximum_latency_ms)} |`,
+    `| HTTP status counts | ${statusCounts} |`,
+    '',
+    'These are observations from this bounded run and do not establish a general capacity guarantee or future availability.',
+  ].join('\n');
+}
+
 function renderRuledOut(entries: readonly RuledOutFinding[]): string {
   const lines = ['## Considered & Ruled Out', ''];
   if (entries.length === 0) return [...lines, '_Nothing was ruled out._'].join('\n');
@@ -236,6 +314,8 @@ function renderRuledOut(entries: readonly RuledOutFinding[]): string {
 /** Deterministically render the canonical report model. */
 export function renderReport(data: ReportData): string {
   const meta = data.report_meta;
+  const httpLoadSelected =
+    data.scope_coverage?.some((entry) => entry.selected_scopes.includes('http-load-capacity')) ?? false;
   const sections: string[] = [
     '# Security Assessment Report',
     '',
@@ -258,6 +338,8 @@ export function renderReport(data: ReportData): string {
     MODE_COVERAGE[meta.source_mode],
     '',
     ...(data.scope_coverage ? [renderOwaspCoverage(data.scope_coverage), ''] : []),
+    ...(httpLoadSelected || data.http_load_capacity ? [renderHttpLoadCapacity(data.http_load_capacity), ''] : []),
+    ...(data.module_coverage ? [renderModuleCoverage(data.module_coverage), ''] : []),
     renderValidation(data),
   ];
 

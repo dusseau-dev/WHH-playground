@@ -110,6 +110,14 @@ export const ASSESSMENT_SCOPE_REGISTRY = [
   },
   { id: 'rate-limiting', label: 'Rate limiting', owaspId: 'A06:2025', availability: 'available', agent: 'auth' },
   {
+    id: 'http-load-capacity',
+    label: 'HTTP load and capacity',
+    owaspId: 'A06:2025',
+    availability: 'available',
+    executor: 'http-load',
+    bulkSelectable: false,
+  },
+  {
     id: 'account-enumeration',
     label: 'Account enumeration',
     owaspId: 'A07:2025',
@@ -156,6 +164,8 @@ export const ASSESSMENT_SCOPE_REGISTRY = [
   owaspId: OwaspCategoryId;
   availability: 'available' | 'coming-soon';
   agent?: VulnClass;
+  executor?: 'http-load';
+  bulkSelectable?: boolean;
 }[];
 
 export type AssessmentScope = (typeof ASSESSMENT_SCOPE_REGISTRY)[number]['id'];
@@ -168,8 +178,167 @@ export const ASSESSMENT_SURFACE_REGISTRY = [
 
 export type AssessmentSurface = (typeof ASSESSMENT_SURFACE_REGISTRY)[number]['id'];
 
+/** Assessment methods run independently from OWASP vulnerability lanes. */
+export const ASSESSMENT_MODULE_REGISTRY = [
+  {
+    id: 'passive-exposure',
+    title: 'Passive exposure review',
+    description:
+      'Headers, TLS, DNS, public assets, source maps, robots.txt, exposed routes, and leaked-secret indicators.',
+    tools: ['native'],
+    sourceModes: ['source-assisted', 'url-only'],
+    stagingOnly: false,
+  },
+  {
+    id: 'automated-dast',
+    title: 'Automated vulnerability scan',
+    description:
+      'OWASP ZAP passive scanning followed by optional bounded active scanning and curated Nuclei templates.',
+    tools: ['owasp-zap', 'nuclei'],
+    sourceModes: ['source-assisted', 'url-only'],
+    stagingOnly: false,
+  },
+  {
+    id: 'supply-chain',
+    title: 'Dependency and supply-chain review',
+    description: 'Package audit, lockfile review, secret scanning, and repository security configuration checks.',
+    tools: ['package-audit', 'gitleaks'],
+    sourceModes: ['source-assisted'],
+    stagingOnly: false,
+  },
+  {
+    id: 'http-load-capacity',
+    title: 'Controlled load test',
+    description: 'Staging-only k6 ramp with explicit traffic limits and threshold-based automatic aborts.',
+    tools: ['k6'],
+    sourceModes: ['source-assisted', 'url-only'],
+    stagingOnly: true,
+  },
+] as const;
+
+export type AssessmentModule = (typeof ASSESSMENT_MODULE_REGISTRY)[number]['id'];
+export type TargetEnvironment = 'production' | 'staging';
+
+export const DEFAULT_ASSESSMENT_MODULES: AssessmentModule[] = ['passive-exposure'];
+
+export interface ModuleSafetyInput {
+  readonly targetEnvironment?: TargetEnvironment;
+  readonly allowActiveDast?: boolean;
+  readonly acknowledgeLoadRisk?: boolean;
+  readonly maxRequestsPerSecond?: number;
+  readonly maxConcurrency?: number;
+  readonly loadStageDurationSeconds?: number;
+  readonly loadErrorRateThreshold?: number;
+  readonly loadP95LatencyMsThreshold?: number;
+}
+
+export interface ModuleSafetyConfig {
+  readonly targetEnvironment: TargetEnvironment;
+  readonly allowActiveDast: boolean;
+  readonly acknowledgeLoadRisk: boolean;
+  readonly maxRequestsPerSecond: number;
+  readonly maxConcurrency: number;
+  readonly loadStageDurationSeconds: number;
+  readonly loadErrorRateThreshold: number;
+  readonly loadP95LatencyMsThreshold: number;
+}
+
+export interface AssessmentModuleInput {
+  readonly assessmentModules?: readonly AssessmentModule[];
+  readonly moduleSafety?: ModuleSafetyInput;
+  readonly sourceMode?: 'source-assisted' | 'url-only';
+}
+
+export interface NormalizedAssessmentModules {
+  readonly assessmentModules: AssessmentModule[];
+  readonly moduleSafety: ModuleSafetyConfig;
+}
+
+const DEFAULT_MODULE_SAFETY: ModuleSafetyConfig = {
+  targetEnvironment: 'production',
+  allowActiveDast: false,
+  acknowledgeLoadRisk: false,
+  maxRequestsPerSecond: 2,
+  maxConcurrency: 2,
+  loadStageDurationSeconds: 60,
+  loadErrorRateThreshold: 0.05,
+  loadP95LatencyMsThreshold: 2000,
+};
+
+function boundedNumber(value: number, name: string, minimum: number, maximum: number): void {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+}
+
+/** Normalize module selection and fail closed on unsafe active or load-test settings. */
+export function normalizeAssessmentModules(input: AssessmentModuleInput): NormalizedAssessmentModules {
+  const requested = input.assessmentModules ?? DEFAULT_ASSESSMENT_MODULES;
+  rejectDuplicates(requested, 'assessmentModules');
+  const known = new Set(ASSESSMENT_MODULE_REGISTRY.map(({ id }) => id));
+  for (const value of requested) {
+    if (!known.has(value)) throw new Error(`Unknown assessment module: ${value}`);
+  }
+  const assessmentModules = ASSESSMENT_MODULE_REGISTRY.filter(({ id }) => requested.includes(id)).map(({ id }) => id);
+  const moduleSafety: ModuleSafetyConfig = { ...DEFAULT_MODULE_SAFETY, ...input.moduleSafety };
+
+  boundedNumber(moduleSafety.maxRequestsPerSecond, 'Maximum requests per second', 1, 10);
+  boundedNumber(moduleSafety.maxConcurrency, 'Maximum concurrency', 1, 25);
+  boundedNumber(moduleSafety.loadStageDurationSeconds, 'Load stage duration', 10, 600);
+  boundedNumber(moduleSafety.loadErrorRateThreshold, 'Load error rate threshold', 0.001, 0.5);
+  boundedNumber(moduleSafety.loadP95LatencyMsThreshold, 'Load p95 latency threshold', 100, 60_000);
+
+  if (assessmentModules.includes('supply-chain') && input.sourceMode === 'url-only') {
+    throw new Error('Supply-chain review requires source-assisted mode');
+  }
+  if (moduleSafety.allowActiveDast && moduleSafety.targetEnvironment !== 'staging') {
+    throw new Error('Active DAST is allowed only against a staging target');
+  }
+  if (assessmentModules.includes('http-load-capacity')) {
+    if (moduleSafety.targetEnvironment !== 'staging') throw new Error('Controlled load testing is staging-only');
+    if (!moduleSafety.acknowledgeLoadRisk) {
+      throw new Error('Controlled load testing requires explicit acknowledgement of load-test risk');
+    }
+  }
+
+  return { assessmentModules, moduleSafety };
+}
+
+export type ModuleExecutionStatus = 'completed' | 'partial' | 'failed' | 'skipped' | 'unavailable';
+
+export interface ModuleExecutionResult {
+  readonly id: AssessmentModule;
+  readonly status: ModuleExecutionStatus;
+  readonly evidencePath?: string;
+}
+
+export interface ModuleCoverage {
+  readonly id: AssessmentModule;
+  readonly title: string;
+  readonly status: ModuleExecutionStatus | 'not-run';
+  readonly evidence_path?: string;
+}
+
+/** Report modules only from their own evidence, never from vulnerability-lane completion. */
+export function buildModuleCoverage(
+  selectedModules: readonly AssessmentModule[],
+  results: readonly ModuleExecutionResult[],
+): ModuleCoverage[] {
+  return ASSESSMENT_MODULE_REGISTRY.filter(({ id }) => selectedModules.includes(id)).map(({ id, title }) => {
+    const result = results.find((entry) => entry.id === id);
+    return {
+      id,
+      title,
+      status: result?.status ?? 'not-run',
+      ...(result?.evidencePath && { evidence_path: result.evidencePath }),
+    };
+  });
+}
+
 export const DEFAULT_ASSESSMENT_SCOPES: AssessmentScope[] = ASSESSMENT_SCOPE_REGISTRY.filter(
-  ({ availability }) => availability === 'available',
+  (definition) =>
+    definition.availability === 'available' &&
+    (!('bulkSelectable' in definition) || definition.bulkSelectable !== false),
 ).map(({ id }) => id);
 
 export const DEFAULT_ASSESSMENT_SURFACES: AssessmentSurface[] = ASSESSMENT_SURFACE_REGISTRY.filter(
@@ -207,8 +376,8 @@ function rejectDuplicates(values: readonly string[], field: string): void {
   if (new Set(values).size !== values.length) throw new Error(`${field} contains duplicate values`);
 }
 
-function normalizedClasses(values: readonly VulnClass[]): VulnClass[] {
-  if (values.length === 0) throw new Error('vulnClasses must include at least one value');
+function normalizedClasses(values: readonly VulnClass[], allowEmpty: boolean): VulnClass[] {
+  if (values.length === 0 && !allowEmpty) throw new Error('vulnClasses must include at least one value');
   rejectDuplicates(values, 'vulnClasses');
   for (const value of values) {
     if (!ALL_VULN_CLASSES.includes(value)) throw new Error(`Unknown vulnerability class: ${value}`);
@@ -250,7 +419,9 @@ export function deriveVulnClasses(testScopes: readonly AssessmentScope[]): VulnC
 
 /** Normalize granular and legacy scope inputs into one deterministic workflow contract. */
 export function normalizeAssessmentScope(input: AssessmentScopeInput): NormalizedAssessmentScope {
-  const explicitClasses = input.vulnClasses ? normalizedClasses(input.vulnClasses) : undefined;
+  const explicitClasses = input.vulnClasses
+    ? normalizedClasses(input.vulnClasses, input.testScopes !== undefined)
+    : undefined;
   const testScopes = input.testScopes
     ? normalizeScopes(input.testScopes)
     : explicitClasses
@@ -278,6 +449,7 @@ export function normalizeAssessmentScope(input: AssessmentScopeInput): Normalize
 export function buildScopeCoverage(
   selectedScopes: readonly AssessmentScope[],
   notAssessed: readonly VulnClass[],
+  completedActivityScopes: readonly AssessmentScope[] = [],
 ): ScopeCoverage[] {
   return OWASP_CATEGORY_REGISTRY.map((category) => {
     const definitions = ASSESSMENT_SCOPE_REGISTRY.filter(({ owaspId }) => owaspId === category.id);
@@ -286,7 +458,8 @@ export function buildScopeCoverage(
       .filter(({ id }) => selectedScopes.includes(id))
       .filter((definition) => {
         const agent = scopeAgent(definition);
-        return agent !== undefined && !notAssessed.includes(agent);
+        if (agent !== undefined) return !notAssessed.includes(agent);
+        return 'executor' in definition && completedActivityScopes.includes(definition.id);
       })
       .map(({ id }) => id);
     const status: ScopeCoverageStatus =

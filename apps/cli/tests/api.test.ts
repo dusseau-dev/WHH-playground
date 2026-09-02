@@ -139,6 +139,41 @@ describe('local API security', () => {
     expect(response.headers.get('content-security-policy')).toContain("default-src 'self'");
     expect(response.headers.get('x-frame-options')).toBe('DENY');
   });
+
+  it('exposes configured model metadata without exposing its credential', async () => {
+    const environmentNames = [
+      'SHANNON_AI_MODEL',
+      'SHANNON_AI_BASE_URL',
+      'SHANNON_AI_OPENAI_FORMAT',
+      'SHANNON_AI_API_KEY',
+    ] as const;
+    const previous = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
+    process.env.SHANNON_AI_MODEL = 'openai:anthropic/claude-sonnet-4.6';
+    process.env.SHANNON_AI_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.SHANNON_AI_OPENAI_FORMAT = 'chat-completions';
+    process.env.SHANNON_AI_API_KEY = 'server-side-openrouter-secret';
+
+    try {
+      const configuredHarness = await createHarness();
+      const response = await request(configuredHarness.app, '/api/v1/bootstrap');
+      const body = await response.json();
+
+      expect(body.data.model).toMatchObject({
+        providerId: 'openrouter',
+        providerLabel: 'OpenRouter',
+        modelId: 'anthropic/claude-sonnet-4.6',
+        credentialConfigured: true,
+        catalogAvailable: true,
+      });
+      expect(JSON.stringify(body)).not.toContain('server-side-openrouter-secret');
+    } finally {
+      for (const name of environmentNames) {
+        const value = previous[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
 });
 
 describe('profiles and run lifecycle', () => {

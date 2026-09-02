@@ -32,6 +32,7 @@ import {
   safeMarkdownUrl,
   sortFindings,
 } from "../lib/presentation";
+import { isElevatedHttpLoad } from "../types/api";
 import type {
   ActivityEntry,
   Finding,
@@ -76,7 +77,7 @@ function RunMetrics({ run }: { run: RunDetail }) {
     { label: "Findings", value: String(run.metrics?.findings ?? run.findings.length), icon: ShieldAlert },
     {
       label: "Active tests",
-      value: String(run.progress.activeTestCategories.length),
+      value: String(run.progress.activeTestCategories.length + run.progress.activeModules.length),
       icon: Users,
     },
   ];
@@ -335,6 +336,8 @@ export function RunDetailPage() {
   const [cancelArmed, setCancelArmed] = useState(false);
   const [resumeOpen, setResumeOpen] = useState(false);
   const [resumeSecrets, setResumeSecrets] = useState<TargetSecrets>({});
+  const [resumeLoadAuthorization, setResumeLoadAuthorization] = useState(false);
+  const [resumeElevatedLoad, setResumeElevatedLoad] = useState(false);
   const runQuery = useQuery({
     queryKey: ["runs", runId],
     queryFn: () => api.getRun(runId),
@@ -372,11 +375,17 @@ export function RunDetailPage() {
     },
   });
   const resumeMutation = useMutation({
-    mutationFn: (secrets?: TargetSecrets) => api.resumeRun(runId, secrets),
+    mutationFn: (secrets?: TargetSecrets) =>
+      api.resumeRun(runId, secrets, {
+        authorizationConfirmed: resumeLoadAuthorization,
+        elevatedLoadConfirmed: resumeElevatedLoad,
+      }),
     onSuccess: (run) => {
       queryClient.setQueryData(["runs", runId], run);
       setResumeOpen(false);
       setResumeSecrets({});
+      setResumeLoadAuthorization(false);
+      setResumeElevatedLoad(false);
       setStreamKey((value) => value + 1);
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
@@ -406,6 +415,8 @@ export function RunDetailPage() {
   const run = runQuery.data;
   const canCancel = run.canCancel ?? ["pending", "running"].includes(run.status);
   const canResume = run.canResume ?? ["failed", "cancelled"].includes(run.status);
+  const loadSettings = run.scope.httpLoad;
+  const elevatedLoad = loadSettings ? isElevatedHttpLoad(loadSettings) : false;
   const lifecycleError = cancelMutation.error ?? resumeMutation.error;
 
   return (
@@ -422,6 +433,7 @@ export function RunDetailPage() {
                 onClick={() => {
                   resumeMutation.reset();
                   if (resumeOpen) setResumeOpen(false);
+                  else if (loadSettings || run.requiredSecretFields.length > 0) setResumeOpen(true);
                   else resumeMutation.mutate(undefined);
                 }}
               >
@@ -472,14 +484,19 @@ export function RunDetailPage() {
           className="resume-secret-form"
           onSubmit={(event) => {
             event.preventDefault();
+            if (loadSettings && (!resumeLoadAuthorization || (elevatedLoad && !resumeElevatedLoad))) return;
             resumeMutation.mutate(resumeSecrets);
           }}
         >
           <div className="resume-secret-heading">
             <KeyRound size={18} aria-hidden="true" />
             <div>
-              <strong>Re-enter session-only credentials</strong>
-              <span>Secrets are passed to this attempt and are not written to the run snapshot.</span>
+              <strong>{loadSettings ? "Reconfirm this assessment attempt" : "Re-enter session-only credentials"}</strong>
+              <span>
+                {loadSettings
+                  ? "Authorization is required again and is not written to the reusable run snapshot."
+                  : "Secrets are passed to this attempt and are not written to the run snapshot."}
+              </span>
             </div>
           </div>
           <div className="resume-secret-grid">
@@ -498,11 +515,40 @@ export function RunDetailPage() {
               </label>
             ))}
           </div>
+          {loadSettings ? (
+            <div className="resume-load-confirmations">
+              <label className="compact-check">
+                <input
+                  type="checkbox"
+                  required
+                  checked={resumeLoadAuthorization}
+                  onChange={(event) => setResumeLoadAuthorization(event.target.checked)}
+                />
+                I reconfirm ownership or written authorization for this load test.
+              </label>
+              {elevatedLoad ? (
+                <label className="compact-check">
+                  <input
+                    type="checkbox"
+                    required
+                    checked={resumeElevatedLoad}
+                    onChange={(event) => setResumeElevatedLoad(event.target.checked)}
+                  />
+                  I reconfirm the elevated load envelope for this attempt.
+                </label>
+              ) : null}
+            </div>
+          ) : null}
           <div className="resume-secret-actions">
             <Button type="button" variant="ghost" onClick={() => setResumeOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" busy={resumeMutation.isPending}>
+            <Button
+              type="submit"
+              variant="primary"
+              busy={resumeMutation.isPending}
+              disabled={Boolean(loadSettings && (!resumeLoadAuthorization || (elevatedLoad && !resumeElevatedLoad)))}
+            >
               Resume attempt
             </Button>
           </div>

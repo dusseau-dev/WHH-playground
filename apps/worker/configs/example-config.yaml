@@ -15,6 +15,22 @@ description: "Next.js e-commerce app on PostgreSQL. Local dev environment — .e
 # WebSocket assessment is visible in the UI but is not yet available.
 # test_surfaces: [browser, api-graphql]
 
+# Select assessment methods independently from vulnerability checks (optional).
+# Passive exposure review is the only default. Supply-chain review requires source-assisted mode.
+# assessment_modules: [passive-exposure, automated-dast, supply-chain]
+#
+# Active DAST and controlled load are fail-closed behind staging-only safety gates.
+# Never label a production target as staging; target_environment is an operator assertion.
+# module_safety:
+#   target_environment: production       # production or staging
+#   allow_active_dast: false              # staging only
+#   acknowledge_load_risk: false          # required with the http-load-capacity module
+#   max_requests_per_second: 2            # hard limit: 1-10
+#   max_concurrency: 2                    # hard limit: 1-25
+#   load_stage_duration_seconds: 60       # each 1 → 5 → 10 → 25 VU stage, capped above
+#   load_error_rate_threshold: 0.05       # k6 abort threshold
+#   load_p95_latency_ms_threshold: 2000   # k6 abort threshold
+
 # Run safe, authorized demonstrations of confirmed findings (optional, default: true)
 # safe_demonstration: true
 # Legacy configs may still use exploit: true/false.

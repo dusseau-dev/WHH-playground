@@ -43,6 +43,24 @@ test_surfaces: [api-graphql]
     expect(distributed.vuln_classes).toEqual(['xss', 'authz']);
   });
 
+  it('normalizes assessment modules and module safety independently', () => {
+    const distributed = distributeConfig(
+      parseConfigYAML(`
+assessment_modules: [passive-exposure, automated-dast]
+module_safety:
+  target_environment: staging
+  allow_active_dast: true
+  max_requests_per_second: 3
+`),
+    );
+    expect(distributed.assessment_modules).toEqual(['passive-exposure', 'automated-dast']);
+    expect(distributed.module_safety).toMatchObject({
+      target_environment: 'staging',
+      allow_active_dast: true,
+      max_requests_per_second: 3,
+    });
+  });
+
   it('expands legacy classes into granular checks', () => {
     const distributed = distributeConfig(parseConfigYAML('vuln_classes: [authz]'));
     expect(distributed.test_scopes).toContain('csrf');
@@ -57,6 +75,42 @@ test_surfaces: [api-graphql]
     expect(() => parseConfigYAML('test_scopes: []')).toThrow(/at least 1/i);
     expect(() => parseConfigYAML('test_surfaces: [websockets]')).toThrow(/coming soon/i);
     expect(() => parseConfigYAML('test_scopes: [dependency-risk]')).toThrow(/coming soon/i);
+  });
+
+  it('normalizes explicit HTTP load settings and safe defaults', () => {
+    expect(distributeConfig(parseConfigYAML('test_scopes: [http-load-capacity]'))).toMatchObject({
+      vuln_classes: [],
+      test_scopes: ['http-load-capacity'],
+      http_load: {
+        concurrency: 5,
+        requests_per_second: 10,
+        duration_seconds: 15,
+      },
+    });
+
+    expect(
+      distributeConfig(
+        parseConfigYAML(`
+test_scopes: [http-load-capacity]
+http_load:
+  concurrency: 25
+  requests_per_second: 75
+  duration_seconds: 90
+`),
+      ).http_load,
+    ).toEqual({ concurrency: 25, requests_per_second: 75, duration_seconds: 90 });
+  });
+
+  it('rejects orphaned or unsafe HTTP load configuration', () => {
+    expect(() => parseConfigYAML('http_load:\n  concurrency: 5')).toThrow(/requires.*http-load-capacity/i);
+    expect(() =>
+      parseConfigYAML('test_scopes: [http-load-capacity]\nhttp_load:\n  requests_per_second: 10001'),
+    ).toThrow(/10000|10,000/);
+  });
+
+  it('allows empty derived lanes only for explicit activity-backed scopes', () => {
+    expect(() => parseConfigYAML('vuln_classes: []')).toThrow(/at least|empty/i);
+    expect(() => parseConfigYAML('vuln_classes: []\ntest_scopes: [http-load-capacity]')).not.toThrow();
   });
 });
 

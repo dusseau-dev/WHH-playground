@@ -8,7 +8,42 @@
  * Configuration type definitions
  */
 
-import type { AssessmentScope, AssessmentSurface } from './scopes.js';
+import type { AssessmentModule, AssessmentScope, AssessmentSurface, TargetEnvironment } from './scopes.js';
+
+export interface HttpLoadConfig {
+  concurrency?: number;
+  requests_per_second?: number;
+  duration_seconds?: number;
+}
+
+export interface DistributedHttpLoadConfig {
+  concurrency: number;
+  requests_per_second: number;
+  duration_seconds: number;
+}
+
+/** Safety policy for assessment methods that may create target traffic. */
+export interface ModuleSafetyYamlConfig {
+  target_environment?: TargetEnvironment;
+  allow_active_dast?: boolean;
+  acknowledge_load_risk?: boolean;
+  max_requests_per_second?: number;
+  max_concurrency?: number;
+  load_stage_duration_seconds?: number;
+  load_error_rate_threshold?: number;
+  load_p95_latency_ms_threshold?: number;
+}
+
+export interface DistributedModuleSafetyYamlConfig {
+  target_environment: TargetEnvironment;
+  allow_active_dast: boolean;
+  acknowledge_load_risk: boolean;
+  max_requests_per_second: number;
+  max_concurrency: number;
+  load_stage_duration_seconds: number;
+  load_error_rate_threshold: number;
+  load_p95_latency_ms_threshold: number;
+}
 
 export type RuleType = 'url_path' | 'subdomain' | 'domain' | 'method' | 'header' | 'parameter' | 'code_path';
 
@@ -81,6 +116,12 @@ export interface Config {
   test_scopes?: AssessmentScope[];
   /** Target interaction surfaces selected for this assessment. */
   test_surfaces?: AssessmentSurface[];
+  /** Assessment methods and operational modules, independent from vulnerability checks. */
+  assessment_modules?: AssessmentModule[];
+  /** Production/staging and traffic safety policy for assessment modules. */
+  module_safety?: ModuleSafetyYamlConfig;
+  /** Explicitly authorized single-host HTTP load settings. */
+  http_load?: HttpLoadConfig;
   /** Whether to run safe, authorized demonstrations of confirmed findings. */
   safe_demonstration?: boolean | 'true' | 'false';
   /** @deprecated Use safe_demonstration. */
@@ -104,6 +145,10 @@ export interface DistributedConfig {
   vuln_classes: VulnClass[];
   test_scopes: AssessmentScope[];
   test_surfaces: AssessmentSurface[];
+  assessment_modules?: AssessmentModule[];
+  module_safety?: DistributedModuleSafetyYamlConfig;
+  /** Present only when the HTTP load scope is selected. */
+  http_load?: DistributedHttpLoadConfig;
   /** Whether to run safe, authorized demonstrations of confirmed findings. */
   safeDemonstration: boolean;
   report: DistributedReportConfig;

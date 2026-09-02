@@ -17,6 +17,8 @@ export interface StartArgs {
   output?: string;
   pipelineTesting: boolean;
   debug: boolean;
+  iOwnThisTarget: boolean;
+  allowElevatedLoad: boolean;
   version: string;
 }
 
@@ -38,6 +40,8 @@ export async function start(args: StartArgs): Promise<void> {
     ...(args.output && { outputPath: args.output }),
     ...(args.pipelineTesting && { pipelineTesting: true }),
     ...(args.debug && { debug: true }),
+    ...(args.iOwnThisTarget && { authorizationConfirmed: true }),
+    ...(args.allowElevatedLoad && { elevatedLoadConfirmed: true }),
   });
 
   const prefix = isLocal() ? './shannon' : 'npx @keygraph/shannon';

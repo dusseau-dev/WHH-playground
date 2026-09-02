@@ -10,9 +10,18 @@ import type { FormatsPlugin } from 'ajv-formats';
 import yaml from 'js-yaml';
 import { fs } from 'zx';
 import { PentestError } from './services/error-handling.js';
-import type { Authentication, Config, DistributedConfig, Rule, SourceMode } from './types/config.js';
+import type {
+  Authentication,
+  Config,
+  DistributedConfig,
+  DistributedModuleSafetyYamlConfig,
+  ModuleSafetyYamlConfig,
+  Rule,
+  SourceMode,
+} from './types/config.js';
 import { ErrorCode } from './types/errors.js';
-import { normalizeAssessmentScope } from './types/scopes.js';
+import { assertExclusiveHttpLoadExecution, normalizeHttpLoadSettings } from './types/http-load.js';
+import { type ModuleSafetyInput, normalizeAssessmentModules, normalizeAssessmentScope } from './types/scopes.js';
 
 // Handle ESM/CJS interop for ajv-formats using require
 const require = createRequire(import.meta.url);
@@ -51,6 +60,43 @@ type SafeDemonstrationInput = {
   safeDemonstration?: boolean;
   exploit?: BooleanLike;
 };
+
+function moduleSafetyInput(config: ModuleSafetyYamlConfig): ModuleSafetyInput;
+function moduleSafetyInput(config: undefined): undefined;
+function moduleSafetyInput(config: ModuleSafetyYamlConfig | undefined): ModuleSafetyInput | undefined {
+  if (!config) return;
+  return {
+    ...(config.target_environment !== undefined && { targetEnvironment: config.target_environment }),
+    ...(config.allow_active_dast !== undefined && { allowActiveDast: config.allow_active_dast }),
+    ...(config.acknowledge_load_risk !== undefined && { acknowledgeLoadRisk: config.acknowledge_load_risk }),
+    ...(config.max_requests_per_second !== undefined && { maxRequestsPerSecond: config.max_requests_per_second }),
+    ...(config.max_concurrency !== undefined && { maxConcurrency: config.max_concurrency }),
+    ...(config.load_stage_duration_seconds !== undefined && {
+      loadStageDurationSeconds: config.load_stage_duration_seconds,
+    }),
+    ...(config.load_error_rate_threshold !== undefined && {
+      loadErrorRateThreshold: config.load_error_rate_threshold,
+    }),
+    ...(config.load_p95_latency_ms_threshold !== undefined && {
+      loadP95LatencyMsThreshold: config.load_p95_latency_ms_threshold,
+    }),
+  };
+}
+
+function distributedModuleSafety(
+  config: ReturnType<typeof normalizeAssessmentModules>,
+): DistributedModuleSafetyYamlConfig {
+  return {
+    target_environment: config.moduleSafety.targetEnvironment,
+    allow_active_dast: config.moduleSafety.allowActiveDast,
+    acknowledge_load_risk: config.moduleSafety.acknowledgeLoadRisk,
+    max_requests_per_second: config.moduleSafety.maxRequestsPerSecond,
+    max_concurrency: config.moduleSafety.maxConcurrency,
+    load_stage_duration_seconds: config.moduleSafety.loadStageDurationSeconds,
+    load_error_rate_threshold: config.moduleSafety.loadErrorRateThreshold,
+    load_p95_latency_ms_threshold: config.moduleSafety.loadP95LatencyMsThreshold,
+  };
+}
 
 function toBooleanFlag(value: BooleanLike, fieldName: string): boolean {
   if (value === true || value === 'true') return true;
@@ -124,11 +170,39 @@ export function normalizeDistributedConfig(
     ...(config.test_surfaces && { testSurfaces: config.test_surfaces }),
     ...(config.vuln_classes && { vulnClasses: config.vuln_classes }),
   });
+  const httpLoad = normalizeHttpLoadSettings(
+    scope.testScopes,
+    config.http_load
+      ? {
+          ...(config.http_load.concurrency !== undefined && { concurrency: config.http_load.concurrency }),
+          ...(config.http_load.requests_per_second !== undefined && {
+            requestsPerSecond: config.http_load.requests_per_second,
+          }),
+          ...(config.http_load.duration_seconds !== undefined && {
+            durationSeconds: config.http_load.duration_seconds,
+          }),
+        }
+      : undefined,
+  );
+  const modules = normalizeAssessmentModules({
+    ...(config.assessment_modules && { assessmentModules: config.assessment_modules }),
+    ...(config.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
+  });
+  assertExclusiveHttpLoadExecution(scope.testScopes, modules.assessmentModules);
   return {
     ...rest,
     vuln_classes: scope.vulnClasses,
     test_scopes: scope.testScopes,
     test_surfaces: scope.testSurfaces,
+    assessment_modules: modules.assessmentModules,
+    module_safety: distributedModuleSafety(modules),
+    ...(httpLoad && {
+      http_load: {
+        concurrency: httpLoad.concurrency,
+        requests_per_second: httpLoad.requestsPerSecond,
+        duration_seconds: httpLoad.durationSeconds,
+      },
+    }),
     safeDemonstration: resolveSafeDemonstrationFlag(config),
     report: {
       ...report,
@@ -493,11 +567,30 @@ const validateConfig = (config: Config): void => {
 
   resolveSafeDemonstrationFlag(config);
   try {
-    normalizeAssessmentScope({
+    const scope = normalizeAssessmentScope({
       ...(config.test_scopes && { testScopes: config.test_scopes }),
       ...(config.test_surfaces && { testSurfaces: config.test_surfaces }),
       ...(config.vuln_classes && { vulnClasses: config.vuln_classes }),
     });
+    normalizeHttpLoadSettings(
+      scope.testScopes,
+      config.http_load
+        ? {
+            ...(config.http_load.concurrency !== undefined && { concurrency: config.http_load.concurrency }),
+            ...(config.http_load.requests_per_second !== undefined && {
+              requestsPerSecond: config.http_load.requests_per_second,
+            }),
+            ...(config.http_load.duration_seconds !== undefined && {
+              durationSeconds: config.http_load.duration_seconds,
+            }),
+          }
+        : undefined,
+    );
+    const modules = normalizeAssessmentModules({
+      ...(config.assessment_modules && { assessmentModules: config.assessment_modules }),
+      ...(config.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
+    });
+    assertExclusiveHttpLoadExecution(scope.testScopes, modules.assessmentModules);
   } catch (error) {
     throw new PentestError(
       error instanceof Error ? error.message : String(error),
@@ -516,6 +609,9 @@ const validateConfig = (config: Config): void => {
     !!config.vuln_classes ||
     !!config.test_scopes ||
     !!config.test_surfaces ||
+    !!config.assessment_modules ||
+    !!config.module_safety ||
+    !!config.http_load ||
     config.safe_demonstration !== undefined ||
     config.exploit !== undefined ||
     !!config.report ||
@@ -803,6 +899,25 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
     ...(config?.test_surfaces && { testSurfaces: config.test_surfaces }),
     ...(config?.vuln_classes && { vulnClasses: config.vuln_classes }),
   });
+  const httpLoad = normalizeHttpLoadSettings(
+    scope.testScopes,
+    config?.http_load
+      ? {
+          ...(config.http_load.concurrency !== undefined && { concurrency: config.http_load.concurrency }),
+          ...(config.http_load.requests_per_second !== undefined && {
+            requestsPerSecond: config.http_load.requests_per_second,
+          }),
+          ...(config.http_load.duration_seconds !== undefined && {
+            durationSeconds: config.http_load.duration_seconds,
+          }),
+        }
+      : undefined,
+  );
+  const modules = normalizeAssessmentModules({
+    ...(config?.assessment_modules && { assessmentModules: config.assessment_modules }),
+    ...(config?.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
+  });
+  assertExclusiveHttpLoadExecution(scope.testScopes, modules.assessmentModules);
 
   const safeDemonstration = resolveSafeDemonstrationFlag(config);
 
@@ -823,6 +938,15 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
     vuln_classes: scope.vulnClasses,
     test_scopes: scope.testScopes,
     test_surfaces: scope.testSurfaces,
+    assessment_modules: modules.assessmentModules,
+    module_safety: distributedModuleSafety(modules),
+    ...(httpLoad && {
+      http_load: {
+        concurrency: httpLoad.concurrency,
+        requests_per_second: httpLoad.requestsPerSecond,
+        duration_seconds: httpLoad.durationSeconds,
+      },
+    }),
     safeDemonstration,
     report,
     rules_of_engagement,
@@ -872,7 +996,25 @@ function rulesFromConfig(config: ConfigWithRules): { avoid: Rule[]; focus: Rule[
  * available. Source-assisted runs keep their existing repository-backed checks.
  */
 export function validateConfigForSourceMode(config: ConfigWithRules | null, sourceMode: SourceMode): void {
-  if (!config || sourceMode !== 'url-only') return;
+  if (!config) return;
+
+  try {
+    normalizeAssessmentModules({
+      ...(config.assessment_modules && { assessmentModules: config.assessment_modules }),
+      ...(config.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
+      sourceMode,
+    });
+  } catch (error) {
+    throw new PentestError(
+      error instanceof Error ? error.message : String(error),
+      'config',
+      false,
+      {},
+      ErrorCode.CONFIG_VALIDATION_FAILED,
+    );
+  }
+
+  if (sourceMode !== 'url-only') return;
 
   const rules = rulesFromConfig(config);
   const codePathRules = [

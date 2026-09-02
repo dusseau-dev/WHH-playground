@@ -148,7 +148,7 @@
         "type": "string",
         "enum": ["injection", "xss", "auth", "authz", "ssrf"]
       },
-      "minItems": 1,
+      "minItems": 0,
       "maxItems": 5,
       "uniqueItems": true
     },
@@ -183,6 +183,7 @@
           "workflow-bypass",
           "file-upload",
           "rate-limiting",
+          "http-load-capacity",
           "account-enumeration",
           "login-controls",
           "account-recovery-mfa",
@@ -208,6 +209,53 @@
       },
       "minItems": 1,
       "uniqueItems": true
+    },
+    "assessment_modules": {
+      "type": "array",
+      "description": "Assessment methods and operational modules. These run independently from granular vulnerability checks.",
+      "items": {
+        "type": "string",
+        "enum": ["passive-exposure", "automated-dast", "supply-chain", "http-load-capacity"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "module_safety": {
+      "type": "object",
+      "description": "Fail-closed environment, traffic, and automatic-stop policy for assessment modules.",
+      "properties": {
+        "target_environment": { "type": "string", "enum": ["production", "staging"] },
+        "allow_active_dast": { "type": "boolean" },
+        "acknowledge_load_risk": { "type": "boolean" },
+        "max_requests_per_second": { "type": "number", "minimum": 1, "maximum": 10 },
+        "max_concurrency": { "type": "integer", "minimum": 1, "maximum": 25 },
+        "load_stage_duration_seconds": { "type": "integer", "minimum": 10, "maximum": 600 },
+        "load_error_rate_threshold": { "type": "number", "minimum": 0.001, "maximum": 0.5 },
+        "load_p95_latency_ms_threshold": { "type": "integer", "minimum": 100, "maximum": 60000 }
+      },
+      "additionalProperties": false
+    },
+    "http_load": {
+      "type": "object",
+      "description": "Single-host HTTP load parameters. Requires the http-load-capacity test scope and explicit run-time authorization.",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "requests_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        }
+      },
+      "additionalProperties": false
     },
     "exploit": {
       "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
@@ -272,6 +320,9 @@
     { "required": ["vuln_classes"] },
     { "required": ["test_scopes"] },
     { "required": ["test_surfaces"] },
+    { "required": ["assessment_modules"] },
+    { "required": ["module_safety"] },
+    { "required": ["http_load"] },
     { "required": ["safe_demonstration"] },
     { "required": ["exploit"] },
     { "required": ["report"] },

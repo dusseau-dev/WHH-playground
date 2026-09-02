@@ -35,7 +35,17 @@ import {
 import type { AgentName, VulnType } from '../types/agents.js';
 import { ALL_AGENTS } from '../types/agents.js';
 import type { VulnClass } from '../types/config.js';
-import { type NormalizedAssessmentScope, normalizeAssessmentScope } from '../types/scopes.js';
+import {
+  assertExclusiveHttpLoadExecution,
+  assertHttpLoadAuthorization,
+  type HttpLoadSettings,
+  normalizeHttpLoadSettings,
+} from '../types/http-load.js';
+import {
+  type NormalizedAssessmentScope,
+  normalizeAssessmentModules,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 import { redactLogText, redactSecrets } from '../utils/redactSecrets.js';
 import type * as activities from './activities.js';
 import type { ActivityInput } from './activities.js';
@@ -149,6 +159,20 @@ const authValidationActs = proxyActivities<typeof activities>({
   retry: AUTH_VALIDATION_RETRY,
 });
 
+// Scanner and load modules must never be repeated automatically after a timeout or worker restart.
+const assessmentModuleActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '2 hours',
+  heartbeatTimeout: '10 seconds',
+  retry: { maximumAttempts: 1 },
+});
+
+// HTTP load is explicitly non-retrying; its completed artifact supplies resume idempotency.
+const httpLoadActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '65 minutes',
+  heartbeatTimeout: '10 seconds',
+  retry: { maximumAttempts: 1 },
+});
+
 /**
  * Compute aggregated metrics from the current pipeline state.
  * Called on both success and failure to provide partial metrics.
@@ -219,6 +243,28 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
   }
   const selectedVulnClasses: readonly VulnClass[] = assessmentScope.vulnClasses;
   const selectedClassSet = new Set<VulnClass>(selectedVulnClasses);
+  let assessmentModules: ReturnType<typeof normalizeAssessmentModules>;
+  try {
+    assessmentModules = normalizeAssessmentModules({
+      ...(input.assessmentModules && { assessmentModules: input.assessmentModules }),
+      ...(input.moduleSafety && { moduleSafety: input.moduleSafety }),
+      sourceMode,
+    });
+    assertExclusiveHttpLoadExecution(assessmentScope.testScopes, assessmentModules.assessmentModules);
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  let httpLoad: HttpLoadSettings | undefined;
+  try {
+    httpLoad = normalizeHttpLoadSettings(assessmentScope.testScopes, input.httpLoad);
+    assertHttpLoadAuthorization(
+      httpLoad,
+      input.httpLoadAuthorizationConfirmed === true,
+      input.elevatedLoadConfirmed === true,
+    );
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
   let safeDemonstration: boolean;
   try {
     safeDemonstration = resolveSafeDemonstrationInput(input);
@@ -233,6 +279,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     currentAgent: null,
     activeAgents: [],
     activeTestCategories: [],
+    activeModules: [],
     expectedAgents,
     completedAgents: [],
     failedAgent: null,
@@ -240,6 +287,8 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     startTime: Date.now(),
     agentMetrics: {},
     triageRan: false,
+    moduleResults: [],
+    httpLoadStatus: null,
     summary: null,
   };
 
@@ -282,6 +331,11 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     vulnClasses: [...selectedVulnClasses],
     testScopes: assessmentScope.testScopes,
     testSurfaces: assessmentScope.testSurfaces,
+    assessmentModules: assessmentModules.assessmentModules,
+    moduleSafety: assessmentModules.moduleSafety,
+    ...(httpLoad && { httpLoad }),
+    ...(httpLoad && { httpLoadAuthorizationConfirmed: true }),
+    ...(httpLoad && { elevatedLoadConfirmed: input.elevatedLoadConfirmed === true }),
   };
 
   await preflightActs.prepareWorkingDirectory(activityInput);
@@ -322,6 +376,22 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
 
       // These activities are deterministic, so an all-complete resume can repair
       // missing metadata and secondary artifacts without rerunning an agent.
+      state.currentPhase = 'assessment-modules';
+      state.activeModules = [...assessmentModules.assessmentModules];
+      try {
+        state.moduleResults = await a.loadAssessmentModuleResultsActivity(activityInput);
+      } finally {
+        state.activeModules = [];
+      }
+      if (httpLoad) {
+        state.currentPhase = 'http-load-capacity';
+        state.currentAgent = null;
+        const loadResult = await httpLoadActs.runHttpLoadCapacityActivity(activityInput);
+        state.httpLoadStatus = loadResult.status;
+        if (loadResult.status !== 'completed') {
+          log.warn(`HTTP load assessment ended with status ${loadResult.status}; coverage remains incomplete`);
+        }
+      }
       await a.injectReportMetadataActivity(activityInput);
       await a.injectReportModeSectionsActivity(activityInput);
       await a.generateReportOutputActivity(activityInput);
@@ -537,6 +607,20 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     // === Phase 2: Reconnaissance ===
     await runSequentialPhase('recon', 'recon', a.runReconAgent);
 
+    // === Phase 2.5: Assessment Methods and Operational Modules ===
+    // These produce their own machine-verifiable evidence and are never inferred
+    // from the completion of a vulnerability agent.
+    state.currentPhase = 'assessment-modules';
+    state.currentAgent = null;
+    state.activeModules = [...assessmentModules.assessmentModules];
+    await a.logPhaseTransition(activityInput, 'assessment-modules', 'start');
+    try {
+      state.moduleResults = await assessmentModuleActs.runAssessmentModulesActivity(activityInput);
+      await a.logPhaseTransition(activityInput, 'assessment-modules', 'complete');
+    } finally {
+      state.activeModules = [];
+    }
+
     // === Phases 3-4: Vulnerability Analysis + Exploitation (Pipelined) ===
     // Each vuln type runs as an independent pipeline:
     // vuln agent → queue check → conditional exploit agent
@@ -643,11 +727,27 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     state.currentAgent = null;
     await a.logPhaseTransition(activityInput, 'vulnerability-exploitation', 'complete');
 
+    // === Phase 4.25: Explicitly Authorized HTTP Load and Capacity ===
+    if (httpLoad) {
+      state.currentPhase = 'http-load-capacity';
+      state.currentAgent = null;
+      await a.logPhaseTransition(activityInput, 'http-load-capacity', 'start');
+      const loadResult = await httpLoadActs.runHttpLoadCapacityActivity(activityInput);
+      state.httpLoadStatus = loadResult.status;
+      if (loadResult.status !== 'completed') {
+        log.warn(`HTTP load assessment ended with status ${loadResult.status}; coverage remains incomplete`);
+      }
+      await a.logPhaseTransition(activityInput, 'http-load-capacity', 'complete');
+    }
+
     // === Phase 4.5: Triage Gate (fail-open) ===
     // Validates each finding before reporting. A triage failure must never lose a
     // completed exploitation run, so this is wrapped fail-open: on error the report
     // renders all findings under an UNVALIDATED banner (see services/reporting.ts).
-    if (!shouldSkip('triage')) {
+    if (selectedVulnClasses.length === 0) {
+      state.triageRan = false;
+      log.info('Skipping triage because this run has no vulnerability-agent lanes');
+    } else if (!shouldSkip('triage')) {
       state.currentPhase = 'triage';
       state.currentAgent = 'triage';
       activateAgent('triage');

@@ -27,11 +27,13 @@ import { authStateFile, generateSessionJsonPath, type SessionMetadata } from '..
 import type { WorkflowSummary } from '../audit/workflow-logger.js';
 import type { CheckpointContext } from '../interfaces/checkpoint-provider.js';
 import { DEFAULT_DELIVERABLES_SUBDIR, deliverablesDir, resolveSessionJsonPath } from '../paths.js';
+import { loadAssessmentModuleResults, runAssessmentModules } from '../services/assessment-module-runner.js';
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
 import { executeGitCommandWithRetry } from '../services/git-manager.js';
+import { readHttpLoadResult, runHttpLoadCapacity } from '../services/http-load-runner.js';
 import { runPreflightChecks } from '../services/preflight.js';
 import type { ExploitationDecision, VulnType } from '../services/queue-validation.js';
 import {
@@ -40,7 +42,7 @@ import {
   createExactValueRedactor,
 } from '../services/redaction.js';
 import { assembleFinalReport, injectAssessmentModeSections, injectModelIntoReport } from '../services/reporting.js';
-import { createStructuredReportSession } from '../services/structured-report.js';
+import { createStructuredReportSession, synchronizeHttpLoadReportFiles } from '../services/structured-report.js';
 import { validateAuthentication } from '../services/validate-authentication.js';
 import { AGENTS } from '../session-manager.js';
 import type { AgentName } from '../types/agents.js';
@@ -55,9 +57,19 @@ import {
   type VulnClass,
 } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
+import { HTTP_LOAD_SCOPE, type HttpLoadResult, type HttpLoadSettings } from '../types/http-load.js';
 import { isErr } from '../types/result.js';
-import { type AssessmentScope, type AssessmentSurface, normalizeAssessmentScope } from '../types/scopes.js';
+import {
+  type AssessmentModule,
+  type AssessmentScope,
+  type AssessmentSurface,
+  type ModuleExecutionResult,
+  type ModuleSafetyConfig,
+  normalizeAssessmentModules,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 import { atomicWrite, fileExists, readJson } from '../utils/file-io.js';
+import { redactLogText } from '../utils/redactSecrets.js';
 import { createActivityLogger } from './activity-logger.js';
 import { clearPipelineCredentials, resolvePipelineCredentials } from './pipeline-secrets.js';
 import type { AgentMetrics, PipelineState, ResumeState } from './shared.js';
@@ -111,6 +123,16 @@ export interface ActivityInput {
   testScopes?: AssessmentScope[];
   /** Exact interaction surfaces selected by the workflow for this run. */
   testSurfaces?: AssessmentSurface[];
+  /** Exact assessment methods/modules selected by the workflow for this run. */
+  assessmentModules?: AssessmentModule[];
+  /** Normalized fail-closed module safety policy. */
+  moduleSafety?: ModuleSafetyConfig;
+  /** Normalized single-host HTTP load parameters. */
+  httpLoad?: HttpLoadSettings;
+  /** Ephemeral ownership or written-authorization acknowledgement. */
+  httpLoadAuthorizationConfirmed?: boolean;
+  /** Ephemeral acknowledgement for settings above elevated thresholds. */
+  elevatedLoadConfirmed?: boolean;
 }
 
 interface AgentActivityExtensions {
@@ -376,6 +398,7 @@ export async function runReportAgent(
   safeDemonstration: boolean,
   triageRan: boolean,
 ): Promise<AgentMetrics> {
+  const httpLoadResult = input.httpLoad ? await readHttpLoadResult(input.workingDirectory) : undefined;
   const reportSession = await createStructuredReportSession({
     deliverablesPath: deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
     webUrl: input.webUrl,
@@ -384,6 +407,8 @@ export async function runReportAgent(
     triageRan,
     selectedVulnClasses: input.vulnClasses ?? input.configData?.vuln_classes ?? ALL_VULN_CLASSES,
     ...(input.testScopes && { selectedTestScopes: input.testScopes }),
+    ...(input.assessmentModules && { selectedAssessmentModules: input.assessmentModules }),
+    ...(httpLoadResult && { httpLoadResult }),
   });
   return runAgentActivity('report', input, {
     callerTools: reportSession.tools,
@@ -395,6 +420,110 @@ export async function runReportAgent(
 
 export async function runTriageAgent(input: ActivityInput): Promise<AgentMetrics> {
   return runAgentActivity('triage', input);
+}
+
+interface BrowserStorageState {
+  readonly cookies?: ReadonlyArray<{
+    readonly name?: unknown;
+    readonly value?: unknown;
+    readonly domain?: unknown;
+    readonly path?: unknown;
+    readonly expires?: unknown;
+  }>;
+}
+
+async function authenticatedCookieHeader(input: ActivityInput): Promise<string | undefined> {
+  const statePath = authStateFile(buildSessionMetadata(input));
+  if (!(await fileExists(statePath))) return;
+  try {
+    const state = await readJson<BrowserStorageState>(statePath);
+    const target = new URL(input.webUrl);
+    const nowSeconds = Date.now() / 1_000;
+    const cookies = (state.cookies ?? []).filter((cookie) => {
+      if (typeof cookie.name !== 'string' || typeof cookie.value !== 'string' || typeof cookie.domain !== 'string') {
+        return false;
+      }
+      const domain = cookie.domain.replace(/^\./, '').toLowerCase();
+      if (target.hostname !== domain && !target.hostname.endsWith(`.${domain}`)) return false;
+      if (typeof cookie.path === 'string' && !target.pathname.startsWith(cookie.path)) return false;
+      return typeof cookie.expires !== 'number' || cookie.expires < 0 || cookie.expires > nowSeconds;
+    });
+    return cookies.length > 0
+      ? cookies.map((cookie) => `${cookie.name as string}=${cookie.value as string}`).join('; ')
+      : undefined;
+  } catch {
+    return;
+  }
+}
+
+/** Run non-agent assessment methods and return only evidence-backed statuses. */
+export async function runAssessmentModulesActivity(rawInput: ActivityInput): Promise<ModuleExecutionResult[]> {
+  const input = await hydratePipelineCredentials(rawInput);
+  const normalized = normalizeAssessmentModules({
+    ...(input.assessmentModules && { assessmentModules: input.assessmentModules }),
+    ...(input.moduleSafety && { moduleSafety: input.moduleSafety }),
+    sourceMode: input.sourceMode,
+  });
+  const startedAt = Date.now();
+  const heartbeatInterval = setInterval(() => {
+    heartbeat({ phase: 'assessment-modules', elapsedSeconds: Math.floor((Date.now() - startedAt) / 1_000) });
+  }, HEARTBEAT_INTERVAL_MS);
+  try {
+    const authenticationCookie = await authenticatedCookieHeader(input);
+    return await runAssessmentModules({
+      webUrl: input.webUrl,
+      workingDirectory: input.workingDirectory,
+      deliverablesPath: deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
+      sourceMode: input.sourceMode,
+      assessmentModules: normalized.assessmentModules,
+      moduleSafety: normalized.moduleSafety,
+      ...(authenticationCookie && { authenticationCookie }),
+    });
+  } finally {
+    clearInterval(heartbeatInterval);
+  }
+}
+
+/** Read prior module evidence without executing scanners or generating target traffic. */
+export async function loadAssessmentModuleResultsActivity(input: ActivityInput): Promise<ModuleExecutionResult[]> {
+  return loadAssessmentModuleResults(deliverablesDir(input.workingDirectory, input.deliverablesSubdir));
+}
+
+/** Execute the explicitly authorized, single-host HTTP load assessment once. */
+export async function runHttpLoadCapacityActivity(input: ActivityInput): Promise<HttpLoadResult> {
+  if (!input.httpLoad) {
+    throw ApplicationFailure.nonRetryable(
+      'HTTP load activity requires normalized settings',
+      'HttpLoadConfigurationError',
+    );
+  }
+
+  const startedAt = Date.now();
+  const heartbeatInterval = setInterval(() => {
+    heartbeat({ phase: 'http-load-capacity', elapsedSeconds: Math.floor((Date.now() - startedAt) / 1_000) });
+  }, HEARTBEAT_INTERVAL_MS);
+  const logger = createActivityLogger();
+  try {
+    return await runHttpLoadCapacity({
+      webUrl: input.webUrl,
+      workingDirectory: input.workingDirectory,
+      settings: input.httpLoad,
+      authorizationConfirmed: input.httpLoadAuthorizationConfirmed === true,
+      elevatedLoadConfirmed: input.elevatedLoadConfirmed === true,
+      signal: Context.current().cancellationSignal,
+      logger,
+    });
+  } catch (error) {
+    rethrowActivityCancellation(Context.current().cancellationSignal);
+    const message = redactLogText(error);
+    logger.error('HTTP load assessment failed', { message });
+    throw ApplicationFailure.nonRetryable(
+      `HTTP load assessment failed: ${truncateErrorMessage(message)}`,
+      'HttpLoadExecutionError',
+    );
+  } finally {
+    clearInterval(heartbeatInterval);
+  }
 }
 
 /**
@@ -756,6 +885,17 @@ export async function injectReportMetadataActivity(input: ActivityInput): Promis
 export async function injectReportModeSectionsActivity(input: ActivityInput): Promise<void> {
   const logger = createActivityLogger();
   try {
+    if (input.httpLoad) {
+      const result = await readHttpLoadResult(input.workingDirectory);
+      if (result) {
+        const synchronized = await synchronizeHttpLoadReportFiles(
+          deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
+          input.testScopes ?? [HTTP_LOAD_SCOPE],
+          result,
+        );
+        if (synchronized) logger.info('Synchronized HTTP load evidence into the canonical report');
+      }
+    }
     await injectAssessmentModeSections(input.workingDirectory, input.deliverablesSubdir, input.sourceMode, logger);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -793,6 +933,8 @@ interface RunScope {
   testScopes?: AssessmentScope[];
   testSurfaces?: AssessmentSurface[];
   safeDemonstration?: boolean;
+  /** Normalized settings for the explicit HTTP load scope. */
+  httpLoad?: HttpLoadSettings;
   /** @deprecated Legacy session scope field. */
   exploit?: boolean;
   sourceMode: SourceMode;
@@ -1018,8 +1160,9 @@ async function computeRunConfigHashes(
     ]);
   }
   const normalizedConfig = nonSecretRunConfig(configResult.value);
+  const currentProjection = input.httpLoad ? { config: normalizedConfig, httpLoad: input.httpLoad } : normalizedConfig;
   return {
-    current: hashRunConfig(normalizedConfig),
+    current: hashRunConfig(currentProjection),
     preGranular: hashRunConfig(withoutGranularScopeFields(normalizedConfig)),
   };
 }
@@ -1066,6 +1209,14 @@ export async function persistOrValidateRunScope(
       vulnClasses: recorded.vulnClasses,
     });
     const recordedSafeDemonstration = recorded.safeDemonstration ?? recorded.exploit ?? true;
+    const loadSelected = currentScope.testScopes.includes('http-load-capacity');
+    const sameHttpLoad = loadSelected
+      ? recorded.httpLoad !== undefined &&
+        input.httpLoad !== undefined &&
+        recorded.httpLoad.concurrency === input.httpLoad.concurrency &&
+        recorded.httpLoad.requestsPerSecond === input.httpLoad.requestsPerSecond &&
+        recorded.httpLoad.durationSeconds === input.httpLoad.durationSeconds
+      : recorded.httpLoad === undefined && input.httpLoad === undefined;
     const sameClasses =
       recordedScope.vulnClasses.length === currentScope.vulnClasses.length &&
       recordedScope.vulnClasses.every((value) => currentScope.vulnClasses.includes(value));
@@ -1086,14 +1237,15 @@ export async function persistOrValidateRunScope(
       !sameClasses ||
       !sameTestScopes ||
       !sameTestSurfaces ||
+      !sameHttpLoad ||
       recordedSafeDemonstration !== safeDemonstration ||
       recordedSourceMode !== input.sourceMode ||
       !sameConfig
     ) {
       throw ApplicationFailure.nonRetryable(
         `Resume scope mismatch for workspace ${input.sessionId}.\n` +
-          `  Original: source_mode=${recordedSourceMode}, vuln_classes=[${recordedScope.vulnClasses.join(', ')}], test_scopes=[${recordedScope.testScopes.join(', ')}], test_surfaces=[${recordedScope.testSurfaces.join(', ')}], safe_demonstration=${recordedSafeDemonstration}, config_hash=${recorded.configHash ?? '<missing>'}\n` +
-          `  Provided: source_mode=${input.sourceMode}, vuln_classes=[${currentScope.vulnClasses.join(', ')}], test_scopes=[${currentScope.testScopes.join(', ')}], test_surfaces=[${currentScope.testSurfaces.join(', ')}], safe_demonstration=${safeDemonstration}, config_hash=${configHash}\n` +
+          `  Original: source_mode=${recordedSourceMode}, vuln_classes=[${recordedScope.vulnClasses.join(', ')}], test_scopes=[${recordedScope.testScopes.join(', ')}], test_surfaces=[${recordedScope.testSurfaces.join(', ')}], http_load=${recorded.httpLoad ? stableStringify(recorded.httpLoad) : '<none>'}, safe_demonstration=${recordedSafeDemonstration}, config_hash=${recorded.configHash ?? '<missing>'}\n` +
+          `  Provided: source_mode=${input.sourceMode}, vuln_classes=[${currentScope.vulnClasses.join(', ')}], test_scopes=[${currentScope.testScopes.join(', ')}], test_surfaces=[${currentScope.testSurfaces.join(', ')}], http_load=${input.httpLoad ? stableStringify(input.httpLoad) : '<none>'}, safe_demonstration=${safeDemonstration}, config_hash=${configHash}\n` +
           `Resume requires the same scope as the original run. Start a new workspace if you want different scope.`,
         'ScopeMismatchError',
       );
@@ -1113,6 +1265,7 @@ export async function persistOrValidateRunScope(
         vulnClasses: recordedScope.vulnClasses,
         testScopes: recordedScope.testScopes,
         testSurfaces: recordedScope.testSurfaces,
+        ...(input.httpLoad && { httpLoad: input.httpLoad }),
         configHash,
       };
       session.session.sourceMode = recordedSourceMode;
@@ -1127,6 +1280,7 @@ export async function persistOrValidateRunScope(
     testScopes: currentScope.testScopes,
     testSurfaces: currentScope.testSurfaces,
     safeDemonstration,
+    ...(input.httpLoad && { httpLoad: input.httpLoad }),
     sourceMode: input.sourceMode,
     configHash,
   };

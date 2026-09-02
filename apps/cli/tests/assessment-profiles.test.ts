@@ -79,6 +79,24 @@ test_surfaces: [api-graphql]
     expect(parsed.config.testCategories).toEqual(['xss', 'authz']);
   });
 
+  it('accepts assessment modules and bounded staging safety settings', () => {
+    const parsed = parseAssessmentConfigYaml(`
+assessment_modules: [passive-exposure, automated-dast]
+module_safety:
+  target_environment: staging
+  allow_active_dast: true
+  max_requests_per_second: 3
+  max_concurrency: 2
+`);
+    expect(parsed.config.assessmentModules).toEqual(['passive-exposure', 'automated-dast']);
+    expect(parsed.config.moduleSafety).toMatchObject({
+      targetEnvironment: 'staging',
+      allowActiveDast: true,
+      maxRequestsPerSecond: 3,
+      maxConcurrency: 2,
+    });
+  });
+
   it('expands legacy categories to all owned checks', () => {
     const parsed = parseAssessmentConfigYaml('test_categories: [authz]');
     expect(parsed.config.testScopes).toContain('csrf');

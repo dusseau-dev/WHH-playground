@@ -39,6 +39,32 @@ describe('Pi model runtime foundations', () => {
     expect(JSON.stringify(runtime)).not.toContain('environment-secret');
   });
 
+  it('keeps a configured gateway credential in the environment when only the model changes', async () => {
+    const { resolvePiModelRuntime } = await import('../src/ai/pi/model-runtime.js');
+    const runtime = await resolvePiModelRuntime({
+      providerConfig: {
+        providerType: 'openai',
+        model: 'anthropic/claude-opus-4.6',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        openAIFormat: 'chat-completions',
+      },
+      env: {
+        SHANNON_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
+        SHANNON_AI_BASE_URL: 'https://openrouter.ai/api/v1',
+        SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
+        SHANNON_AI_API_KEY: 'environment-openrouter-secret',
+      },
+    });
+
+    expect(runtime.model).toMatchObject({
+      provider: 'openai',
+      id: 'anthropic/claude-opus-4.6',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      api: 'openai-completions',
+    });
+    expect(runtime.credentials.get('openai')).toBe('environment-openrouter-secret');
+  });
+
   it('creates a usable synthetic model for an unknown generic gateway', async () => {
     const { resolvePiModelRuntime } = await import('../src/ai/pi/model-runtime.js');
     const runtime = await resolvePiModelRuntime({

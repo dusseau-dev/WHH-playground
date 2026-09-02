@@ -23,6 +23,7 @@ describe('public deliverable export', () => {
     const deliverables = path.join(root, '.shannon', 'deliverables');
     const output = path.join(root, 'output');
     await fs.mkdir(path.join(deliverables, 'internal'), { recursive: true });
+    await fs.mkdir(path.join(deliverables, 'modules', 'automated-dast'), { recursive: true });
 
     const publicFiles = [
       PUBLIC_REPORT_MARKDOWN_FILENAME,
@@ -47,6 +48,13 @@ describe('public deliverable export', () => {
       ),
     );
     await fs.writeFile(path.join(deliverables, 'internal', 'nested.txt'), 'internal', 'utf8');
+    await fs.writeFile(path.join(deliverables, 'modules', 'manifest.json'), '{"results":[]}', 'utf8');
+    await fs.writeFile(path.join(deliverables, 'modules', 'passive-exposure.json'), '{"status":"completed"}', 'utf8');
+    await fs.writeFile(
+      path.join(deliverables, 'modules', 'automated-dast', 'zap-passive.json'),
+      '{"raw":true}',
+      'utf8',
+    );
 
     const outside = path.join(root, 'outside.md');
     await fs.writeFile(outside, 'outside', 'utf8');
@@ -54,7 +62,8 @@ describe('public deliverable export', () => {
 
     copyDeliverables(root, output);
 
-    expect((await fs.readdir(output)).sort()).toEqual([...publicFiles].sort());
+    expect((await fs.readdir(output)).sort()).toEqual([...publicFiles, 'modules'].sort());
+    expect((await fs.readdir(path.join(output, 'modules'))).sort()).toEqual(['manifest.json', 'passive-exposure.json']);
     await expect(fs.readFile(path.join(output, PUBLIC_REPORT_MARKDOWN_FILENAME), 'utf8')).resolves.toBe(
       PUBLIC_REPORT_MARKDOWN_FILENAME,
     );

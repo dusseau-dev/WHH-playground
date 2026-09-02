@@ -37,10 +37,17 @@ import {
 import { createDockerClient, type DockerContainerState, type WorkerOptions } from './docker.js';
 import { buildEnvFlags, loadEnv, resolveProviderCredentialFiles, validateCredentials } from './env.js';
 import { getWorkspacesDir, initHome } from './home.js';
+import { assertHttpLoadAuthorization, type HttpLoadSettings } from './http-load.js';
 import { isLocal } from './mode.js';
+import { providerConfigMatchesConfiguredModel } from './model-catalog.js';
 import { FINAL_REPORT_FILENAME, INTERNAL_DIR } from './paths.js';
 import { SecretRedactor, safeErrorMessage, sanitizeReportMarkdown } from './redaction.js';
-import type { AssessmentTestScope, AssessmentTestSurface } from './security-scopes.js';
+import type {
+  AssessmentModule,
+  AssessmentTestScope,
+  AssessmentTestSurface,
+  ModuleSafetyInput,
+} from './security-scopes.js';
 import {
   assertSafeIdentifier,
   atomicWriteFile,
@@ -149,6 +156,11 @@ export interface TemporalPipelineInput {
   vulnClasses?: VulnerabilityClass[];
   testScopes?: AssessmentTestScope[];
   testSurfaces?: AssessmentTestSurface[];
+  httpLoad?: HttpLoadSettings;
+  httpLoadAuthorizationConfirmed?: boolean;
+  elevatedLoadConfirmed?: boolean;
+  assessmentModules?: AssessmentModule[];
+  moduleSafety?: ModuleSafetyInput;
   safeDemonstration?: boolean;
   /** @deprecated Inline credentials are staged locally before Temporal submission. */
   apiKey?: string;
@@ -320,19 +332,23 @@ function mergeAttemptProviderConfig(
   } as ProviderConfig;
 }
 
-function requireProviderCredentials(providerConfig: ProviderConfig | undefined): void {
-  if (!providerConfig) return;
-  if (
-    !providerConfig.apiKey &&
-    !providerConfig.authToken &&
-    !(providerConfig.awsAccessKeyId && providerConfig.awsSecretAccessKey)
-  ) {
-    throw new Error('Provider credentials must be supplied again for this model selection');
-  }
+function hasProviderCredentials(providerConfig: ProviderConfig | undefined): boolean {
+  return Boolean(
+    providerConfig?.apiKey ||
+      providerConfig?.authToken ||
+      (providerConfig?.awsAccessKeyId && providerConfig.awsSecretAccessKey),
+  );
 }
 
 function createRunSnapshot(spec: RunLaunchSpec): RunSnapshot {
-  const { secrets = {}, secretRefs = {}, workspace: _workspace, ...safe } = spec;
+  const {
+    secrets = {},
+    secretRefs = {},
+    workspace: _workspace,
+    authorizationConfirmed: _authorizationConfirmed,
+    elevatedLoadConfirmed: _elevatedLoadConfirmed,
+    ...safe
+  } = spec;
   const providerConfig = withoutProviderCredentials(spec.providerConfig);
   return RunSnapshotSchema.parse({
     ...safe,
@@ -353,6 +369,26 @@ function workerConfig(config: AssessmentConfig, secrets: TargetSecrets): Record<
     ...(config.testCategories && { vuln_classes: config.testCategories }),
     ...(config.testScopes && { test_scopes: config.testScopes }),
     ...(config.testSurfaces && { test_surfaces: config.testSurfaces }),
+    ...(config.httpLoad && {
+      http_load: {
+        concurrency: config.httpLoad.concurrency,
+        requests_per_second: config.httpLoad.requestsPerSecond,
+        duration_seconds: config.httpLoad.durationSeconds,
+      },
+    }),
+    ...(config.assessmentModules && { assessment_modules: config.assessmentModules }),
+    ...(config.moduleSafety && {
+      module_safety: {
+        target_environment: config.moduleSafety.targetEnvironment,
+        allow_active_dast: config.moduleSafety.allowActiveDast,
+        acknowledge_load_risk: config.moduleSafety.acknowledgeLoadRisk,
+        max_requests_per_second: config.moduleSafety.maxRequestsPerSecond,
+        max_concurrency: config.moduleSafety.maxConcurrency,
+        load_stage_duration_seconds: config.moduleSafety.loadStageDurationSeconds,
+        load_error_rate_threshold: config.moduleSafety.loadErrorRateThreshold,
+        load_p95_latency_ms_threshold: config.moduleSafety.loadP95LatencyMsThreshold,
+      },
+    }),
     ...(config.safeDemonstration !== undefined && { safe_demonstration: config.safeDemonstration }),
     ...(config.pipeline && {
       pipeline: {
@@ -414,6 +450,9 @@ function workflowProgress(
     currentAgent: null,
     activeAgents: [],
     activeTestCategories: [],
+    activeModules: [],
+    moduleResults: [],
+    httpLoadStatus: null,
     completedAgents: [],
     failedAgent: null,
     error,
@@ -635,6 +674,14 @@ export class ScanController {
       });
   }
 
+  private requireProviderCredentials(providerConfig: ProviderConfig | undefined): void {
+    if (hasProviderCredentials(providerConfig)) return;
+    this.credentialLoader();
+    if (providerConfig && !providerConfigMatchesConfiguredModel(providerConfig)) {
+      throw new Error('Provider credentials must be supplied again for this model selection');
+    }
+  }
+
   async initialize(): Promise<RunListItem[]> {
     if (this.managesDefaultHome) initHome();
     await ensureDirectory(this.workspacesDir, 0o777);
@@ -656,8 +703,7 @@ export class ScanController {
       throw new Error(`Target secrets must be supplied again: ${missingReferences.join(', ')}`);
     }
 
-    requireProviderCredentials(parsed.providerConfig);
-    if (!parsed.providerConfig) this.credentialLoader();
+    this.requireProviderCredentials(parsed.providerConfig);
     const repoPath = parsed.repoPath ? await this.resolveRepository(parsed.repoPath) : undefined;
     const normalized = RunLaunchSpecSchema.parse({
       ...parsed,
@@ -700,7 +746,10 @@ export class ScanController {
         });
         throw new Error(message);
       }
-      return this.launchAttempt(run, effectiveSecrets, normalized.providerConfig);
+      return this.launchAttempt(run, effectiveSecrets, normalized.providerConfig, {
+        authorizationConfirmed: normalized.authorizationConfirmed === true,
+        elevatedLoadConfirmed: normalized.elevatedLoadConfirmed === true,
+      });
     });
   }
 
@@ -759,6 +808,7 @@ export class ScanController {
     runId: string,
     suppliedSecrets: TargetSecrets = {},
     suppliedProviderConfig?: ProviderConfig,
+    loadAuthorization: { authorizationConfirmed?: boolean; elevatedLoadConfirmed?: boolean } = {},
   ): Promise<ManagedRunRecord> {
     return this.withMutation(runId, async () => {
       let run = await this.requireManagedRun(runId);
@@ -780,11 +830,15 @@ export class ScanController {
       }
 
       const providerConfig = mergeAttemptProviderConfig(run.snapshot.providerConfig, suppliedProviderConfig);
-      requireProviderCredentials(providerConfig);
-      if (!providerConfig) this.credentialLoader();
+      assertHttpLoadAuthorization(
+        run.snapshot.config.httpLoad,
+        loadAuthorization.authorizationConfirmed === true,
+        loadAuthorization.elevatedLoadConfirmed === true,
+      );
+      this.requireProviderCredentials(providerConfig);
       await this.runtime.prepare(this.version);
       run = await this.updateRun(run, { status: 'pending' }, ['completedAt', 'lastError']);
-      return this.launchAttempt(run, secrets, providerConfig);
+      return this.launchAttempt(run, secrets, providerConfig, loadAuthorization);
     });
   }
 
@@ -924,6 +978,7 @@ export class ScanController {
     run: ManagedRunRecord,
     secrets: TargetSecrets,
     runtimeProviderConfig?: ProviderConfig,
+    loadAuthorization: { authorizationConfirmed?: boolean; elevatedLoadConfirmed?: boolean } = {},
   ): Promise<ManagedRunRecord> {
     this.assertSnapshotIntegrity(run);
     const attemptNumber = run.attempts.length + 1;
@@ -961,13 +1016,22 @@ export class ScanController {
       const configPath = hasWorkerConfig(config) ? await this.materializeConfig(run.runId, config) : undefined;
       const containerConfigPath = configPath ? `/app/configs/${run.runId}.yaml` : undefined;
       const providerConfig = mergeAttemptProviderConfig(run.snapshot.providerConfig, runtimeProviderConfig);
-      const providerCredentialFiles = providerConfig ? [] : resolveProviderCredentialFiles();
+      const usesConfiguredCredentials = !providerConfig || !hasProviderCredentials(providerConfig);
+      const providerCredentialFiles = usesConfiguredCredentials ? resolveProviderCredentialFiles() : [];
 
       const started = await this.temporal.startWorkflow(
         {
           workflowId,
           taskQueue,
-          input: this.temporalInput(run, attemptNumber, workflowId, containerRoot, containerConfigPath, providerConfig),
+          input: this.temporalInput(
+            run,
+            attemptNumber,
+            workflowId,
+            containerRoot,
+            containerConfigPath,
+            providerConfig,
+            loadAuthorization,
+          ),
         },
         CONTROL_CALL_TIMEOUT_MS,
       );
@@ -986,7 +1050,7 @@ export class ScanController {
         taskQueue,
         workflowId,
         containerName,
-        envFlags: buildEnvFlags({ includeProvider: !providerConfig }),
+        envFlags: buildEnvFlags({ includeProvider: usesConfiguredCredentials }),
         ...(providerCredentialFiles.length > 0 && { providerCredentialFiles }),
         workspace: run.runId,
         workingDirectory: containerRoot,
@@ -1038,6 +1102,7 @@ export class ScanController {
     containerRoot: string,
     configPath: string | undefined,
     providerConfig: ProviderConfig | undefined,
+    loadAuthorization: { authorizationConfirmed?: boolean; elevatedLoadConfirmed?: boolean },
   ): TemporalPipelineInput {
     const pipeline = run.snapshot.config.pipeline;
     return {
@@ -1062,6 +1127,15 @@ export class ScanController {
       ...(run.snapshot.config.testCategories && { vulnClasses: [...run.snapshot.config.testCategories] }),
       ...(run.snapshot.config.testScopes && { testScopes: [...run.snapshot.config.testScopes] }),
       ...(run.snapshot.config.testSurfaces && { testSurfaces: [...run.snapshot.config.testSurfaces] }),
+      ...(run.snapshot.config.httpLoad && {
+        httpLoad: { ...run.snapshot.config.httpLoad },
+        httpLoadAuthorizationConfirmed: loadAuthorization.authorizationConfirmed === true,
+        elevatedLoadConfirmed: loadAuthorization.elevatedLoadConfirmed === true,
+      }),
+      ...(run.snapshot.config.assessmentModules && {
+        assessmentModules: [...run.snapshot.config.assessmentModules],
+      }),
+      ...(run.snapshot.config.moduleSafety && { moduleSafety: { ...run.snapshot.config.moduleSafety } }),
       ...(run.snapshot.config.safeDemonstration !== undefined && {
         safeDemonstration: run.snapshot.config.safeDemonstration,
       }),
