@@ -95,8 +95,8 @@ it('loads Cheaper Inference models with the credential kept server-side', async 
   );
 
   await expect(listConfiguredModels({ env: cheaperInferenceEnvironment, fetcher })).resolves.toEqual([
-    { id: 'claude-opus-4.6', name: 'claude-opus-4.6' },
     { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6', contextLength: 1_000_000 },
+    { id: 'claude-opus-4.6', name: 'claude-opus-4.6' },
     { id: 'gpt-5.6-sol', name: 'GPT 5.6 Sol', contextLength: 400_000 },
   ]);
   expect(fetcher).toHaveBeenCalledWith('https://api.cheaperinference.com/v1/models', {
