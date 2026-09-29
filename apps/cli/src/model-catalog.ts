@@ -41,14 +41,25 @@ function normalizedBaseUrl(value: string | undefined): string | undefined {
   return value?.trim().replace(/\/+$/, '') || undefined;
 }
 
-function isOpenRouter(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
+interface CatalogProvider {
+  readonly id: 'openrouter' | 'cheaper-inference';
+  readonly label: 'OpenRouter' | 'Cheaper Inference';
+}
+
+function catalogProvider(baseUrl: string | undefined): CatalogProvider | undefined {
+  if (!baseUrl) return undefined;
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase();
-    return hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai');
+    if (hostname === 'openrouter.ai' || hostname.endsWith('.openrouter.ai')) {
+      return { id: 'openrouter', label: 'OpenRouter' };
+    }
+    if (hostname === 'api.cheaperinference.com') {
+      return { id: 'cheaper-inference', label: 'Cheaper Inference' };
+    }
   } catch {
-    return false;
+    return undefined;
   }
+  return undefined;
 }
 
 function providerLabel(providerId: string): string {
@@ -74,13 +85,13 @@ function safeProviderConfig(env: NodeJS.ProcessEnv): ConfiguredModelDescription[
 /** Describe the active runner model without returning credential values. */
 export function describeConfiguredModel(env: NodeJS.ProcessEnv = process.env): ConfiguredModelDescription {
   const selection = resolveCliModelSelection(env);
-  const openRouter = isOpenRouter(selection.baseUrl);
+  const catalog = catalogProvider(selection.baseUrl);
   return {
-    providerId: openRouter ? 'openrouter' : selection.providerId,
-    providerLabel: openRouter ? 'OpenRouter' : providerLabel(selection.providerId),
+    providerId: catalog?.id ?? selection.providerId,
+    providerLabel: catalog?.label ?? providerLabel(selection.providerId),
     modelId: selection.modelId,
     credentialConfigured: selection.credentialConfigured,
-    catalogAvailable: openRouter,
+    catalogAvailable: catalog !== undefined,
     providerConfig: safeProviderConfig(env),
   };
 }
@@ -110,7 +121,9 @@ export function providerConfigMatchesConfiguredModel(
 export async function listConfiguredModels(options: ListConfiguredModelsOptions = {}): Promise<ModelCatalogItem[]> {
   const env = options.env ?? process.env;
   const selection = resolveCliModelSelection(env);
-  if (!isOpenRouter(selection.baseUrl)) throw new Error('A model catalog is not available for the configured provider');
+  if (!catalogProvider(selection.baseUrl)) {
+    throw new Error('A model catalog is not available for the configured provider');
+  }
   const credential = selection.credentialName ? env[selection.credentialName]?.trim() : undefined;
   if (!credential) throw new Error('The configured provider credential is unavailable');
 
