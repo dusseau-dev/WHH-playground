@@ -246,7 +246,7 @@ describe('assessment model configuration', () => {
     const sourceSelect = screen.getByLabelText('Model source');
     expect(sourceSelect).toHaveValue('environment');
     expect(screen.getByRole('option', { name: 'Cheaper Inference (configured)' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Model')).toHaveAttribute('placeholder', 'claude-sonnet-4.6');
+    expect(screen.getByRole('combobox', { name: 'Model' })).toHaveAttribute('placeholder', 'claude-sonnet-4.6');
     expect(screen.queryByLabelText('Provider API key')).not.toBeInTheDocument();
     expect(screen.getByText('Cheaper Inference credential is configured on this runner.')).toBeInTheDocument();
 

@@ -380,11 +380,13 @@ export function AssessmentConfigFields({
                 <option value="environment">
                   {modelConfiguration ? `${modelConfiguration.providerLabel} (configured)` : "Environment default"}
                 </option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="xai">xAI</option>
-                <option value="custom">Custom gateway</option>
+                <optgroup label="Per-run override">
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="xai">xAI</option>
+                  <option value="custom">Custom gateway</option>
+                </optgroup>
               </select>
             </label>
             {modelSource === "environment" ? (
