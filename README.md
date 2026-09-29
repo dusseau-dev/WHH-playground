@@ -622,6 +622,19 @@ SHANNON_AI_OPENAI_FORMAT=chat-completions
 
 </details>
 
+#### Cheaper Inference
+
+[Cheaper Inference](https://api.cheaperinference.com/docs) exposes an OpenAI-compatible API and model catalog. Configure it as the runner's environment-backed source:
+
+```bash
+export SHANNON_AI_MODEL=openai:claude-sonnet-4.6
+export SHANNON_AI_BASE_URL=https://api.cheaperinference.com/v1
+export SHANNON_AI_OPENAI_FORMAT=chat-completions
+# Inject SHANNON_AI_API_KEY through your shell or secret manager.
+```
+
+The local operator UI labels this source **Cheaper Inference (configured)**, uses the environment model by default, and loads optional model choices without sending the credential to the browser. Use an exact model ID returned by the provider's `/v1/models` endpoint.
+
 For an Anthropic Messages gateway, use an `anthropic:<model-id>` selection and omit `SHANNON_AI_OPENAI_FORMAT`.
 
 ### Platform-Specific Instructions
