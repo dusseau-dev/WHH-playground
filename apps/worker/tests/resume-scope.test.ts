@@ -1,0 +1,455 @@
+import crypto from 'node:crypto';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { distributeConfig, parseConfigYAML } from '../src/config-parser.js';
+import { removeContainer } from '../src/services/container.js';
+import { type ActivityInput, loadResumeState, persistOrValidateRunScope } from '../src/temporal/activities.js';
+
+vi.mock('../src/temporal/activity-logger.js', () => ({
+  createActivityLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+const tempRoots: string[] = [];
+const workflowIds: string[] = [];
+
+async function makeTempRoot(): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'shannon-scope-'));
+  tempRoots.push(root);
+  return root;
+}
+
+function inputFor(outputPath: string, overrides: Partial<ActivityInput> = {}): ActivityInput {
+  const workflowId = overrides.workflowId ?? `workflow-${workflowIds.length + 1}`;
+  workflowIds.push(workflowId);
+  return {
+    webUrl: 'https://example.test',
+    workingDirectory: '/app/target',
+    sourceMode: 'url-only',
+    workflowId,
+    sessionId: 'workspace-a',
+    outputPath,
+    configYAML: 'description: first config',
+    ...overrides,
+  };
+}
+
+async function readSession(outputPath: string): Promise<{
+  session: {
+    scope?: {
+      sourceMode?: string;
+      configHash?: string;
+      vulnClasses: string[];
+      testScopes?: string[];
+      testSurfaces?: string[];
+      safeDemonstration?: boolean;
+      httpLoad?: { concurrency: number; requestsPerSecond: number; durationSeconds: number };
+      exploit?: boolean;
+    };
+  };
+}> {
+  return JSON.parse(await readFile(path.join(outputPath, 'workspace-a', '.shannon', 'session.json'), 'utf8')) as {
+    session: {
+      scope?: {
+        sourceMode?: string;
+        configHash?: string;
+        vulnClasses: string[];
+        testScopes?: string[];
+        testSurfaces?: string[];
+        safeDemonstration?: boolean;
+        httpLoad?: { concurrency: number; requestsPerSecond: number; durationSeconds: number };
+        exploit?: boolean;
+      };
+    };
+  };
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortJson(nested)]),
+    );
+  }
+  return value;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function legacyConfigHash(yaml: string): string {
+  const {
+    test_scopes: _testScopes,
+    test_surfaces: _testSurfaces,
+    ...legacyConfig
+  } = distributeConfig(parseConfigYAML(yaml));
+  return crypto.createHash('sha256').update(stableJson(legacyConfig)).digest('hex');
+}
+
+afterEach(async () => {
+  for (const workflowId of workflowIds.splice(0)) {
+    removeContainer(workflowId);
+  }
+  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
+});
+
+describe('persistOrValidateRunScope', () => {
+  it('preserves legacy resume checkpoints before initializing current session state', async () => {
+    const outputPath = await makeTempRoot();
+    const workspacePath = path.join(outputPath, 'workspace-a');
+    const legacySessionPath = path.join(workspacePath, 'session.json');
+    const currentSessionPath = path.join(workspacePath, '.shannon', 'session.json');
+    const workingDirectory = path.join(outputPath, 'target');
+    const deliverablesPath = path.join(workingDirectory, '.shannon', 'deliverables');
+    await mkdir(workspacePath, { recursive: true });
+    await mkdir(deliverablesPath, { recursive: true });
+    await writeFile(path.join(deliverablesPath, 'pre_recon_deliverable.md'), '# Existing pre-recon');
+    await writeFile(
+      legacySessionPath,
+      JSON.stringify({
+        session: {
+          id: 'workspace-a',
+          webUrl: 'https://example.test',
+          status: 'in-progress',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          originalWorkflowId: 'workflow-original',
+          resumeAttempts: [],
+        },
+        metrics: {
+          total_duration_ms: 42,
+          total_cost_usd: 0.01,
+          phases: {},
+          agents: {
+            'pre-recon': {
+              status: 'success',
+              checkpoint: 'legacy-checkpoint',
+            },
+          },
+        },
+      }),
+    );
+
+    await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-resume' }), ['xss'], true);
+
+    const migrated = JSON.parse(await readFile(currentSessionPath, 'utf8')) as {
+      session: { originalWorkflowId?: string; scope?: { vulnClasses: string[] } };
+      metrics: { agents: Record<string, { checkpoint?: string }> };
+    };
+    expect(migrated.session.originalWorkflowId).toBe('workflow-original');
+    expect(migrated.session.scope?.vulnClasses).toEqual(['xss']);
+    expect(migrated.metrics.agents['pre-recon']?.checkpoint).toBe('legacy-checkpoint');
+    await expect(access(legacySessionPath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const workspaceName = path.relative(path.resolve('workspaces'), workspacePath);
+    const resumeState = await loadResumeState(workspaceName, 'https://example.test', workingDirectory, 'url-only');
+    expect(resumeState).toMatchObject({
+      completedAgents: ['pre-recon'],
+      checkpointHash: 'legacy-checkpoint',
+      originalWorkflowId: 'workflow-original',
+    });
+  });
+
+  it('stores source mode and a normalized config hash, then accepts the same scope', async () => {
+    const outputPath = await makeTempRoot();
+
+    await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-first' }), ['xss'], true);
+    const firstSession = await readSession(outputPath);
+
+    expect(firstSession.session.scope).toMatchObject({
+      sourceMode: 'url-only',
+      vulnClasses: ['xss'],
+      testScopes: ['security-headers', 'reflected-xss', 'stored-xss', 'dom-xss'],
+      testSurfaces: ['browser', 'api-graphql'],
+      safeDemonstration: true,
+    });
+    expect(firstSession.session.scope?.configHash).toMatch(/^[a-f0-9]{64}$/);
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-second' }), ['xss'], true),
+    ).resolves.toBeUndefined();
+  });
+
+  it('stores normalized HTTP load settings and rejects changed parameters on resume', async () => {
+    const outputPath = await makeTempRoot();
+    const loadInput = {
+      testScopes: ['http-load-capacity'] as const,
+      httpLoad: { concurrency: 5, requestsPerSecond: 10, durationSeconds: 15 },
+    };
+
+    await persistOrValidateRunScope(
+      inputFor(outputPath, { workflowId: 'workflow-load-first', ...loadInput }),
+      [],
+      true,
+    );
+    expect((await readSession(outputPath)).session.scope).toMatchObject({
+      vulnClasses: [],
+      testScopes: ['http-load-capacity'],
+      httpLoad: loadInput.httpLoad,
+    });
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-load-same', ...loadInput }), [], true),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-load-change',
+          ...loadInput,
+          httpLoad: { ...loadInput.httpLoad, durationSeconds: 30 },
+        }),
+        [],
+        true,
+      ),
+    ).rejects.toThrow(/Resume scope mismatch/);
+  });
+
+  it('excludes the Splunk token from resume hashing while binding non-secret detection settings', async () => {
+    const outputPath = await makeTempRoot();
+    const detectionYaml = (token: string, alertIndex = 'security_alerts') => `
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  max_wait_seconds: 30
+  splunk:
+    management_url: https://splunk.example.test:8089
+    telemetry_index: waf_events
+    alert_index: ${alertIndex}
+    token: ${token}
+`;
+    const scope = { testScopes: ['alerting-effectiveness'] as const };
+
+    await persistOrValidateRunScope(
+      inputFor(outputPath, {
+        workflowId: 'workflow-detection-first',
+        configYAML: detectionYaml('token-one'),
+        ...scope,
+      }),
+      [],
+      false,
+    );
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-detection-resume',
+          configYAML: detectionYaml('token-two'),
+          ...scope,
+        }),
+        [],
+        false,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-detection-change',
+          configYAML: detectionYaml('token-three', 'different_alerts'),
+          ...scope,
+        }),
+        [],
+        false,
+      ),
+    ).rejects.toThrow(/Resume scope mismatch/);
+  });
+
+  it('validates and upgrades the pre-granular config hash projection', async () => {
+    const outputPath = await makeTempRoot();
+    await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-original' }), ['xss'], true);
+
+    const sessionPath = path.join(outputPath, 'workspace-a', '.shannon', 'session.json');
+    const session = await readSession(outputPath);
+    if (!session.session.scope) throw new Error('Missing scope');
+    const { testScopes: _testScopes, testSurfaces: _testSurfaces, ...legacyScope } = session.session.scope;
+    session.session.scope = {
+      ...legacyScope,
+      configHash: legacyConfigHash('description: first config'),
+    };
+    await writeFile(sessionPath, JSON.stringify(session, null, 2));
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-resume' }), ['xss'], true),
+    ).resolves.toBeUndefined();
+    const upgraded = await readSession(outputPath);
+    expect(upgraded.session.scope?.testScopes).toEqual(['security-headers', 'reflected-xss', 'stored-xss', 'dom-xss']);
+    expect(upgraded.session.scope?.testSurfaces).toEqual(['browser', 'api-graphql']);
+    expect(upgraded.session.scope?.configHash).not.toBe(legacyConfigHash('description: first config'));
+  });
+
+  it('rejects changed granular checks or surfaces even when execution lanes match', async () => {
+    const outputPath = await makeTempRoot();
+    await persistOrValidateRunScope(
+      inputFor(outputPath, {
+        workflowId: 'workflow-original',
+        testScopes: ['object-access'],
+        testSurfaces: ['browser'],
+      }),
+      ['authz'],
+      true,
+    );
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-scope-change',
+          testScopes: ['csrf'],
+          testSurfaces: ['browser'],
+        }),
+        ['authz'],
+        true,
+      ),
+    ).rejects.toThrow(/test_scopes/);
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-surface-change',
+          testScopes: ['object-access'],
+          testSurfaces: ['api-graphql'],
+        }),
+        ['authz'],
+        true,
+      ),
+    ).rejects.toThrow(/test_surfaces/);
+  });
+
+  it('backfills legacy scope.exploit on resume', async () => {
+    const outputPath = await makeTempRoot();
+    await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-original' }), ['xss'], true);
+
+    const sessionPath = path.join(outputPath, 'workspace-a', '.shannon', 'session.json');
+    const session = await readSession(outputPath);
+    if (!session.session.scope) throw new Error('Missing scope');
+    const { safeDemonstration: _safeDemonstration, ...legacyScope } = session.session.scope;
+    session.session.scope = { ...legacyScope, exploit: true };
+    await writeFile(sessionPath, JSON.stringify(session, null, 2));
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-resume' }), ['xss'], true),
+    ).resolves.toBeUndefined();
+    const backfilled = await readSession(outputPath);
+    expect(backfilled.session.scope?.safeDemonstration).toBe(true);
+    expect(backfilled.session.scope?.exploit).toBeUndefined();
+  });
+
+  it('allows secret rotation without treating it as non-secret configuration drift', async () => {
+    const outputPath = await makeTempRoot();
+    const configYAML = (password: string) => `
+authentication:
+  login_type: form
+  login_url: https://example.test/login
+  credentials:
+    username: operator
+    password: ${password}
+  success_condition:
+    type: url_contains
+    value: /home
+`;
+    await persistOrValidateRunScope(
+      inputFor(outputPath, { workflowId: 'workflow-secret-first', configYAML: configYAML('first-password') }),
+      ['xss'],
+      true,
+    );
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, { workflowId: 'workflow-secret-second', configYAML: configYAML('rotated-password') }),
+        ['xss'],
+        true,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects changed URL, source mode, classes, demonstration flag, repository, and config hash', async () => {
+    const outputPath = await makeTempRoot();
+    await persistOrValidateRunScope(
+      inputFor(outputPath, {
+        workflowId: 'workflow-original',
+        sourceMode: 'source-assisted',
+        repoPath: '/repos/app',
+        workingDirectory: '/repos/app',
+      }),
+      ['xss'],
+      true,
+    );
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-url-change',
+          sourceMode: 'source-assisted',
+          repoPath: '/repos/app',
+          workingDirectory: '/repos/app',
+          webUrl: 'https://other.example.test',
+        }),
+        ['xss'],
+        true,
+      ),
+    ).rejects.toThrow(/URL mismatch/);
+
+    await expect(
+      persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-mode-change' }), ['xss'], true),
+    ).rejects.toThrow(/source_mode/);
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-repo-change',
+          sourceMode: 'source-assisted',
+          repoPath: '/repos/other',
+          workingDirectory: '/repos/other',
+        }),
+        ['xss'],
+        true,
+      ),
+    ).rejects.toThrow(/Repository mismatch/);
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-class-change',
+          sourceMode: 'source-assisted',
+          repoPath: '/repos/app',
+          workingDirectory: '/repos/app',
+        }),
+        ['auth'],
+        true,
+      ),
+    ).rejects.toThrow(/Resume scope mismatch/);
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-demonstration-change',
+          sourceMode: 'source-assisted',
+          repoPath: '/repos/app',
+          workingDirectory: '/repos/app',
+        }),
+        ['xss'],
+        false,
+      ),
+    ).rejects.toThrow(/Resume scope mismatch/);
+
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-config-change',
+          sourceMode: 'source-assisted',
+          repoPath: '/repos/app',
+          workingDirectory: '/repos/app',
+          configYAML: 'description: changed config',
+        }),
+        ['xss'],
+        true,
+      ),
+    ).rejects.toThrow(/config_hash/);
+  });
+});

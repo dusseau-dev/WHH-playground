@@ -11,6 +11,7 @@
  * All functions are pure and crash-safe.
  */
 
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { INTERNAL_DIR, WORKSPACES_DIR } from '../paths.js';
 import { ensureDirectory } from '../utils/file-io.js';
@@ -35,9 +36,8 @@ export function generateSessionIdentifier(sessionMetadata: SessionMetadata): str
 }
 
 /**
- * Generate path to a run directory for a session (its top level).
- * Uses custom outputPath if provided, otherwise defaults to WORKSPACES_DIR.
- * Only the final report lives here; all internals live under INTERNAL_DIR.
+ * Generate path to audit log directory for a session
+ * Uses custom outputPath if provided, otherwise defaults to WORKSPACES_DIR
  */
 export function generateAuditPath(sessionMetadata: SessionMetadata): string {
   const sessionIdentifier = generateSessionIdentifier(sessionMetadata);
@@ -45,10 +45,7 @@ export function generateAuditPath(sessionMetadata: SessionMetadata): string {
   return path.join(baseDir, sessionIdentifier);
 }
 
-/**
- * Generate path to the hidden internals directory inside a run directory.
- * Holds logs, prompts, session state, deliverables, and browser artifacts.
- */
+/** Generate the hidden state directory within an assessment workspace. */
 export function generateInternalPath(sessionMetadata: SessionMetadata): string {
   return path.join(generateAuditPath(sessionMetadata), INTERNAL_DIR);
 }
@@ -62,25 +59,49 @@ export function generateLogPath(
   timestamp: number,
   attemptNumber: number,
 ): string {
-  const internalPath = generateInternalPath(sessionMetadata);
+  const auditPath = generateInternalPath(sessionMetadata);
   const filename = `${timestamp}_${agentName}_attempt-${attemptNumber}.log`;
-  return path.join(internalPath, 'agents', filename);
+  return path.join(auditPath, 'agents', filename);
 }
 
 /**
  * Generate path to prompt snapshot file
  */
 export function generatePromptPath(sessionMetadata: SessionMetadata, agentName: string): string {
-  const internalPath = generateInternalPath(sessionMetadata);
-  return path.join(internalPath, 'prompts', `${agentName}.md`);
+  const auditPath = generateInternalPath(sessionMetadata);
+  return path.join(auditPath, 'prompts', `${agentName}.md`);
 }
 
 /**
  * Generate path to session.json file
  */
 export function generateSessionJsonPath(sessionMetadata: SessionMetadata): string {
-  const internalPath = generateInternalPath(sessionMetadata);
-  return path.join(internalPath, 'session.json');
+  const auditPath = generateInternalPath(sessionMetadata);
+  return path.join(auditPath, 'session.json');
+}
+
+/**
+ * Promote legacy workspace-root session state before a current-path file can be
+ * initialized. Linking first makes the complete legacy file visible atomically;
+ * removing the old name afterwards completes the migration.
+ */
+async function migrateLegacySessionJson(sessionMetadata: SessionMetadata): Promise<void> {
+  const legacyPath = path.join(generateAuditPath(sessionMetadata), 'session.json');
+  const currentPath = generateSessionJsonPath(sessionMetadata);
+
+  try {
+    await fs.link(legacyPath, currentPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'EEXIST') return;
+    throw error;
+  }
+
+  try {
+    await fs.unlink(legacyPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }
 
 /**
@@ -95,21 +116,21 @@ export function authStateFile(sessionMetadata: SessionMetadata): string {
  * Generate path to workflow.log file
  */
 export function generateWorkflowLogPath(sessionMetadata: SessionMetadata): string {
-  const internalPath = generateInternalPath(sessionMetadata);
-  return path.join(internalPath, 'workflow.log');
+  const auditPath = generateInternalPath(sessionMetadata);
+  return path.join(auditPath, 'workflow.log');
 }
 
 /**
- * Initialize audit directory structure for a session.
- * Creates: workspaces/{sessionId}/.shannon/{agents,prompts}. The deliverables,
- * scratchpad, and browser dirs are created host-side and bind-mounted in.
+ * Initialize audit directory structure for a session
+ * Creates: workspaces/{sessionId}/.shannon/{agents,prompts}/
  */
 export async function initializeAuditStructure(sessionMetadata: SessionMetadata): Promise<void> {
-  const internalPath = generateInternalPath(sessionMetadata);
-  const agentsPath = path.join(internalPath, 'agents');
-  const promptsPath = path.join(internalPath, 'prompts');
+  const auditPath = generateInternalPath(sessionMetadata);
+  const agentsPath = path.join(auditPath, 'agents');
+  const promptsPath = path.join(auditPath, 'prompts');
 
-  await ensureDirectory(internalPath);
+  await ensureDirectory(auditPath);
+  await migrateLegacySessionJson(sessionMetadata);
   await ensureDirectory(agentsPath);
   await ensureDirectory(promptsPath);
 }

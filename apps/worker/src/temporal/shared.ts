@@ -2,16 +2,43 @@ import { defineQuery } from '@temporalio/workflow';
 
 export type { AgentMetrics } from '../types/metrics.js';
 
-import type { DistributedConfig, VulnClass } from '../types/config.js';
+import type { DistributedConfig, PipelineConfig, ProviderConfig, SourceMode, VulnClass } from '../types/config.js';
+import {
+  type DetectionValidationSettings,
+  type DetectionValidationStatus,
+  normalizeDetectionValidationSettings,
+} from '../types/detection-validation.js';
 import type { ErrorCode } from '../types/errors.js';
+import {
+  assertExclusiveHttpLoadExecution,
+  assertHttpLoadAuthorization,
+  type HttpLoadSettings,
+  type HttpLoadStatus,
+  normalizeHttpLoadSettings,
+} from '../types/http-load.js';
 import type { AgentMetrics } from '../types/metrics.js';
+import {
+  type AssessmentModule,
+  type AssessmentScope,
+  type AssessmentSurface,
+  type ModuleExecutionResult,
+  type ModuleSafetyInput,
+  normalizeAssessmentModules,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 
 export interface PipelineInput {
   webUrl: string;
-  repoPath: string;
+  /** Source repository. Omitted for URL-only assessments. */
+  repoPath?: string;
+  /** Inferred from repoPath when omitted for backward compatibility. */
+  sourceMode?: SourceMode;
+  /** Writable cwd and artifact root. Defaults to repoPath for legacy callers. */
+  workingDirectory?: string;
   configPath?: string;
   outputPath?: string;
   pipelineTestingMode?: boolean;
+  pipelineConfig?: PipelineConfig;
   workflowId?: string; // Used for audit correlation
   sessionId?: string; // Workspace directory name (distinct from workflowId for named workspaces)
   resumeFromWorkspace?: string; // Workspace name to resume from
@@ -20,13 +47,40 @@ export interface PipelineInput {
   // Config fields — serializable, flow through to ActivityInput → getOrCreateContainer()
   configYAML?: string; // Raw YAML string (parsed in activity, not workflow — workflow sandbox can't use Node.js)
   configData?: DistributedConfig; // Pre-parsed config (bypasses file loading)
+  /** @deprecated Stage with an opaque secretRef before starting a Temporal workflow. */
+  apiKey?: string;
   deliverablesSubdir?: string; // Override deliverables path (default: '.shannon/deliverables')
   auditDir?: string; // Override audit log directory (default: './workspaces')
   promptDir?: string; // Override prompt template directory
   sastSarifPath?: string; // Optional path for consumer-supplied findings input
   checkpointsEnabled?: boolean; // Enable checkpoint activities (default: false)
+  skipGitCheck?: boolean; // Skip .git directory validation in preflight (e.g. when .git is removed after clone)
+  /** Non-secret provider settings. Credential fields must be staged behind secretRef. */
+  providerConfig?: ProviderConfig;
+  /** Opaque reference to provider credentials in the worker-local run store. */
+  secretRef?: string;
   vulnClasses?: VulnClass[]; // omitted = all five
-  exploit?: boolean; // false skips the exploitation phase
+  /** Granular checks selected for this run. */
+  testScopes?: AssessmentScope[];
+  /** Browser/API surfaces selected for this run. */
+  testSurfaces?: AssessmentSurface[];
+  /** Assessment methods/modules, independent from vulnerability lanes. */
+  assessmentModules?: AssessmentModule[];
+  /** Fail-closed traffic and environment policy for assessment modules. */
+  moduleSafety?: ModuleSafetyInput;
+  /** Single-host HTTP load parameters, normalized when its scope is selected. */
+  httpLoad?: Partial<HttpLoadSettings>;
+  /** Run-time ownership or written-authorization acknowledgement. */
+  httpLoadAuthorizationConfirmed?: boolean;
+  /** Staging-only settings for the dedicated detection-validation executor. */
+  detectionValidation?: DetectionValidationSettings;
+  /** Ephemeral ownership or written-authorization acknowledgement. */
+  detectionValidationAuthorizationConfirmed?: boolean;
+  /** Additional acknowledgement required above elevated-load thresholds. */
+  elevatedLoadConfirmed?: boolean;
+  safeDemonstration?: boolean; // false skips the safe-demonstration phase
+  /** @deprecated Use safeDemonstration. */
+  exploit?: boolean;
 }
 
 export interface ResumeState {
@@ -41,22 +95,39 @@ export interface PipelineSummary {
   totalCostUsd: number;
   totalDurationMs: number; // Wall-clock time (end - start)
   totalTurns: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheWriteTokens: number;
   agentCount: number;
 }
 
 export interface PipelineState {
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'partial';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
   currentPhase: string | null;
   currentAgent: string | null;
+  /** Agents currently executing. Unlike currentAgent, this represents parallel pipelines. */
+  activeAgents: string[];
+  /** Security test categories currently executing in parallel. */
+  activeTestCategories: VulnClass[];
+  /** Assessment methods currently executing outside vulnerability lanes. */
+  activeModules: AssessmentModule[];
+  /** Configured execution plan, excluding preflight and authentication validation. */
+  expectedAgents: string[];
   completedAgents: string[];
-  // Vuln classes whose pipeline failed while at least one other succeeded. Drives the
-  // partial terminal status so a crashed class isn't reported as if it fully passed.
-  failedPipelines: { vulnType: VulnClass; error: string }[];
   failedAgent: string | null;
   error: string | null;
   errorCode?: ErrorCode;
   startTime: number;
   agentMetrics: Record<string, AgentMetrics>;
+  /** False when the triage gate failed open — the report renders an UNVALIDATED banner. */
+  triageRan: boolean;
+  /** Evidence-backed module outcomes; absent evidence is never inferred as completion. */
+  moduleResults: ModuleExecutionResult[];
+  /** Evidence-backed outcome for the explicit HTTP load activity. */
+  httpLoadStatus: HttpLoadStatus | null;
+  /** Evidence-backed outcome for the dedicated detection-validation executor. */
+  detectionValidationStatus: DetectionValidationStatus | null;
   summary: PipelineSummary | null;
 }
 
@@ -68,7 +139,7 @@ export interface PipelineProgress extends PipelineState {
 
 // Result from a single vuln→exploit pipeline
 export interface VulnExploitPipelineResult {
-  vulnType: VulnClass;
+  vulnType: string;
   vulnMetrics: AgentMetrics | null;
   exploitMetrics: AgentMetrics | null;
   exploitDecision: {
@@ -77,5 +148,232 @@ export interface VulnExploitPipelineResult {
   } | null;
   error: string | null;
 }
+
+export interface NormalizedSourceContext {
+  sourceMode: SourceMode;
+  workingDirectory: string;
+  repoPath?: string;
+}
+
+export type NormalizedPipelineInput =
+  | (PipelineInput & { sourceMode: 'source-assisted'; workingDirectory: string; repoPath: string })
+  | (PipelineInput & { sourceMode: 'url-only'; workingDirectory: string; repoPath?: never });
+
+export const DEFAULT_URL_ONLY_WORKING_DIRECTORY = '/app/target';
+
+const PROVIDER_CREDENTIAL_FIELDS = new Set<keyof ProviderConfig>([
+  'apiKey',
+  'awsAccessKeyId',
+  'awsSecretAccessKey',
+  'awsSessionToken',
+  'authToken',
+]);
+
+/** True when a provider configuration still contains a credential value. */
+export function hasInlineProviderCredentials(input: Pick<PipelineInput, 'apiKey' | 'providerConfig'>): boolean {
+  if (input.apiKey !== undefined) return true;
+  return Object.entries(input.providerConfig ?? {}).some(
+    ([key, value]) => PROVIDER_CREDENTIAL_FIELDS.has(key as keyof ProviderConfig) && value !== undefined,
+  );
+}
+
+/** Inline configuration may contain target authentication credentials. */
+export function hasInlineSensitiveConfiguration(input: Pick<PipelineInput, 'configYAML' | 'configData'>): boolean {
+  return input.configYAML !== undefined || input.configData !== undefined;
+}
+
+/** Keep provider routing/model settings while excluding credential-bearing fields. */
+export function withoutProviderCredentials(providerConfig: ProviderConfig | undefined): ProviderConfig | undefined {
+  if (!providerConfig) return;
+  const safe = Object.fromEntries(
+    Object.entries(providerConfig).filter(([key]) => !PROVIDER_CREDENTIAL_FIELDS.has(key as keyof ProviderConfig)),
+  ) as ProviderConfig;
+  return Object.keys(safe).length > 0 ? safe : undefined;
+}
+
+function validateAbsolutePath(name: string, value: string): void {
+  if (!value.startsWith('/')) {
+    throw new Error(`Invalid ${name}: absolute path required (received: ${value})`);
+  }
+  if (value.split('/').includes('..')) {
+    throw new Error(`Invalid ${name}: path traversal not allowed (received: ${value})`);
+  }
+}
+
+/** Normalize legacy source-assisted inputs and validate first-class URL-only inputs. */
+export function normalizeSourceContext(input: PipelineInput): NormalizedSourceContext {
+  const sourceMode: SourceMode = input.sourceMode ?? (input.repoPath ? 'source-assisted' : 'url-only');
+
+  if (sourceMode === 'source-assisted' && !input.repoPath) {
+    throw new Error('Invalid source context: source-assisted mode requires repoPath');
+  }
+  if (sourceMode === 'url-only' && input.repoPath) {
+    throw new Error('Invalid source context: url-only mode must not include repoPath');
+  }
+
+  const workingDirectory = input.workingDirectory ?? input.repoPath;
+  if (!workingDirectory) {
+    throw new Error('Invalid source context: workingDirectory is required when repoPath is omitted');
+  }
+
+  validateAbsolutePath('workingDirectory', workingDirectory);
+  if (input.repoPath) validateAbsolutePath('repoPath', input.repoPath);
+
+  return {
+    sourceMode,
+    workingDirectory,
+    ...(input.repoPath !== undefined && { repoPath: input.repoPath }),
+  };
+}
+
+/**
+ * Normalize worker CLI-style source input into the pipeline contract.
+ *
+ * CLI callers are allowed to omit sourceMode:
+ * - repoPath present means source-assisted.
+ * - repoPath absent means URL-only with /app/target as the writable workspace.
+ *
+ * This only normalizes source fields. Call protectPipelineInput before Temporal
+ * submission when legacy inline credentials or configuration are present.
+ */
+export function normalizeCliPipelineInput(input: PipelineInput): NormalizedPipelineInput {
+  const sourceMode: SourceMode = input.sourceMode ?? (input.repoPath ? 'source-assisted' : 'url-only');
+  const workingDirectory =
+    input.workingDirectory ?? (sourceMode === 'url-only' ? DEFAULT_URL_ONLY_WORKING_DIRECTORY : input.repoPath);
+  const safeDemonstration = resolveSafeDemonstrationInput(input);
+  const assessmentScope = normalizeAssessmentScope({
+    ...(input.testScopes && { testScopes: input.testScopes }),
+    ...(input.testSurfaces && { testSurfaces: input.testSurfaces }),
+    ...(input.vulnClasses && { vulnClasses: input.vulnClasses }),
+  });
+  const distributedModuleSafety = input.configData?.module_safety;
+  const requestedModules = input.assessmentModules ?? input.configData?.assessment_modules;
+  const requestedModuleSafety =
+    input.moduleSafety ??
+    (distributedModuleSafety
+      ? {
+          targetEnvironment: distributedModuleSafety.target_environment,
+          allowActiveDast: distributedModuleSafety.allow_active_dast,
+          acknowledgeLoadRisk: distributedModuleSafety.acknowledge_load_risk,
+          maxRequestsPerSecond: distributedModuleSafety.max_requests_per_second,
+          maxConcurrency: distributedModuleSafety.max_concurrency,
+          loadStageDurationSeconds: distributedModuleSafety.load_stage_duration_seconds,
+          loadErrorRateThreshold: distributedModuleSafety.load_error_rate_threshold,
+          loadP95LatencyMsThreshold: distributedModuleSafety.load_p95_latency_ms_threshold,
+        }
+      : undefined);
+  const modules = normalizeAssessmentModules({
+    ...(requestedModules && { assessmentModules: requestedModules }),
+    ...(requestedModuleSafety && { moduleSafety: requestedModuleSafety }),
+    sourceMode,
+  });
+  assertExclusiveHttpLoadExecution(assessmentScope.testScopes, modules.assessmentModules);
+  const distributedHttpLoad = input.configData?.http_load;
+  const httpLoad = normalizeHttpLoadSettings(
+    assessmentScope.testScopes,
+    input.httpLoad ??
+      (distributedHttpLoad
+        ? {
+            concurrency: distributedHttpLoad.concurrency,
+            requestsPerSecond: distributedHttpLoad.requests_per_second,
+            durationSeconds: distributedHttpLoad.duration_seconds,
+          }
+        : undefined),
+  );
+  const httpLoadAuthorizationConfirmed = httpLoad ? input.httpLoadAuthorizationConfirmed === true : false;
+  const elevatedLoadConfirmed = httpLoad ? input.elevatedLoadConfirmed === true : false;
+  assertHttpLoadAuthorization(httpLoad, httpLoadAuthorizationConfirmed, elevatedLoadConfirmed);
+  const distributedDetectionValidation = input.configData?.detection_validation;
+  const detectionValidation = normalizeDetectionValidationSettings(
+    assessmentScope.testScopes,
+    input.detectionValidation ??
+      (distributedDetectionValidation
+        ? {
+            canaryPath: distributedDetectionValidation.canary_path,
+            minimumDetectionRate: distributedDetectionValidation.minimum_detection_rate,
+            maxWaitSeconds: distributedDetectionValidation.max_wait_seconds,
+            splunk: {
+              managementUrl: distributedDetectionValidation.splunk.management_url,
+              telemetryIndex: distributedDetectionValidation.splunk.telemetry_index,
+              alertIndex: distributedDetectionValidation.splunk.alert_index,
+              ...(distributedDetectionValidation.splunk.telemetry_sourcetype && {
+                telemetrySourcetype: distributedDetectionValidation.splunk.telemetry_sourcetype,
+              }),
+              ...(distributedDetectionValidation.splunk.alert_sourcetype && {
+                alertSourcetype: distributedDetectionValidation.splunk.alert_sourcetype,
+              }),
+            },
+          }
+        : undefined),
+    modules.moduleSafety.targetEnvironment,
+  );
+  if (detectionValidation && input.detectionValidationAuthorizationConfirmed !== true) {
+    throw new Error('Detection validation requires ownership or written authorization confirmation');
+  }
+  if (detectionValidation && new URL(input.webUrl).protocol !== 'https:') {
+    throw new Error('Detection validation requires an HTTPS target with valid TLS');
+  }
+  const { exploit: _legacyExploit, ...inputWithoutLegacyFlag } = input;
+
+  const normalized: PipelineInput = {
+    ...inputWithoutLegacyFlag,
+    sourceMode,
+    safeDemonstration,
+    testScopes: assessmentScope.testScopes,
+    testSurfaces: assessmentScope.testSurfaces,
+    vulnClasses: assessmentScope.vulnClasses,
+    assessmentModules: modules.assessmentModules,
+    moduleSafety: modules.moduleSafety,
+    ...(httpLoad && { httpLoad }),
+    ...(detectionValidation && { detectionValidation }),
+    ...(detectionValidation && { detectionValidationAuthorizationConfirmed: true }),
+    httpLoadAuthorizationConfirmed,
+    elevatedLoadConfirmed,
+    ...(workingDirectory !== undefined && { workingDirectory }),
+  };
+
+  const sourceContext = normalizeSourceContext(normalized);
+  return {
+    ...normalized,
+    sourceMode: sourceContext.sourceMode,
+    workingDirectory: sourceContext.workingDirectory,
+    ...(sourceContext.repoPath !== undefined && { repoPath: sourceContext.repoPath }),
+  } as NormalizedPipelineInput;
+}
+
+/**
+ * Resolve the canonical safe-demonstration workflow flag.
+ *
+ * `exploit` is accepted for callers that have not migrated yet, but conflicting
+ * values are rejected before workflow execution starts.
+ */
+export function resolveSafeDemonstrationInput(input: { safeDemonstration?: boolean; exploit?: boolean }): boolean {
+  if (
+    input.safeDemonstration !== undefined &&
+    input.exploit !== undefined &&
+    input.safeDemonstration !== input.exploit
+  ) {
+    throw new Error('Invalid demonstration settings: safeDemonstration conflicts with legacy exploit');
+  }
+  return input.safeDemonstration ?? input.exploit ?? true;
+}
+
+/** Agents configured for a run. Safe-demonstration entries are conditional at runtime. */
+export function computeExpectedAgents(
+  sourceMode: SourceMode,
+  vulnClasses: readonly VulnClass[],
+  safeDemonstration: boolean,
+): string[] {
+  const expected: string[] = sourceMode === 'source-assisted' ? ['pre-recon', 'recon'] : ['recon'];
+  for (const cls of vulnClasses) {
+    expected.push(`${cls}-vuln`);
+    if (safeDemonstration) expected.push(`${cls}-exploit`);
+  }
+  if (vulnClasses.length > 0) expected.push('triage');
+  expected.push('report');
+  return expected;
+}
+
+export type { SourceMode } from '../types/config.js';
 
 export const getProgress = defineQuery<PipelineProgress>('getProgress');

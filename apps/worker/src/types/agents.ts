@@ -25,6 +25,7 @@ export const ALL_AGENTS = [
   'auth-exploit',
   'ssrf-exploit',
   'authz-exploit',
+  'triage',
   'report',
 ] as const;
 
@@ -48,6 +49,7 @@ export interface AgentDefinition {
   prerequisites: AgentName[];
   promptTemplate: string;
   deliverableFilename: string;
+  modelTier?: 'small' | 'medium' | 'large';
 }
 
 /**

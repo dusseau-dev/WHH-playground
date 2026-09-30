@@ -1,22 +1,4 @@
-// Copyright (C) 2025 Keygraph, Inc.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License version 3
-// as published by the Free Software Foundation.
-
-/**
- * Generic `task` tool — pi.dev ships no built-in Task tool, so this supplies the
- * Task-delegation surface Shannon's prompts require.
- *
- * Shannon's prompts mandate Task delegation (recon source tracer; the vuln
- * agents delegate *every* code review; the exploit agents delegate automation),
- * so this tool is required for parity, not optional. It spawns a nested pi
- * session with the parent's resolved model object (never a tier string — that
- * would route sub-agents through hardcoded IDs and leak billing), the parent's
- * resource loader, and a fixed child tool surface.
- */
-
-import { type AssistantMessage, type Model, Type } from '@earendil-works/pi-ai';
+import { type Api, type AssistantMessage, type Model, Type } from '@earendil-works/pi-ai';
 import {
   createAgentSession,
   defineTool,
@@ -27,29 +9,25 @@ import {
   SettingsManager,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
+import { attachCancellation } from './cancellation.js';
 import { PI_RETRY_SETTINGS } from './retry-settings.js';
+
+export interface PiUsage {
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
 
 export interface TaskToolContext {
   cwd: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  model: Model<any>;
-  /** Parent's model/auth runtime, reused so sub-agents share its resolved credential. */
+  model: Model<Api>;
   modelRuntime: ModelRuntime;
   resourceLoader: ResourceLoader;
-  cancellationSignal?: AbortSignal | undefined;
-  /**
-   * Reports the cost/tokens of each spawned sub-session back to the caller.
-   * Sub-agents run in their own pi sessions that the parent has no reference to,
-   * so without this their spend (the bulk of a whitebox run, since Shannon
-   * prompts delegate the heavy work) is invisible to billing.
-   */
-  onUsage?: (usage: {
-    cost: number;
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-  }) => void;
+  cancellationSignal?: AbortSignal;
+  onUsage?: (usage: PiUsage) => void;
+  redactText?: (value: string) => string;
 }
 
 const CHILD_TOOLS = ['read', 'grep', 'find', 'ls', 'write', 'bash'];
@@ -58,102 +36,74 @@ function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }], details: undefined };
 }
 
+/** Task delegation reuses the parent's model/runtime, cwd, policy loader, and cancellation. */
 export function createTaskTool(config: TaskToolContext): ToolDefinition {
-  const taskTool: ToolDefinition = defineTool({
+  return defineTool({
     name: 'task',
     label: 'Task',
-    description:
-      'Delegate a focused task to a sub-agent that runs independently with its own tools and returns ' +
-      'the result. Use this to break complex work into smaller, parallelizable sub-tasks.',
+    description: 'Delegate a focused task to an isolated in-memory child agent and return its result.',
     executionMode: 'parallel',
-    promptSnippet: 'task - Delegate a focused task to a sub-agent with read, grep, find, ls, write, and bash.',
+    promptSnippet: 'task: delegate focused work to a child agent',
     promptGuidelines: [
-      'Use the task tool to delegate focused work: code review, reconnaissance, automation scripting, validation.',
-      'Pass all necessary context in the "prompt" parameter — the sub-agent cannot see your conversation history.',
-      'The sub-agent can use read, grep, find, ls, write, and bash, but cannot call task or custom collector tools.',
-      'You can launch multiple task tool calls in a single message to run sub-tasks in parallel.',
+      'Pass all required context in the prompt; the child cannot see the parent conversation.',
+      'The child has read, grep, find, ls, write, and bounded bash tools but cannot delegate again.',
     ],
     parameters: Type.Object({
-      prompt: Type.String({
-        description: 'The task for the sub-agent to perform. Include all necessary context.',
-      }),
-      description: Type.Optional(Type.String({ description: 'A short (3-5 word) description of the task.' })),
+      prompt: Type.String({ description: 'The complete child-agent task and context.' }),
+      description: Type.Optional(Type.String({ description: 'A short description.' })),
     }),
-    async execute(_toolCallId, params) {
-      const agentDir = getAgentDir();
-      const { session: subSession } = await createAgentSession({
+    async execute(_toolCallId, params, toolSignal) {
+      const { session } = await createAgentSession({
         cwd: config.cwd,
-        agentDir,
+        agentDir: getAgentDir(),
         resourceLoader: config.resourceLoader,
         model: config.model,
         tools: CHILD_TOOLS,
         modelRuntime: config.modelRuntime,
         sessionManager: SessionManager.inMemory(config.cwd),
-        settingsManager: SettingsManager.inMemory({
-          retry: PI_RETRY_SETTINGS,
-          compaction: { enabled: true },
-        }),
+        settingsManager: SettingsManager.inMemory({ retry: PI_RETRY_SETTINGS, compaction: { enabled: true } }),
       });
-
-      const abortChildSession = (): void => {
-        void subSession.abort().catch(() => {
-          // Parent logger is not available inside the tool; dispose still tears
-          // down the session if abort itself rejects.
-        });
-      };
-      const onCancellation = (): void => abortChildSession();
-      if (config.cancellationSignal?.aborted) {
-        abortChildSession();
-      } else {
-        config.cancellationSignal?.addEventListener('abort', onCancellation, { once: true });
-      }
-
+      const abortChild = (): Promise<void> => session.abort();
+      const cleanupParentCancellation = attachCancellation(config.cancellationSignal, abortChild);
+      const cleanupToolCancellation = attachCancellation(toolSignal, abortChild);
       let resultText = '';
-      let subCost = 0;
-      subSession.subscribe((event) => {
-        if (event.type === 'turn_end') {
-          const msg = event.message as AssistantMessage | undefined;
-          for (const block of msg?.content ?? []) {
-            if (block.type === 'text' && block.text) {
-              resultText += (resultText ? '\n' : '') + block.text;
-            }
-          }
-          if (msg?.usage?.cost?.total != null) subCost += msg.usage.cost.total;
+      let streamedCost = 0;
+      session.subscribe((event) => {
+        if (event.type !== 'turn_end') return;
+        const message = event.message as AssistantMessage | undefined;
+        for (const block of message?.content ?? []) {
+          if (block.type === 'text' && block.text) resultText += `${resultText ? '\n' : ''}${block.text}`;
         }
+        if (message?.usage?.cost?.total != null) streamedCost += message.usage.cost.total;
       });
 
-      let swallowedError: string | undefined;
       try {
         try {
-          await subSession.prompt(params.prompt);
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          resultText += `\n[Sub-agent error: ${errorMsg}]`;
+          await session.prompt(params.prompt);
+        } catch (error) {
+          const detail =
+            config.redactText?.(error instanceof Error ? error.message : String(error)) ??
+            (error instanceof Error ? error.message : String(error));
+          resultText += `\n[Sub-agent error: ${detail}]`;
         }
-
-        swallowedError = subSession.state.errorMessage;
-        // Read stats before dispose; reconcile cost the same way the parent does.
-        const subStats = subSession.getSessionStats();
-        if (subStats.cost > subCost) subCost = subStats.cost;
+        const stateError = session.state.errorMessage;
+        const stats = session.getSessionStats();
         config.onUsage?.({
-          cost: subCost,
-          inputTokens: subStats.tokens.input,
-          outputTokens: subStats.tokens.output,
-          cacheReadTokens: subStats.tokens.cacheRead,
-          cacheWriteTokens: subStats.tokens.cacheWrite,
+          cost: Math.max(streamedCost, stats.cost),
+          inputTokens: stats.tokens.input,
+          outputTokens: stats.tokens.output,
+          cacheReadTokens: stats.tokens.cacheRead,
+          cacheWriteTokens: stats.tokens.cacheWrite,
         });
+        if (stateError && !resultText.includes(stateError)) {
+          resultText += `\n[Sub-agent error: ${config.redactText?.(stateError) ?? stateError}]`;
+        }
+        return textResult(resultText || '[Sub-agent produced no output]');
       } finally {
-        config.cancellationSignal?.removeEventListener('abort', onCancellation);
-        subSession.dispose();
+        cleanupParentCancellation();
+        cleanupToolCancellation();
+        session.dispose();
       }
-
-      if (swallowedError && !resultText.includes(swallowedError)) {
-        resultText += `\n[Sub-agent error: ${swallowedError}]`;
-      }
-
-      return textResult(resultText || '[Sub-agent produced no output]');
     },
   });
-
-  return taskTool;
 }

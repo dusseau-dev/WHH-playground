@@ -16,15 +16,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await fs.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { fileExists } from '../utils/file-io.js';
 
 const STEALTH_INIT_SCRIPT = `delete Object.getPrototypeOf(navigator).webdriver;
 
@@ -79,7 +71,7 @@ export async function writePlaywrightStealthConfig(
 ): Promise<{ result: StealthConfigWriteResult; configPath: string }> {
   const playwrightDir = path.join(sourceDir, '.playwright');
   const configPath = path.join(playwrightDir, 'cli.config.json');
-  if (await pathExists(configPath)) {
+  if (await fileExists(configPath)) {
     return { result: 'skipped-existing', configPath };
   }
   const initScriptPath = path.join(playwrightDir, 'scripts', 'stealth.js');

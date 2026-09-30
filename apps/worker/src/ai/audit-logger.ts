@@ -14,7 +14,6 @@ export interface AuditLogger {
   logToolStart(toolName: string, parameters: unknown): Promise<void>;
   logToolEnd(result: unknown): Promise<void>;
   logError(error: Error, duration: number, turns: number): Promise<void>;
-  logNote(category: string, message: string): Promise<void>;
 }
 
 class RealAuditLogger implements AuditLogger {
@@ -57,10 +56,6 @@ class RealAuditLogger implements AuditLogger {
       timestamp: formatTimestamp(),
     });
   }
-
-  async logNote(category: string, message: string): Promise<void> {
-    await this.auditSession.logWorkflowNote(category, message);
-  }
 }
 
 /** Null Object implementation - all methods are safe no-ops */
@@ -72,8 +67,6 @@ class NullAuditLogger implements AuditLogger {
   async logToolEnd(_result: unknown): Promise<void> {}
 
   async logError(_error: Error, _duration: number, _turns: number): Promise<void> {}
-
-  async logNote(_category: string, _message: string): Promise<void> {}
 }
 
 // Returns no-op when auditSession is null

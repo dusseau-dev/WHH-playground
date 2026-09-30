@@ -8,10 +8,70 @@
  * Configuration type definitions
  */
 
+import type { AssessmentModule, AssessmentScope, AssessmentSurface, TargetEnvironment } from './scopes.js';
+
+export interface DetectionValidationSplunkYamlConfig {
+  management_url: string;
+  telemetry_index: string;
+  alert_index: string;
+  telemetry_sourcetype?: string;
+  alert_sourcetype?: string;
+  token?: string;
+}
+
+export interface DetectionValidationYamlConfig {
+  canary_path?: string;
+  minimum_detection_rate?: number;
+  max_wait_seconds?: number;
+  splunk: DetectionValidationSplunkYamlConfig;
+}
+
+export interface DistributedDetectionValidationConfig {
+  canary_path: string;
+  minimum_detection_rate: number;
+  max_wait_seconds: number;
+  splunk: DetectionValidationSplunkYamlConfig & { token: string };
+}
+
+export interface HttpLoadConfig {
+  concurrency?: number;
+  requests_per_second?: number;
+  duration_seconds?: number;
+}
+
+export interface DistributedHttpLoadConfig {
+  concurrency: number;
+  requests_per_second: number;
+  duration_seconds: number;
+}
+
+/** Safety policy for assessment methods that may create target traffic. */
+export interface ModuleSafetyYamlConfig {
+  target_environment?: TargetEnvironment;
+  allow_active_dast?: boolean;
+  acknowledge_load_risk?: boolean;
+  max_requests_per_second?: number;
+  max_concurrency?: number;
+  load_stage_duration_seconds?: number;
+  load_error_rate_threshold?: number;
+  load_p95_latency_ms_threshold?: number;
+}
+
+export interface DistributedModuleSafetyYamlConfig {
+  target_environment: TargetEnvironment;
+  allow_active_dast: boolean;
+  acknowledge_load_risk: boolean;
+  max_requests_per_second: number;
+  max_concurrency: number;
+  load_stage_duration_seconds: number;
+  load_error_rate_threshold: number;
+  load_p95_latency_ms_threshold: number;
+}
+
 export type RuleType = 'url_path' | 'subdomain' | 'domain' | 'method' | 'header' | 'parameter' | 'code_path';
 
 export interface Rule {
-  description?: string;
+  description: string;
   type: RuleType;
   value: string;
 }
@@ -23,6 +83,9 @@ export interface Rules {
 
 export type VulnClass = 'injection' | 'xss' | 'auth' | 'authz' | 'ssrf';
 
+/** Whether a run can inspect source code or is limited to the live target. */
+export type SourceMode = 'source-assisted' | 'url-only';
+
 export const ALL_VULN_CLASSES: readonly VulnClass[] = ['injection', 'xss', 'auth', 'authz', 'ssrf'];
 
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
@@ -32,12 +95,11 @@ export interface ReportConfig {
   min_severity?: Severity;
   min_confidence?: Confidence;
   guidance?: string;
-  /**
-   * Emit report.sarif alongside the markdown report. On by default for exploit runs; set 'false'
-   * to opt out. Ignored when exploit is false.
-   */
-  sarif?: 'true' | 'false';
+  /** Emit a SARIF 2.1.0 artifact when the run satisfies the safety and triage gates. */
+  sarif?: boolean | 'true' | 'false';
 }
+
+export type DistributedReportConfig = Omit<ReportConfig, 'sarif'> & { sarif: boolean };
 
 export type LoginType = 'form' | 'sso' | 'api' | 'basic';
 
@@ -70,15 +132,35 @@ export interface Authentication {
 export interface Config {
   rules?: Rules;
   authentication?: Authentication;
+  pipeline?: PipelineConfig;
   description?: string;
   vuln_classes?: VulnClass[];
-  exploit?: 'true' | 'false';
+  /** Granular checks selected for this assessment. */
+  test_scopes?: AssessmentScope[];
+  /** Target interaction surfaces selected for this assessment. */
+  test_surfaces?: AssessmentSurface[];
+  /** Assessment methods and operational modules, independent from vulnerability checks. */
+  assessment_modules?: AssessmentModule[];
+  /** Production/staging and traffic safety policy for assessment modules. */
+  module_safety?: ModuleSafetyYamlConfig;
+  /** Explicitly authorized single-host HTTP load settings. */
+  http_load?: HttpLoadConfig;
+  /** Staging-only fixed-corpus alerting effectiveness assessment. */
+  detection_validation?: DetectionValidationYamlConfig;
+  /** Whether to run safe, authorized demonstrations of confirmed findings. */
+  safe_demonstration?: boolean | 'true' | 'false';
+  /** @deprecated Use safe_demonstration. */
+  exploit?: boolean | 'true' | 'false';
   report?: ReportConfig;
   rules_of_engagement?: string;
 }
 
-/** Report config after coercion. The YAML form of `sarif` is a string (see ReportConfig). */
-export type DistributedReportConfig = Omit<ReportConfig, 'sarif'> & { sarif: boolean };
+export type RetryPreset = 'default' | 'subscription';
+
+export interface PipelineConfig {
+  retry_preset?: RetryPreset;
+  max_concurrent_pipelines?: number;
+}
 
 export interface DistributedConfig {
   avoid: Rule[];
@@ -86,22 +168,64 @@ export interface DistributedConfig {
   authentication: Authentication | null;
   description: string;
   vuln_classes: VulnClass[];
-  exploit: boolean;
+  test_scopes: AssessmentScope[];
+  test_surfaces: AssessmentSurface[];
+  assessment_modules?: AssessmentModule[];
+  module_safety?: DistributedModuleSafetyYamlConfig;
+  /** Present only when the HTTP load scope is selected. */
+  http_load?: DistributedHttpLoadConfig;
+  /** Present only when the alerting-effectiveness scope is selected. */
+  detection_validation?: DistributedDetectionValidationConfig;
+  /** Whether to run safe, authorized demonstrations of confirmed findings. */
+  safeDemonstration: boolean;
   report: DistributedReportConfig;
   rules_of_engagement: string;
 }
 
 /**
+ * LLM provider configuration for multi-provider support.
+ *
+ * Maps to SDK environment variables at execution time. When providerType
+ * is omitted or 'anthropic_api', falls back to apiKey + ANTHROPIC_API_KEY.
+ */
+export interface ProviderConfig {
+  readonly providerType?: string;
+  /** Provider id when providerType is "generic" (for example, "google"). */
+  readonly providerId?: string;
+  /** One model id for the whole run. modelOverrides remains the tier-compatible fallback. */
+  readonly model?: string;
+  readonly apiKey?: string;
+  readonly awsRegion?: string;
+  readonly awsAccessKeyId?: string;
+  readonly awsSecretAccessKey?: string;
+  /** Optional temporary-session token accompanying the AWS access-key pair. */
+  readonly awsSessionToken?: string;
+  readonly gcpRegion?: string;
+  readonly gcpProjectId?: string;
+  readonly gcpCredentialsPath?: string;
+  readonly baseUrl?: string;
+  readonly authToken?: string;
+  readonly modelOverrides?: Record<string, string>;
+  /** OpenAI-compatible gateway wire format. */
+  readonly openAIFormat?: 'chat-completions' | 'responses';
+  readonly supportsStructuredOutput?: boolean;
+}
+
+/**
  * Runtime configuration for the DI container.
  *
- * Abstracts path conventions so consumers can override OSS defaults
- * without modifying source files.
+ * Abstracts path conventions and credential threading so consumers
+ * can override OSS defaults without modifying source files.
  */
 export interface ContainerConfig {
-  /** Subdirectory for deliverables relative to repoPath. Default: '.shannon/deliverables' */
+  /** Subdirectory for deliverables relative to the working directory. Default: '.shannon/deliverables' */
   readonly deliverablesSubdir: string;
   /** Directory for audit logs. Default: './workspaces' */
   readonly auditDir: string;
+  /** API key override — when set, executor reads from config instead of process.env */
+  readonly apiKey?: string;
   /** Prompt directory override — when set, prompt manager loads from this path */
   readonly promptDir?: string;
+  /** LLM provider configuration — when set, executor maps to SDK env vars directly */
+  readonly providerConfig?: ProviderConfig;
 }

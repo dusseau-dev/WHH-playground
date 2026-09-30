@@ -19,10 +19,7 @@ import type { PipelineState } from './shared.js';
  * safely imported into Temporal workflows. The caller must ensure
  * state.summary is set before calling (via computeSummary).
  */
-export function toWorkflowSummary(
-  state: PipelineState,
-  status: 'completed' | 'failed' | 'cancelled' | 'partial',
-): WorkflowSummary {
+export function toWorkflowSummary(state: PipelineState, status: 'completed' | 'failed' | 'cancelled'): WorkflowSummary {
   // state.summary must be computed before calling this mapper
   const summary = state.summary;
   if (!summary) {
@@ -33,9 +30,25 @@ export function toWorkflowSummary(
     status,
     totalDurationMs: summary.totalDurationMs,
     totalCostUsd: summary.totalCostUsd,
+    totalTurns: summary.totalTurns,
+    totalInputTokens: summary.totalInputTokens,
+    totalOutputTokens: summary.totalOutputTokens,
+    totalCacheReadTokens: summary.totalCacheReadTokens,
+    totalCacheWriteTokens: summary.totalCacheWriteTokens,
     completedAgents: state.completedAgents,
     agentMetrics: Object.fromEntries(
-      Object.entries(state.agentMetrics).map(([name, m]) => [name, { durationMs: m.durationMs, costUsd: m.costUsd }]),
+      Object.entries(state.agentMetrics).map(([name, m]) => [
+        name,
+        {
+          durationMs: m.durationMs,
+          costUsd: m.costUsd,
+          inputTokens: m.inputTokens,
+          outputTokens: m.outputTokens,
+          cacheReadTokens: m.cacheReadTokens,
+          cacheWriteTokens: m.cacheWriteTokens,
+          numTurns: m.numTurns,
+        },
+      ]),
     ),
     ...(state.error && { error: state.error }),
   };
