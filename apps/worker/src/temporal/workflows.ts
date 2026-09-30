@@ -17,87 +17,91 @@
  *
  * Features:
  * - Queryable state via getProgress
- * - Automatic retry with backoff for transient errors
+ * - Automatic retry with backoff for transient/billing errors
  * - Non-retryable classification for permanent errors
  * - Audit correlation via workflowId
  * - Graceful failure handling: pipelines continue if one fails
  */
 
 import {
-  ActivityCancellationType,
   ApplicationFailure,
-  CancellationScope,
   isCancellation,
   log,
   proxyActivities,
+  type RetryPolicy,
   setHandler,
   workflowInfo,
 } from '@temporalio/workflow';
 import type { AgentName, VulnType } from '../types/agents.js';
 import { ALL_AGENTS } from '../types/agents.js';
-import { ALL_VULN_CLASSES, type VulnClass } from '../types/config.js';
+import type { VulnClass } from '../types/config.js';
+import {
+  assertExclusiveHttpLoadExecution,
+  assertHttpLoadAuthorization,
+  type HttpLoadSettings,
+  normalizeHttpLoadSettings,
+} from '../types/http-load.js';
+import {
+  type NormalizedAssessmentScope,
+  normalizeAssessmentModules,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
+import { redactLogText, redactSecrets } from '../utils/redactSecrets.js';
 import type * as activities from './activities.js';
 import type { ActivityInput } from './activities.js';
 import {
   type AgentMetrics,
+  computeExpectedAgents,
   getProgress,
+  hasInlineProviderCredentials,
+  hasInlineSensitiveConfiguration,
+  normalizeSourceContext,
   type PipelineInput,
   type PipelineProgress,
   type PipelineState,
   type PipelineSummary,
   type ResumeState,
+  resolveSafeDemonstrationInput,
   type VulnExploitPipelineResult,
+  withoutProviderCredentials,
 } from './shared.js';
 import { toWorkflowSummary } from './summary-mapper.js';
 import { classifyErrorCode, formatWorkflowError } from './workflow-errors.js';
 
-/** Agents this run is expected to produce — drives the resume short-circuit. */
-function computeExpectedAgents(vulnClasses: readonly VulnClass[], exploit: boolean): string[] {
-  const expected: string[] = ['pre-recon', 'recon'];
-  for (const cls of vulnClasses) {
-    expected.push(`${cls}-vuln`);
-    if (exploit) {
-      expected.push(`${cls}-exploit`);
-    }
-  }
-  expected.push('report');
-  return expected;
-}
+const NON_RETRYABLE_ERROR_TYPES = [
+  'AuthenticationError',
+  'PermissionError',
+  'InvalidRequestError',
+  'RequestTooLargeError',
+  'ConfigurationError',
+  'InvalidTargetError',
+  'ExecutionLimitError',
+  'AuthLoginFailedError',
+];
 
-// Retry configuration for production (long intervals so a rate-limit window can clear)
-const PRODUCTION_RETRY = {
+// Retry configuration for production (long intervals for billing recovery)
+const PRODUCTION_RETRY: RetryPolicy = {
   initialInterval: '5 minutes',
   maximumInterval: '30 minutes',
   backoffCoefficient: 2,
   maximumAttempts: 50,
-  // Belt-and-braces: activities already throw non-retryable ApplicationFailures for
-  // these. Only types that are always permanent belong here — GitError and
-  // AgentExecutionError carry a per-error verdict and must not be listed.
-  nonRetryableErrorTypes: [
-    'AuthenticationError',
-    'ConfigurationError',
-    'InvalidTargetError',
-    'AuthLoginFailedError',
-    'PermanentError',
-  ],
+  nonRetryableErrorTypes: NON_RETRYABLE_ERROR_TYPES,
 };
 
 // Retry configuration for pipeline testing (fast iteration)
-const TESTING_RETRY = {
+const TESTING_RETRY: RetryPolicy = {
   initialInterval: '10 seconds',
   maximumInterval: '30 seconds',
   backoffCoefficient: 2,
   maximumAttempts: 5,
-  nonRetryableErrorTypes: PRODUCTION_RETRY.nonRetryableErrorTypes,
+  nonRetryableErrorTypes: NON_RETRYABLE_ERROR_TYPES,
 };
 
 // Activity proxy with production retry configuration (default)
 const acts = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 hours',
-  heartbeatTimeout: '60 minutes', // Extended for nested pi task execution
+  heartbeatTimeout: '60 minutes', // Extended for sub-agent execution (SDK blocks event loop during Task tool calls)
   retry: PRODUCTION_RETRY,
-  // Cancel promptly instead of waiting out startToCloseTimeout; the agent aborts on the signal.
-  cancellationType: ActivityCancellationType.TRY_CANCEL,
 });
 
 // Activity proxy with testing retry configuration (fast)
@@ -105,16 +109,31 @@ const testActs = proxyActivities<typeof activities>({
   startToCloseTimeout: '30 minutes',
   heartbeatTimeout: '30 minutes', // Extended for sub-agent execution in testing
   retry: TESTING_RETRY,
-  cancellationType: ActivityCancellationType.TRY_CANCEL,
+});
+
+// Retry configuration for subscription plans (5h+ rolling rate limit windows)
+const SUBSCRIPTION_RETRY: RetryPolicy = {
+  initialInterval: '5 minutes',
+  maximumInterval: '6 hours',
+  backoffCoefficient: 2,
+  maximumAttempts: 100,
+  nonRetryableErrorTypes: NON_RETRYABLE_ERROR_TYPES,
+};
+
+// Activity proxy for subscription plan recovery (extended timeouts)
+const subscriptionActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '8 hours',
+  heartbeatTimeout: '2 hours',
+  retry: SUBSCRIPTION_RETRY,
 });
 
 // Retry configuration for preflight validation (short timeout, few retries)
-const PREFLIGHT_RETRY = {
+const PREFLIGHT_RETRY: RetryPolicy = {
   initialInterval: '10 seconds',
   maximumInterval: '1 minute',
   backoffCoefficient: 2,
   maximumAttempts: 3,
-  nonRetryableErrorTypes: PRODUCTION_RETRY.nonRetryableErrorTypes,
+  nonRetryableErrorTypes: NON_RETRYABLE_ERROR_TYPES,
 };
 
 // Activity proxy for preflight validation (short timeout)
@@ -122,16 +141,15 @@ const preflightActs = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   heartbeatTimeout: '2 minutes',
   retry: PREFLIGHT_RETRY,
-  cancellationType: ActivityCancellationType.TRY_CANCEL,
 });
 
-// Credential rejection is not retryable; transient provider errors get 3 attempts.
-const AUTH_VALIDATION_RETRY = {
+// Credential rejection is not retryable; transient SDK errors get 3 attempts.
+const AUTH_VALIDATION_RETRY: RetryPolicy = {
   initialInterval: '10 seconds',
   maximumInterval: '1 minute',
   backoffCoefficient: 2,
   maximumAttempts: 3,
-  nonRetryableErrorTypes: PRODUCTION_RETRY.nonRetryableErrorTypes,
+  nonRetryableErrorTypes: NON_RETRYABLE_ERROR_TYPES,
 };
 
 // Browser-driving validation measured at 60–180s; 10 min start-to-close leaves headroom for slow SSO/MFA flows.
@@ -139,7 +157,20 @@ const authValidationActs = proxyActivities<typeof activities>({
   startToCloseTimeout: '10 minutes',
   heartbeatTimeout: '10 minutes',
   retry: AUTH_VALIDATION_RETRY,
-  cancellationType: ActivityCancellationType.TRY_CANCEL,
+});
+
+// Scanner and load modules must never be repeated automatically after a timeout or worker restart.
+const assessmentModuleActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '2 hours',
+  heartbeatTimeout: '10 seconds',
+  retry: { maximumAttempts: 1 },
+});
+
+// HTTP load is explicitly non-retrying; its completed artifact supplies resume idempotency.
+const httpLoadActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '65 minutes',
+  heartbeatTimeout: '10 seconds',
+  retry: { maximumAttempts: 1 },
 });
 
 /**
@@ -152,20 +183,12 @@ function computeSummary(state: PipelineState): PipelineSummary {
     totalCostUsd: metrics.reduce((sum, m) => sum + (m.costUsd ?? 0), 0),
     totalDurationMs: Date.now() - state.startTime,
     totalTurns: metrics.reduce((sum, m) => sum + (m.numTurns ?? 0), 0),
+    totalInputTokens: metrics.reduce((sum, m) => sum + (m.inputTokens ?? 0), 0),
+    totalOutputTokens: metrics.reduce((sum, m) => sum + (m.outputTokens ?? 0), 0),
+    totalCacheReadTokens: metrics.reduce((sum, m) => sum + (m.cacheReadTokens ?? 0), 0),
+    totalCacheWriteTokens: metrics.reduce((sum, m) => sum + (m.cacheWriteTokens ?? 0), 0),
     agentCount: state.completedAgents.length,
   };
-}
-
-/** One pipeline per vulnerability class, all five in flight together. */
-const MAX_CONCURRENT_PIPELINES = 5;
-
-const MAX_PIPELINE_ERROR_MESSAGE_LENGTH = 2000;
-
-function truncatePipelineErrorMessage(message: string): string {
-  if (message.length <= MAX_PIPELINE_ERROR_MESSAGE_LENGTH) {
-    return message;
-  }
-  return `${message.slice(0, MAX_PIPELINE_ERROR_MESSAGE_LENGTH - 20)}\n[truncated]`;
 }
 
 /**
@@ -176,34 +199,96 @@ function truncatePipelineErrorMessage(message: string): string {
  * Do not call from standalone scripts or activity code.
  */
 export async function pentestPipeline(input: PipelineInput): Promise<PipelineState> {
-  // Validate repoPath: reject traversal attempts and require absolute path
-  if (!input.repoPath || input.repoPath.includes('..')) {
+  let sourceContext: ReturnType<typeof normalizeSourceContext>;
+  try {
+    sourceContext = normalizeSourceContext(input);
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  const { sourceMode, workingDirectory, repoPath } = sourceContext;
+
+  if (hasInlineProviderCredentials(input)) {
     throw ApplicationFailure.nonRetryable(
-      `Invalid repoPath: path traversal not allowed (received: ${input.repoPath ?? '<empty>'})`,
+      'Inline provider credentials are not allowed in Temporal input; stage them behind secretRef before starting the workflow',
       'ConfigurationError',
     );
   }
-  if (!input.repoPath.startsWith('/')) {
+  if (hasInlineSensitiveConfiguration(input)) {
     throw ApplicationFailure.nonRetryable(
-      `Invalid repoPath: absolute path required (received: ${input.repoPath})`,
+      'Inline configYAML/configData is not allowed in Temporal input because it may contain target credentials; use configPath or stage it behind secretRef before starting the workflow',
       'ConfigurationError',
     );
   }
 
   const { workflowId } = workflowInfo();
 
-  const a = input.pipelineTestingMode ? testActs : acts;
+  // Select activity proxy based on mode: testing (fast), subscription (extended), or default
+  function selectActivityProxy(pipelineInput: PipelineInput) {
+    if (pipelineInput.pipelineTestingMode) return testActs;
+    if (pipelineInput.pipelineConfig?.retry_preset === 'subscription') return subscriptionActs;
+    return acts;
+  }
+
+  const a = selectActivityProxy(input);
+
+  let assessmentScope: NormalizedAssessmentScope;
+  try {
+    assessmentScope = normalizeAssessmentScope({
+      ...(input.testScopes && { testScopes: input.testScopes }),
+      ...(input.testSurfaces && { testSurfaces: input.testSurfaces }),
+      ...(input.vulnClasses && { vulnClasses: input.vulnClasses }),
+    });
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  const selectedVulnClasses: readonly VulnClass[] = assessmentScope.vulnClasses;
+  const selectedClassSet = new Set<VulnClass>(selectedVulnClasses);
+  let assessmentModules: ReturnType<typeof normalizeAssessmentModules>;
+  try {
+    assessmentModules = normalizeAssessmentModules({
+      ...(input.assessmentModules && { assessmentModules: input.assessmentModules }),
+      ...(input.moduleSafety && { moduleSafety: input.moduleSafety }),
+      sourceMode,
+    });
+    assertExclusiveHttpLoadExecution(assessmentScope.testScopes, assessmentModules.assessmentModules);
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  let httpLoad: HttpLoadSettings | undefined;
+  try {
+    httpLoad = normalizeHttpLoadSettings(assessmentScope.testScopes, input.httpLoad);
+    assertHttpLoadAuthorization(
+      httpLoad,
+      input.httpLoadAuthorizationConfirmed === true,
+      input.elevatedLoadConfirmed === true,
+    );
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  let safeDemonstration: boolean;
+  try {
+    safeDemonstration = resolveSafeDemonstrationInput(input);
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
+  const expectedAgents = computeExpectedAgents(sourceMode, selectedVulnClasses, safeDemonstration);
 
   const state: PipelineState = {
     status: 'running',
     currentPhase: null,
     currentAgent: null,
+    activeAgents: [],
+    activeTestCategories: [],
+    activeModules: [],
+    expectedAgents,
     completedAgents: [],
-    failedPipelines: [],
     failedAgent: null,
     error: null,
     startTime: Date.now(),
     agentMetrics: {},
+    triageRan: false,
+    moduleResults: [],
+    httpLoadStatus: null,
     summary: null,
   };
 
@@ -221,10 +306,13 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
   // Use spread to conditionally include optional properties (exactOptionalPropertyTypes)
   // sessionId is workspace name for resume, or workflowId for new runs
   const sessionId = input.sessionId || input.resumeFromWorkspace || workflowId;
+  const safeProviderConfig = withoutProviderCredentials(input.providerConfig);
 
   const activityInput: ActivityInput = {
     webUrl: input.webUrl,
-    repoPath: input.repoPath,
+    workingDirectory,
+    sourceMode,
+    ...(repoPath !== undefined && { repoPath }),
     workflowId,
     sessionId,
     ...(input.configPath !== undefined && { configPath: input.configPath }),
@@ -233,33 +321,36 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       pipelineTestingMode: input.pipelineTestingMode,
     }),
     // Config fields — flow through to getOrCreateContainer()
-    ...(input.configYAML !== undefined && { configYAML: input.configYAML }),
+    ...(input.secretRef !== undefined && { secretRef: input.secretRef }),
     ...(input.deliverablesSubdir !== undefined && { deliverablesSubdir: input.deliverablesSubdir }),
     ...(input.auditDir !== undefined && { auditDir: input.auditDir }),
     ...(input.promptDir !== undefined && { promptDir: input.promptDir }),
     ...(input.sastSarifPath !== undefined && { sastSarifPath: input.sastSarifPath }),
+    ...(input.skipGitCheck !== undefined && { skipGitCheck: input.skipGitCheck }),
+    ...(safeProviderConfig !== undefined && { providerConfig: safeProviderConfig }),
+    vulnClasses: [...selectedVulnClasses],
+    testScopes: assessmentScope.testScopes,
+    testSurfaces: assessmentScope.testSurfaces,
+    assessmentModules: assessmentModules.assessmentModules,
+    moduleSafety: assessmentModules.moduleSafety,
+    ...(httpLoad && { httpLoad }),
+    ...(httpLoad && { httpLoadAuthorizationConfirmed: true }),
+    ...(httpLoad && { elevatedLoadConfirmed: input.elevatedLoadConfirmed === true }),
   };
 
-  const selectedVulnClasses: readonly VulnClass[] =
-    input.vulnClasses && input.vulnClasses.length > 0 ? input.vulnClasses : ALL_VULN_CLASSES;
-  const selectedClassSet = new Set<VulnClass>(selectedVulnClasses);
-  const exploit: boolean = input.exploit ?? true;
-  const expectedAgents = computeExpectedAgents(selectedVulnClasses, exploit);
-
-  await a.persistOrValidateRunScope(activityInput, [...selectedVulnClasses], exploit);
+  await preflightActs.prepareWorkingDirectory(activityInput);
+  await a.persistOrValidateRunScope(activityInput, [...selectedVulnClasses], safeDemonstration);
 
   let resumeState: ResumeState | null = null;
 
   if (input.resumeFromWorkspace) {
-    // 0. Register the resume's workflow id in session.json before validation can fail, so the CLI
-    // can resolve and follow it instead of polling for an entry that never lands.
-    await a.registerResumeAttempt(activityInput, input.terminatedWorkflows || []);
-
     // 1. Load resume state (validates workspace, cross-checks deliverables)
     resumeState = await a.loadResumeState(
       input.resumeFromWorkspace,
       input.webUrl,
-      input.repoPath,
+      workingDirectory,
+      sourceMode,
+      repoPath,
       input.deliverablesSubdir,
     );
 
@@ -269,7 +360,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     ) as AgentName[];
 
     await a.restoreGitCheckpoint(
-      input.repoPath,
+      workingDirectory,
       resumeState.checkpointHash,
       incompleteAgents,
       input.deliverablesSubdir,
@@ -279,16 +370,48 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     // Uses dynamic expectedAgents (not ALL_AGENTS) so a class-scoped run completes sooner.
     const allExpectedDone = expectedAgents.every((a) => resumeState?.completedAgents.includes(a));
     if (allExpectedDone) {
-      log.info(`All ${expectedAgents.length} expected agents already completed. Nothing to resume.`);
-      state.status = 'completed';
+      log.info(`All ${expectedAgents.length} expected agents already completed; regenerating report outputs.`);
       state.completedAgents = [...resumeState.completedAgents];
+      state.triageRan = resumeState.completedAgents.includes('triage');
+
+      // These activities are deterministic, so an all-complete resume can repair
+      // missing metadata and secondary artifacts without rerunning an agent.
+      state.currentPhase = 'assessment-modules';
+      state.activeModules = [...assessmentModules.assessmentModules];
+      try {
+        state.moduleResults = await a.loadAssessmentModuleResultsActivity(activityInput);
+      } finally {
+        state.activeModules = [];
+      }
+      if (httpLoad) {
+        state.currentPhase = 'http-load-capacity';
+        state.currentAgent = null;
+        const loadResult = await httpLoadActs.runHttpLoadCapacityActivity(activityInput);
+        state.httpLoadStatus = loadResult.status;
+        if (loadResult.status !== 'completed') {
+          log.warn(`HTTP load assessment ended with status ${loadResult.status}; coverage remains incomplete`);
+        }
+      }
+      await a.injectReportMetadataActivity(activityInput);
+      await a.injectReportModeSectionsActivity(activityInput);
+      await a.generateReportOutputActivity(activityInput);
+
+      state.status = 'completed';
+      state.currentPhase = null;
+      state.currentAgent = null;
       state.summary = computeSummary(state);
+
+      if (input.checkpointsEnabled) {
+        await a.saveCheckpoint(activityInput, 'report-output', 'reporting', state);
+      }
+      await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, 'completed'));
       return state;
     }
 
-    // 4. Write the resume header to workflow.log (the session.json entry was recorded in step 0)
+    // 4. Record this resume attempt in session.json and workflow.log
     await a.recordResumeAttempt(
       activityInput,
+      input.terminatedWorkflows || [],
       resumeState.checkpointHash,
       resumeState.originalWorkflowId,
       resumeState.completedAgents,
@@ -301,6 +424,14 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     return resumeState?.completedAgents.includes(agentName) ?? false;
   };
 
+  const activateAgent = (agentName: string): void => {
+    if (!state.activeAgents.includes(agentName)) state.activeAgents.push(agentName);
+  };
+
+  const deactivateAgent = (agentName: string): void => {
+    state.activeAgents = state.activeAgents.filter((active) => active !== agentName);
+  };
+
   // Run a sequential agent phase (pre-recon, recon)
   async function runSequentialPhase(
     phaseName: string,
@@ -310,13 +441,18 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     if (!shouldSkip(agentName)) {
       state.currentPhase = phaseName;
       state.currentAgent = agentName;
+      activateAgent(agentName);
       await a.logPhaseTransition(activityInput, phaseName, 'start');
-      state.agentMetrics[agentName] = await runAgent(activityInput);
-      state.completedAgents.push(agentName);
-      if (input.checkpointsEnabled) {
-        await a.saveCheckpoint(activityInput, agentName, phaseName, state);
+      try {
+        state.agentMetrics[agentName] = await runAgent(activityInput);
+        state.completedAgents.push(agentName);
+        if (input.checkpointsEnabled) {
+          await a.saveCheckpoint(activityInput, agentName, phaseName, state);
+        }
+        await a.logPhaseTransition(activityInput, phaseName, 'complete');
+      } finally {
+        deactivateAgent(agentName);
       }
-      await a.logPhaseTransition(activityInput, phaseName, 'complete');
     } else {
       log.info(`Skipping ${agentName} (already complete)`);
       state.completedAgents.push(agentName);
@@ -370,70 +506,24 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     ];
   }
 
-  // A rejected settle can be a genuine Temporal cancellation (runVulnExploitPipeline rethrows in
-  // its isCancellation branch). Cancellation must win over failed/partial classification — there is
-  // no report worth shipping once the user has cancelled, and rethrowing lets the workflow's outer
-  // isCancellation handler produce a real cancelled state instead of a hard failure.
-  function throwIfPipelineCancelled(results: PromiseSettledResult<VulnExploitPipelineResult>[]): void {
-    const cancelled = results.find(
-      (r): r is PromiseRejectedResult => r.status === 'rejected' && isCancellation(r.reason),
-    );
-    if (cancelled) {
-      throw cancelled.reason;
-    }
-  }
-
-  // Classify the settled pipeline results into clean / partial / fail-hard.
+  // Aggregate errors from settled pipeline promises.
   // Metrics and completedAgents are updated incrementally inside runVulnExploitPipeline
   // so that getProgress queries reflect real-time status during execution.
-  function aggregatePipelineResults(
-    results: PromiseSettledResult<VulnExploitPipelineResult>[],
-    alreadyCompletedPipelineCount: number,
-  ): void {
-    throwIfPipelineCancelled(results);
-
-    const failed: { vulnType: VulnClass; error: string }[] = [];
-    // A rejected settle is now unexpected (runVulnExploitPipeline catches and returns its error in
-    // the value). Without a value we cannot attribute the failure to a class, so we treat it as a
-    // hard failure rather than risk an under-qualified report.
-    const unattributable: string[] = [];
+  function aggregatePipelineResults(results: PromiseSettledResult<VulnExploitPipelineResult>[]): void {
+    const failedPipelines: string[] = [];
 
     for (const result of results) {
-      if (result.status === 'fulfilled') {
-        if (result.value.error !== null) {
-          failed.push({ vulnType: result.value.vulnType, error: result.value.error });
-        }
-      } else {
-        const rawMessage = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        unattributable.push(truncatePipelineErrorMessage(rawMessage));
+      if (result.status === 'rejected') {
+        const errorMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        failedPipelines.push(redactLogText(errorMsg));
       }
     }
 
-    const failedCount = failed.length + unattributable.length;
-    const totalPipelineCount = results.length + alreadyCompletedPipelineCount;
-    if (failedCount === 0) {
-      return;
+    if (failedPipelines.length > 0) {
+      log.warn(`${failedPipelines.length} pipeline(s) failed`, {
+        failures: redactSecrets(failedPipelines),
+      });
     }
-
-    // All run pipelines failed, or a failure we cannot attribute to a class → fail-hard. There is
-    // no report worth shipping, and we must never render an un-assessed class as if it passed.
-    if (failedCount === totalPipelineCount || unattributable.length > 0) {
-      const allErrors = [...failed.map((f) => `${f.vulnType}: ${f.error}`), ...unattributable];
-      const message = `${failedCount} vulnerability/exploitation pipeline(s) failed`;
-      state.status = 'failed';
-      state.failedAgent = 'pipelines';
-      state.error = `${message}: ${allErrors.join('; ')}`;
-      log.warn(message, { failures: allErrors });
-      throw ApplicationFailure.nonRetryable(state.error, 'PipelineFailedError', [{ failures: allErrors }]);
-    }
-
-    // Partial: at least one class succeeded and at least one failed. Record the failed classes and
-    // set the partial terminal status; do NOT throw — the successful pipelines still ship.
-    state.failedPipelines = failed;
-    state.status = 'partial';
-    log.warn(`${failed.length} of ${totalPipelineCount} pipeline(s) failed — continuing with partial results`, {
-      failures: failed.map((f) => `${f.vulnType}: ${f.error}`),
-    });
   }
 
   // Run thunks with a concurrency limit, returning PromiseSettledResult for each.
@@ -488,27 +578,48 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     // === Authentication Validation ===
     state.currentPhase = 'auth-validation';
     state.currentAgent = 'validate-authentication';
-    const authMetrics = await authValidationActs.runAuthenticationValidation(activityInput);
-    // Null when no login ran (no-auth scan); left absent so status renders it skipped, not completed.
-    if (authMetrics) {
-      state.agentMetrics['validate-authentication'] = authMetrics;
+    activateAgent('validate-authentication');
+    try {
+      await authValidationActs.runAuthenticationValidation(activityInput);
+    } finally {
+      deactivateAgent('validate-authentication');
+      state.currentAgent = null;
     }
-    state.currentAgent = null;
     log.info('Authentication validation passed');
 
     // === Initialize Deliverables Git ===
     await a.initDeliverableGit(activityInput);
 
-    // === Sync code_path deny rules ===
-    await a.syncCodePathDenyRules(activityInput);
+    // === Sync SDK deny rules ===
+    if (sourceMode === 'source-assisted') {
+      await a.syncCodePathDenyRules(activityInput);
+    }
 
-    log.info(`Run scope: vuln_classes=[${selectedVulnClasses.join(', ')}] exploit=${exploit}`);
+    log.info(`Run scope: vuln_classes=[${selectedVulnClasses.join(', ')}] safeDemonstration=${safeDemonstration}`);
 
     // === Phase 1: Pre-Reconnaissance ===
-    await runSequentialPhase('pre-recon', 'pre-recon', a.runPreReconAgent);
+    if (sourceMode === 'source-assisted') {
+      await runSequentialPhase('pre-recon', 'pre-recon', a.runPreReconAgent);
+    } else {
+      log.info('Skipping source pre-reconnaissance in URL-only mode');
+    }
 
     // === Phase 2: Reconnaissance ===
     await runSequentialPhase('recon', 'recon', a.runReconAgent);
+
+    // === Phase 2.5: Assessment Methods and Operational Modules ===
+    // These produce their own machine-verifiable evidence and are never inferred
+    // from the completion of a vulnerability agent.
+    state.currentPhase = 'assessment-modules';
+    state.currentAgent = null;
+    state.activeModules = [...assessmentModules.assessmentModules];
+    await a.logPhaseTransition(activityInput, 'assessment-modules', 'start');
+    try {
+      state.moduleResults = await assessmentModuleActs.runAssessmentModulesActivity(activityInput);
+      await a.logPhaseTransition(activityInput, 'assessment-modules', 'complete');
+    } finally {
+      state.activeModules = [];
+    }
 
     // === Phases 3-4: Vulnerability Analysis + Exploitation (Pipelined) ===
     // Each vuln type runs as an independent pipeline:
@@ -526,52 +637,50 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     ): Promise<VulnExploitPipelineResult> {
       const vulnAgentName = `${vulnType}-vuln`;
       const exploitAgentName = `${vulnType}-exploit`;
+      if (!state.activeTestCategories.includes(vulnType)) state.activeTestCategories.push(vulnType);
 
-      // A class failure must not reject the pipeline set — that would lose the class identity
-      // (results are completion-ordered) and force fail-hard. Catch here and return the error in
-      // the result's `error` field so aggregatePipelineResults can attribute it to `vulnType`.
       try {
         // 1. Run vulnerability analysis (or skip if resumed)
         let vulnMetrics: AgentMetrics | null = null;
         if (!shouldSkip(vulnAgentName)) {
-          vulnMetrics = await runVulnAgent();
-          state.agentMetrics[vulnAgentName] = vulnMetrics;
-          state.completedAgents.push(vulnAgentName);
-          if (input.checkpointsEnabled) {
-            await a.saveCheckpoint(activityInput, vulnAgentName, 'vulnerability-analysis', state);
+          activateAgent(vulnAgentName);
+          try {
+            vulnMetrics = await runVulnAgent();
+            state.agentMetrics[vulnAgentName] = vulnMetrics;
+            state.completedAgents.push(vulnAgentName);
+            if (input.checkpointsEnabled) {
+              await a.saveCheckpoint(activityInput, vulnAgentName, 'vulnerability-analysis', state);
+            }
+          } finally {
+            deactivateAgent(vulnAgentName);
           }
         } else {
           log.info(`Skipping ${vulnAgentName} (already complete)`);
           state.completedAgents.push(vulnAgentName);
         }
 
-        // 1.5. Merge external findings from consumer provider into exploitation queue
+        // 1.5. Merge external findings from consumer provider into the demonstration queue.
         await a.mergeFindingsIntoQueue(activityInput, vulnType);
 
-        // 2. Check exploitation queue for actionable findings
+        // 2. Check the queue for findings that can be safely demonstrated.
         const decision = await a.checkExploitationQueue(activityInput, vulnType);
 
-        // 3. Previously-completed exploits are preserved regardless of mode; new exploits gated by mode.
+        // 3. Preserve completed demonstrations on resume; gate new work by operator choice.
         let exploitMetrics: AgentMetrics | null = null;
         if (shouldSkip(exploitAgentName)) {
           log.info(`Skipping ${exploitAgentName} (already complete)`);
           state.completedAgents.push(exploitAgentName);
-        } else if (decision.shouldExploit && exploit) {
-          exploitMetrics = await runExploitAgent();
-          state.agentMetrics[exploitAgentName] = exploitMetrics;
-          state.completedAgents.push(exploitAgentName);
-          if (input.checkpointsEnabled) {
-            await a.saveCheckpoint(activityInput, exploitAgentName, 'exploitation', state);
-          }
-        } else {
-          // Exploitation did not run (exploit mode off, or no actionable findings) — still
-          // mark the agent complete so a resume does not treat it as unfinished work.
-          log.info(
-            `Marking ${exploitAgentName} complete (${decision.shouldExploit ? 'exploit mode disabled' : 'no actionable findings'})`,
-          );
-          state.completedAgents.push(exploitAgentName);
-          if (input.checkpointsEnabled) {
-            await a.saveCheckpoint(activityInput, exploitAgentName, 'exploitation', state);
+        } else if (decision.shouldExploit && safeDemonstration) {
+          activateAgent(exploitAgentName);
+          try {
+            exploitMetrics = await runExploitAgent();
+            state.agentMetrics[exploitAgentName] = exploitMetrics;
+            state.completedAgents.push(exploitAgentName);
+            if (input.checkpointsEnabled) {
+              await a.saveCheckpoint(activityInput, exploitAgentName, 'safe-demonstration', state);
+            }
+          } finally {
+            deactivateAgent(exploitAgentName);
           }
         }
 
@@ -585,27 +694,17 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
           },
           error: null,
         };
-      } catch (error) {
-        // Let cancellation propagate to the workflow-level handler.
-        if (isCancellation(error)) {
-          throw error;
-        }
-        const rawMessage = error instanceof Error ? error.message : String(error);
-        const message = truncatePipelineErrorMessage(rawMessage);
-        log.warn(`Pipeline ${vulnType} failed`, { error: message });
-        return {
-          vulnType,
-          vulnMetrics: state.agentMetrics[vulnAgentName] ?? null,
-          exploitMetrics: state.agentMetrics[exploitAgentName] ?? null,
-          exploitDecision: null,
-          error: message,
-        };
+      } finally {
+        deactivateAgent(vulnAgentName);
+        deactivateAgent(exploitAgentName);
+        state.activeTestCategories = state.activeTestCategories.filter((active) => active !== vulnType);
       }
     }
 
+    const maxConcurrent = input.pipelineConfig?.max_concurrent_pipelines ?? 5;
+
     const pipelineConfigs = buildPipelineConfigs();
     const pipelineThunks: Array<() => Promise<VulnExploitPipelineResult>> = [];
-    let alreadyCompletedPipelineCount = 0;
 
     for (const config of pipelineConfigs) {
       // Excluded classes drop entirely; any prior deliverables stay on disk but don't count this run.
@@ -618,41 +717,83 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       } else {
         log.info(`Skipping entire ${config.vulnType} pipeline (both agents complete)`);
         state.completedAgents.push(config.vulnAgent, config.exploitAgent);
-        alreadyCompletedPipelineCount++;
       }
     }
 
-    const pipelineResults = await runWithConcurrencyLimit(pipelineThunks, MAX_CONCURRENT_PIPELINES);
-    aggregatePipelineResults(pipelineResults, alreadyCompletedPipelineCount);
-
-    // Surface the not-assessed classes to the report stage so a failed class renders as
-    // "analysis did not complete" rather than the absence assertion "no findings".
-    if (state.failedPipelines.length > 0) {
-      activityInput.failedClasses = state.failedPipelines.map((f) => f.vulnType);
-    }
+    const pipelineResults = await runWithConcurrencyLimit(pipelineThunks, maxConcurrent);
+    aggregatePipelineResults(pipelineResults);
 
     state.currentPhase = 'exploitation';
     state.currentAgent = null;
     await a.logPhaseTransition(activityInput, 'vulnerability-exploitation', 'complete');
 
+    // === Phase 4.25: Explicitly Authorized HTTP Load and Capacity ===
+    if (httpLoad) {
+      state.currentPhase = 'http-load-capacity';
+      state.currentAgent = null;
+      await a.logPhaseTransition(activityInput, 'http-load-capacity', 'start');
+      const loadResult = await httpLoadActs.runHttpLoadCapacityActivity(activityInput);
+      state.httpLoadStatus = loadResult.status;
+      if (loadResult.status !== 'completed') {
+        log.warn(`HTTP load assessment ended with status ${loadResult.status}; coverage remains incomplete`);
+      }
+      await a.logPhaseTransition(activityInput, 'http-load-capacity', 'complete');
+    }
+
+    // === Phase 4.5: Triage Gate (fail-open) ===
+    // Validates each finding before reporting. A triage failure must never lose a
+    // completed exploitation run, so this is wrapped fail-open: on error the report
+    // renders all findings under an UNVALIDATED banner (see services/reporting.ts).
+    if (selectedVulnClasses.length === 0) {
+      state.triageRan = false;
+      log.info('Skipping triage because this run has no vulnerability-agent lanes');
+    } else if (!shouldSkip('triage')) {
+      state.currentPhase = 'triage';
+      state.currentAgent = 'triage';
+      activateAgent('triage');
+      await a.logPhaseTransition(activityInput, 'triage', 'start');
+      try {
+        state.agentMetrics.triage = await a.runTriageAgent(activityInput);
+        state.completedAgents.push('triage');
+        state.triageRan = true;
+        await a.logPhaseTransition(activityInput, 'triage', 'complete');
+      } catch (error) {
+        state.triageRan = false;
+        const msg = redactLogText(error instanceof Error ? error.message : String(error));
+        log.warn(`Triage gate failed — continuing fail-open (report will be UNVALIDATED): ${msg}`);
+      } finally {
+        deactivateAgent('triage');
+      }
+    } else {
+      log.info('Skipping triage (already complete)');
+      state.completedAgents.push('triage');
+      state.triageRan = true;
+    }
+
     // === Phase 5: Reporting ===
     if (!shouldSkip('report')) {
       state.currentPhase = 'reporting';
       state.currentAgent = 'report';
+      activateAgent('report');
       await a.logPhaseTransition(activityInput, 'reporting', 'start');
 
       // First, assemble the concatenated report from per-class deliverables
-      await a.assembleReportActivity(activityInput, exploit);
+      await a.assembleReportActivity(activityInput, safeDemonstration, state.triageRan);
 
       // Then run the report agent to add executive summary and clean up
-      state.agentMetrics.report = await a.runReportAgent(activityInput, exploit);
-      state.completedAgents.push('report');
-      if (input.checkpointsEnabled) {
-        await a.saveCheckpoint(activityInput, 'report', 'reporting', state);
+      try {
+        state.agentMetrics.report = await a.runReportAgent(activityInput, safeDemonstration, state.triageRan);
+        state.completedAgents.push('report');
+        if (input.checkpointsEnabled) {
+          await a.saveCheckpoint(activityInput, 'report', 'reporting', state);
+        }
+      } finally {
+        deactivateAgent('report');
       }
 
       // Inject model metadata into the final report
       await a.injectReportMetadataActivity(activityInput);
+      await a.injectReportModeSectionsActivity(activityInput);
 
       await a.logPhaseTransition(activityInput, 'reporting', 'complete');
     } else {
@@ -667,16 +808,13 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       await a.saveCheckpoint(activityInput, 'report-output', 'reporting', state);
     }
 
-    // Preserve a partial verdict (set by aggregatePipelineResults) — a clean run is 'completed',
-    // a run where some classes were not assessed is 'partial'.
-    const terminalStatus: 'completed' | 'partial' = state.failedPipelines.length > 0 ? 'partial' : 'completed';
-    state.status = terminalStatus;
+    state.status = 'completed';
     state.currentPhase = null;
     state.currentAgent = null;
     state.summary = computeSummary(state);
 
     // Log workflow completion summary
-    await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, terminalStatus));
+    await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, 'completed'));
 
     return state;
   } catch (error) {
@@ -685,23 +823,13 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       state.status = 'cancelled';
       state.error = `Cancelled during phase: ${state.currentPhase ?? 'unknown'}`;
       state.summary = computeSummary(state);
-      // Finalization runs I/O activities; shield them from the cancellation so the
-      // cancelled state is still logged rather than aborted mid-write.
-      await CancellationScope.nonCancellable(async () => {
-        try {
-          await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, 'cancelled'));
-        } catch (completionError) {
-          log.warn('Failed to finalize cancelled workflow', {
-            error: completionError instanceof Error ? completionError.message : String(completionError),
-          });
-        }
-      });
+      await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, 'cancelled'));
       return state;
     }
 
     state.status = 'failed';
     state.failedAgent = state.currentAgent;
-    state.error = formatWorkflowError(error, state.currentPhase, state.currentAgent);
+    state.error = redactLogText(formatWorkflowError(error, state.currentPhase, state.currentAgent));
     const errorCode = classifyErrorCode(error);
     if (errorCode) {
       state.errorCode = errorCode;
@@ -709,18 +837,9 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     state.summary = computeSummary(state);
 
     // Log workflow failure summary
-    try {
-      await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, 'failed'));
-    } catch (completionError) {
-      log.warn('Failed to finalize failed workflow', {
-        error: completionError instanceof Error ? completionError.message : String(completionError),
-      });
-    }
+    await a.logWorkflowComplete(activityInput, toWorkflowSummary(state, 'failed'));
 
-    // Terminate the workflow in Temporal's FAILED state. WARNING: this must be an
-    // ApplicationFailure — any other thrown type becomes an unhandled workflow-task failure
-    // that Temporal retries indefinitely, leaving the run stuck in RUNNING.
-    throw ApplicationFailure.nonRetryable(state.error ?? 'Pipeline failed', 'PipelineExecutionError');
+    throw error;
   }
 }
 

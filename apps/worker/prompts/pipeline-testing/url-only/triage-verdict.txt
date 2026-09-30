@@ -1,0 +1,5 @@
+@include(shared/_filesystem.txt)
+
+Preserve every queue `ID` exactly, byte-for-byte, as the matching verdict `id`; never normalize, trim, recase, or renumber it.
+Write {"version":1,"verdicts":[]} to .shannon/deliverables/triage_verdicts.json, then run:
+save-deliverable --type TRIAGE_VERDICT --file-path ".shannon/deliverables/triage_verdicts.json"

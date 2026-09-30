@@ -4,12 +4,19 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "build": "turbo run build",
     "check": "turbo run check",
     "biome": "biome check .",
     "biome:fix": "biome check --write .",
     "clean": "turbo run clean",
+    "test": "turbo run test",
+    "test:e2e": "pnpm --filter @keygraph/shannon test:e2e",
+    "test:integration": "turbo run test:integration",
+    "test:docker-smoke": "bash scripts/docker-pipeline-smoke.sh",
     "temporal:worker": "node apps/worker/dist/temporal/worker.js",
     "temporal:start": "node apps/worker/dist/temporal/worker.js"
   },

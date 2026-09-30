@@ -8,81 +8,70 @@ import { fs, path } from 'zx';
 import { PROMPTS_DIR } from '../paths.js';
 import { PLAYWRIGHT_SESSION_MAPPING } from '../session-manager.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
-import type { Authentication, DistributedConfig, DistributedReportConfig, Rule, VulnClass } from '../types/config.js';
+import type { Authentication, DistributedConfig, ReportConfig, Rule, SourceMode, VulnClass } from '../types/config.js';
+import {
+  ASSESSMENT_SCOPE_REGISTRY,
+  ASSESSMENT_SURFACE_REGISTRY,
+  type AssessmentScope,
+  type AssessmentSurface,
+  normalizeAssessmentScope,
+} from '../types/scopes.js';
 import { isGlobPattern } from '../utils/glob.js';
 import { handlePromptError, PentestError } from './error-handling.js';
-
-function renderRuleLine(tag: string, value: string, description?: string): string {
-  const base = `- ${tag} ${value}`;
-  return description ? `${base} - ${description}` : base;
-}
-
-function renderUrlRules(rules: Rule[]): string {
-  if (rules.length === 0) return 'None';
-  return rules.map((r) => renderRuleLine(`[${r.type.toUpperCase()}]`, r.value, r.description)).join('\n');
-}
 
 function renderCodePathRules(rules: Rule[]): string {
   const filtered = rules.filter((r) => r.type === 'code_path');
   if (filtered.length === 0) return 'None';
   return filtered
-    .map((r) => renderRuleLine(isGlobPattern(r.value) ? '[GLOB]' : '[FILE]', r.value, r.description))
+    .map((r) => {
+      const kind = isGlobPattern(r.value) ? '[GLOB]' : '[FILE]';
+      return `- ${r.value} ${kind} — ${r.description}`;
+    })
     .join('\n');
 }
 
-const VULN_CLASS_HEADINGS: Record<VulnClass, string> = {
-  auth: 'Authentication Vulnerabilities',
-  authz: 'Authorization Vulnerabilities',
-  xss: 'Cross-Site Scripting (XSS) Vulnerabilities',
-  injection: 'SQL/Command Injection Vulnerabilities',
-  ssrf: 'Server-Side Request Forgery (SSRF) Vulnerabilities',
-};
-
-/**
- * Renders the <not_assessed_classes> block. Empty when every class completed.
- *
- * A class whose analysis failed was never assessed, so the report must not present its
- * absence of findings as a clean result. The block is authoritative for that caveat.
- */
-function renderNotAssessedClassesBlock(failed: readonly VulnClass[] = []): string {
-  if (failed.length === 0) {
-    return '';
-  }
-
-  const classes = [...new Set(failed)];
-  const lines: string[] = [
-    '<not_assessed_classes>',
-    'The following vulnerability classes did not complete and were NOT assessed in this run. Treat this list as authoritative for completeness caveats.',
-    '',
-  ];
-
-  for (const cls of classes) {
-    lines.push(
-      `- ${VULN_CLASS_HEADINGS[cls]}: analysis did not complete; this class was NOT assessed. Absence of findings here does not indicate the class is clean.`,
-    );
-  }
-
-  lines.push(
-    '',
-    'When writing report_meta.executive_summary, scope any no-findings statement to the classes that were assessed and mention these not-assessed classes. Do not state or imply that the target is clean for these classes.',
-    '</not_assessed_classes>',
-  );
-  return lines.join('\n');
+interface VulnSummarySpec {
+  readonly heading: string;
+  readonly evidenceSection: string;
+  readonly noneFoundLabel: string;
 }
 
-/**
- * Which configured filters this run can actually enforce.
- *
- * Every finding carries `severity` (see ../collectors/finding-collector.ts), so a severity
- * threshold always applies. `confidence` exists only on an analysed finding — handing an
- * exploit run a confidence threshold is a directive it cannot honor.
- */
-function applicableFilters(report: DistributedReportConfig | undefined, exploitEnabled: boolean) {
-  return {
-    severity: Boolean(report?.min_severity),
-    confidence: Boolean(report?.min_confidence) && !exploitEnabled,
-    guidance: Boolean(report?.guidance?.trim()),
-  };
+const VULN_SUMMARY_SPECS: Record<VulnClass, VulnSummarySpec> = {
+  auth: {
+    heading: 'Authentication Vulnerabilities',
+    evidenceSection: 'Authentication Safe Demonstration Evidence',
+    noneFoundLabel: 'authentication',
+  },
+  authz: {
+    heading: 'Authorization Vulnerabilities',
+    evidenceSection: 'Authorization Safe Demonstration Evidence',
+    noneFoundLabel: 'authorization',
+  },
+  xss: {
+    heading: 'Cross-Site Scripting (XSS) Vulnerabilities',
+    evidenceSection: 'XSS Safe Demonstration Evidence',
+    noneFoundLabel: 'XSS',
+  },
+  injection: {
+    heading: 'SQL/Command Injection Vulnerabilities',
+    evidenceSection: 'Injection Safe Demonstration Evidence',
+    noneFoundLabel: 'SQL or command injection',
+  },
+  ssrf: {
+    heading: 'Server-Side Request Forgery (SSRF) Vulnerabilities',
+    evidenceSection: 'SSRF Safe Demonstration Evidence',
+    noneFoundLabel: 'SSRF',
+  },
+};
+
+function renderVulnSummarySubsections(selected: readonly VulnClass[]): string {
+  const classes = selected.length > 0 ? selected : (Object.keys(VULN_SUMMARY_SPECS) as VulnClass[]);
+  return classes
+    .map((cls) => {
+      const spec = VULN_SUMMARY_SPECS[cls];
+      return `**${spec.heading}:**\n{Check for "${spec.evidenceSection}" section. Include demonstrated findings and those blocked by security controls. Exclude theoretical vulnerabilities requiring internal network access. If vulnerabilities exist, summarize their impact and severity. If section is missing or empty, state: "No ${spec.noneFoundLabel} vulnerabilities were found."}`;
+    })
+    .join('\n\n');
 }
 
 /**
@@ -90,23 +79,22 @@ function applicableFilters(report: DistributedReportConfig | undefined, exploitE
  * each filter is included only when the operator configured it, so the agent
  * never sees `none` placeholders or instructions for filters that don't apply.
  */
-function renderReportFiltersBlock(report: DistributedReportConfig | undefined, exploitEnabled: boolean): string {
+function renderReportFiltersBlock(report: ReportConfig | undefined): string {
   if (!report) return '';
   const guidance = report.guidance?.trim();
-  const applies = applicableFilters(report, exploitEnabled);
-  if (!applies.severity && !applies.confidence && !applies.guidance) return '';
+  if (!report.min_severity && !report.min_confidence && !guidance) return '';
 
   const lines: string[] = [
     '<report_filters>',
     'The filters below are user-supplied and binding for this assessment. Honor each strictly when assembling the final report.',
     '',
   ];
-  if (applies.severity) {
+  if (report.min_severity) {
     lines.push(
       `- Minimum severity: ${report.min_severity} — keep only findings rated this severity or higher (scale: low < medium < high < critical).`,
     );
   }
-  if (applies.confidence) {
+  if (report.min_confidence) {
     lines.push(
       `- Minimum confidence: ${report.min_confidence} — keep only findings rated this confidence or higher (scale: low < medium < high).`,
     );
@@ -125,11 +113,10 @@ function renderReportFiltersBlock(report: DistributedReportConfig | undefined, e
  * confidence inline as concrete thresholds; guidance is referenced by pointer
  * so the actual text only lives in <report_filters>, avoiding double-statement.
  */
-function renderReportFilterRules(report: DistributedReportConfig | undefined, exploitEnabled: boolean): string {
-  const applies = applicableFilters(report, exploitEnabled);
+function renderReportFilterRules(report: ReportConfig | undefined): string {
   const drops: string[] = [];
-  if (applies.severity) drops.push(`* severity is below ${report?.min_severity}`);
-  if (applies.confidence) drops.push(`* confidence is below ${report?.min_confidence}`);
+  if (report?.min_severity) drops.push(`* severity is below ${report.min_severity}`);
+  if (report?.min_confidence) drops.push(`* confidence is below ${report.min_confidence}`);
   if (report?.guidance?.trim()) drops.push('* topic matches an exclusion in the user guidance');
   if (drops.length === 0) return '';
   return ['   - DROP any `### [TYPE]-VULN-[NUMBER]` finding whose:', ...drops.map((d) => `     ${d}`)].join('\n');
@@ -137,11 +124,57 @@ function renderReportFilterRules(report: DistributedReportConfig | undefined, ex
 
 interface PromptVariables {
   webUrl: string;
-  repoPath: string;
-  /** Classes whose analysis did not complete, so the report can mark them not assessed. */
-  failedClasses?: readonly VulnClass[];
+  workingDirectory: string;
+  repoPath?: string;
   AUTH_STATE_FILE: string;
   PLAYWRIGHT_SESSION?: string;
+  testScopes?: AssessmentScope[];
+  testSurfaces?: AssessmentSurface[];
+}
+
+function promptExecutionLane(promptName: string): VulnClass | undefined {
+  return (Object.keys(VULN_SUMMARY_SPECS) as VulnClass[]).find(
+    (lane) => promptName === `vuln-${lane}` || promptName === `exploit-${lane}`,
+  );
+}
+
+function renderAssessmentScopeBlock(
+  promptName: string,
+  variables: PromptVariables,
+  config: DistributedConfig | null,
+): string {
+  const useVariableScopes = variables.testScopes !== undefined;
+  const scope = normalizeAssessmentScope({
+    ...(variables.testScopes !== undefined
+      ? { testScopes: variables.testScopes }
+      : config?.test_scopes
+        ? { testScopes: config.test_scopes }
+        : {}),
+    ...(variables.testSurfaces !== undefined
+      ? { testSurfaces: variables.testSurfaces }
+      : config?.test_surfaces
+        ? { testSurfaces: config.test_surfaces }
+        : {}),
+    ...(!useVariableScopes && config?.vuln_classes ? { vulnClasses: config.vuln_classes } : {}),
+  });
+  const lane = promptExecutionLane(promptName);
+  const checks = ASSESSMENT_SCOPE_REGISTRY.filter((definition) => {
+    if (!scope.testScopes.includes(definition.id)) return false;
+    if (!lane) return true;
+    return 'agent' in definition && definition.agent === lane;
+  });
+  const surfaces = ASSESSMENT_SURFACE_REGISTRY.filter(({ id }) => scope.testSurfaces.includes(id));
+  return [
+    '<assessment_scope>',
+    'Only perform the checks listed below. Checks not listed are outside this run scope, even if referenced elsewhere in this prompt.',
+    '',
+    'Selected checks:',
+    ...(checks.length > 0 ? checks.map(({ label, id }) => `- ${label} (\`${id}\`)`) : ['- None']),
+    '',
+    'Enabled surfaces:',
+    ...surfaces.map(({ label, id }) => `- ${label} (\`${id}\`)`),
+    '</assessment_scope>',
+  ].join('\n');
 }
 
 interface IncludeReplacement {
@@ -192,46 +225,39 @@ async function buildLoginInstructions(
 
     if (authentication.credentials) {
       if (authentication.credentials.username) {
-        userInstructions = replaceLiteral(userInstructions, /\$username/g, authentication.credentials.username);
+        userInstructions = userInstructions.replace(/\$username/g, authentication.credentials.username);
       }
       if (authentication.credentials.password) {
-        userInstructions = replaceLiteral(userInstructions, /\$password/g, authentication.credentials.password);
+        userInstructions = userInstructions.replace(/\$password/g, authentication.credentials.password);
       }
       if (authentication.credentials.totp_secret) {
-        userInstructions = replaceLiteral(
-          userInstructions,
+        userInstructions = userInstructions.replace(
           /\$totp/g,
           `generated TOTP code using secret "${authentication.credentials.totp_secret}"`,
         );
       }
       if (authentication.credentials.email_login?.address) {
-        userInstructions = replaceLiteral(
-          userInstructions,
-          /\$email_address/g,
-          authentication.credentials.email_login.address,
-        );
+        userInstructions = userInstructions.replace(/\$email_address/g, authentication.credentials.email_login.address);
       }
       if (authentication.credentials.email_login?.password) {
-        userInstructions = replaceLiteral(
-          userInstructions,
+        userInstructions = userInstructions.replace(
           /\$email_password/g,
           authentication.credentials.email_login.password,
         );
       }
       if (authentication.credentials.email_login?.totp_secret) {
-        userInstructions = replaceLiteral(
-          userInstructions,
+        userInstructions = userInstructions.replace(
           /\$email_totp/g,
           `generated TOTP code using secret "${authentication.credentials.email_login.totp_secret}"`,
         );
       }
     }
 
-    loginInstructions = replaceLiteral(loginInstructions, /{{user_instructions}}/g, userInstructions);
+    loginInstructions = loginInstructions.replace(/{{user_instructions}}/g, userInstructions);
 
     // 5. Replace TOTP secret placeholder if present in template
     if (authentication.credentials?.totp_secret) {
-      loginInstructions = replaceLiteral(loginInstructions, /{{totp_secret}}/g, authentication.credentials.totp_secret);
+      loginInstructions = loginInstructions.replace(/{{totp_secret}}/g, authentication.credentials.totp_secret);
     }
 
     return loginInstructions;
@@ -241,7 +267,8 @@ async function buildLoginInstructions(
     }
     const errMsg = error instanceof Error ? error.message : String(error);
     throw new PentestError(`Failed to build login instructions: ${errMsg}`, 'config', false, {
-      authentication,
+      loginType: authentication.login_type,
+      loginUrl: authentication.login_url,
       originalError: errMsg,
     });
   }
@@ -271,19 +298,9 @@ async function processIncludes(content: string, baseDir: string): Promise<string
   );
 
   for (const replacement of replacements) {
-    content = replaceLiteral(content, replacement.placeholder, replacement.content);
+    content = content.replace(replacement.placeholder, replacement.content);
   }
   return content;
-}
-
-/**
- * Replaces `pattern` with `replacement` treating the replacement as a literal
- * string. Native `String.replace` interprets `$&`, `$1`, `$$` in the replacement
- * as special patterns, which mangles credential and config values that legitimately
- * contain `$`. The function form of `replace` bypasses that interpretation.
- */
-function replaceLiteral(input: string, pattern: RegExp | string, replacement: string): string {
-  return input.replace(pattern, () => replacement);
 }
 
 function buildAuthContext(config: DistributedConfig | null): string {
@@ -321,34 +338,28 @@ async function interpolateVariables(
       });
     }
 
-    if (!variables || !variables.webUrl || !variables.repoPath) {
-      throw new PentestError('Variables must include webUrl and repoPath', 'validation', false, {
+    if (!variables || !variables.webUrl || !variables.workingDirectory) {
+      throw new PentestError('Variables must include webUrl and workingDirectory', 'validation', false, {
         variables: Object.keys(variables || {}),
       });
     }
 
-    // replaceLiteral is used for all value insertions so config values that
-    // contain `$&`/`$$`/`$1`/etc. aren't mangled as replacement patterns.
-    let result = template;
-    result = replaceLiteral(result, /{{WEB_URL}}/g, variables.webUrl);
-    result = replaceLiteral(result, /{{REPO_PATH}}/g, variables.repoPath);
-    result = replaceLiteral(result, /{{PLAYWRIGHT_SESSION}}/g, variables.PLAYWRIGHT_SESSION || 'agent1');
-    result = replaceLiteral(result, /{{AUTH_CONTEXT}}/g, buildAuthContext(config));
-    result = replaceLiteral(
-      result,
-      /{{DESCRIPTION}}/g,
-      config?.description ? `Description: ${config.description}` : '',
-    );
+    let result = template
+      .replace(/{{WEB_URL}}/g, variables.webUrl)
+      .replace(/{{REPO_PATH}}/g, variables.repoPath ?? variables.workingDirectory)
+      .replace(/{{WORKING_DIRECTORY}}/g, variables.workingDirectory)
+      .replace(/{{PLAYWRIGHT_SESSION}}/g, variables.PLAYWRIGHT_SESSION || 'agent1')
+      .replace(/{{AUTH_CONTEXT}}/g, buildAuthContext(config))
+      .replace(/{{DESCRIPTION}}/g, config?.description ? `Description: ${config.description}` : '');
 
     const avoidUrlRules = config?.avoid?.filter((r) => r.type !== 'code_path') ?? [];
     const focusUrlRules = config?.focus?.filter((r) => r.type !== 'code_path') ?? [];
     if (avoidUrlRules.length === 0 && focusUrlRules.length === 0) {
       result = result.replace(/<rules>[\s\S]*?<\/rules>\s*/g, '');
     } else {
-      const avoidStr = renderUrlRules(avoidUrlRules);
-      const focusStr = renderUrlRules(focusUrlRules);
-      result = replaceLiteral(result, /{{RULES_AVOID}}/g, avoidStr);
-      result = replaceLiteral(result, /{{RULES_FOCUS}}/g, focusStr);
+      const avoidStr = avoidUrlRules.length > 0 ? avoidUrlRules.map((r) => `- ${r.description}`).join('\n') : 'None';
+      const focusStr = focusUrlRules.length > 0 ? focusUrlRules.map((r) => `- ${r.description}`).join('\n') : 'None';
+      result = result.replace(/{{RULES_AVOID}}/g, avoidStr).replace(/{{RULES_FOCUS}}/g, focusStr);
     }
 
     const avoidCodeRules = (config?.avoid ?? []).filter((r) => r.type === 'code_path');
@@ -356,13 +367,14 @@ async function interpolateVariables(
     if (avoidCodeRules.length === 0 && focusCodeRules.length === 0) {
       result = result.replace(/<code_path_rules>[\s\S]*?<\/code_path_rules>\s*/g, '');
     } else {
-      result = replaceLiteral(result, /{{CODE_RULES_AVOID}}/g, renderCodePathRules(config?.avoid ?? []));
-      result = replaceLiteral(result, /{{CODE_RULES_FOCUS}}/g, renderCodePathRules(config?.focus ?? []));
+      result = result
+        .replace(/{{CODE_RULES_AVOID}}/g, renderCodePathRules(config?.avoid ?? []))
+        .replace(/{{CODE_RULES_FOCUS}}/g, renderCodePathRules(config?.focus ?? []));
     }
 
     const roe = config?.rules_of_engagement?.trim() ?? '';
     if (roe) {
-      result = replaceLiteral(result, /{{RULES_OF_ENGAGEMENT}}/g, roe);
+      result = result.replace(/{{RULES_OF_ENGAGEMENT}}/g, roe);
     } else {
       result = result.replace(/<rules_of_engagement>[\s\S]*?<\/rules_of_engagement>\s*/g, '');
     }
@@ -370,59 +382,36 @@ async function interpolateVariables(
     if (!config?.authentication) {
       result = result.replace(/<shared_authenticated_session>[\s\S]*?<\/shared_authenticated_session>\s*/g, '');
     } else {
-      result = replaceLiteral(result, /{{AUTH_STATE_FILE}}/g, variables.AUTH_STATE_FILE);
+      result = result.replace(/{{AUTH_STATE_FILE}}/g, variables.AUTH_STATE_FILE);
     }
 
     if (config?.authentication?.login_flow) {
       const loginInstructions = await buildLoginInstructions(config.authentication, logger, promptsBaseDir);
-      result = replaceLiteral(result, /{{LOGIN_INSTRUCTIONS}}/g, loginInstructions);
+      result = result.replace(/{{LOGIN_INSTRUCTIONS}}/g, loginInstructions);
     } else {
       result = result.replace(/{{LOGIN_INSTRUCTIONS}}/g, '');
     }
 
     const vulnClasses = config?.vuln_classes ?? [];
-    result = replaceLiteral(
-      result,
+    result = result.replace(
       /{{VULN_CLASSES_TESTED}}/g,
       vulnClasses.length > 0 ? vulnClasses.join(', ') : 'injection, xss, auth, authz, ssrf',
     );
-    result = replaceLiteral(
-      result,
-      /{{NOT_ASSESSED_CLASSES}}/g,
-      renderNotAssessedClassesBlock(variables.failedClasses ?? []),
-    );
+    result = result.replace(/{{VULN_SUMMARY_SUBSECTIONS}}/g, renderVulnSummarySubsections(vulnClasses));
 
-    const exploitEnabled = config?.exploit ?? true;
-
-    // Drop every block belonging to the mode this run is not in, so the prompt never documents
-    // a field the tool would reject. The backreference pins each match to a closed pair.
-    const droppedMode = exploitEnabled ? 'analysis' : 'exploit';
-    result = result.replace(new RegExp(`<(${droppedMode}_mode_[a-z_]+)>[\\s\\S]*?</\\1>\\n?`, 'g'), '');
-    result = result.replace(/<\/?(?:exploit|analysis)_mode_[a-z_]+>\n?/g, '');
-
-    result = replaceLiteral(result, /{{EXPLOITATION}}/g, exploitEnabled ? 'enabled' : 'disabled');
-    result = replaceLiteral(
-      result,
-      /{{REPORT_VULN_SUBHEADING}}/g,
-      exploitEnabled ? 'Successfully Exploited Vulnerabilities' : 'Identified Vulnerabilities',
-    );
-
-    if (config?.report?.min_confidence && exploitEnabled) {
-      logger.warn(
-        `report.min_confidence="${config.report.min_confidence}" is ignored when exploit=true: an ` +
-          'exploited finding is rated by severity, not confidence. Use report.min_severity.',
+    const safeDemonstration = config?.safeDemonstration ?? (config as { exploit?: boolean } | null)?.exploit ?? true;
+    result = result
+      .replace(/{{SAFE_DEMONSTRATION}}/g, safeDemonstration ? 'enabled' : 'disabled')
+      .replace(/{{EXPLOITATION}}/g, safeDemonstration ? 'enabled' : 'disabled')
+      .replace(/{{REPORT_VULN_HEADING}}/g, safeDemonstration ? 'Safe Demonstration Evidence' : 'Findings')
+      .replace(
+        /{{REPORT_VULN_SUBHEADING}}/g,
+        safeDemonstration ? 'Demonstrated Findings' : 'Identified Vulnerabilities',
       );
-    }
-    result = replaceLiteral(
-      result,
-      /{{REPORT_FILTERS_BLOCK}}/g,
-      renderReportFiltersBlock(config?.report, exploitEnabled),
-    );
-    result = replaceLiteral(
-      result,
-      /{{REPORT_FILTER_RULES}}/g,
-      renderReportFilterRules(config?.report, exploitEnabled),
-    );
+
+    result = result
+      .replace(/{{REPORT_FILTERS_BLOCK}}/g, renderReportFiltersBlock(config?.report))
+      .replace(/{{REPORT_FILTER_RULES}}/g, renderReportFilterRules(config?.report));
 
     // Collapse runs of 3+ newlines (left behind by tag-strip and empty-fragment substitutions).
     result = result.replace(/\n{3,}/g, '\n\n');
@@ -451,6 +440,19 @@ function resolvePromptDir(promptDir: string | undefined): string {
   return path.resolve(process.env.SHANNON_WORKER_ROOT ?? process.cwd(), promptDir);
 }
 
+export function promptDirectoryCandidates(
+  basePromptsDir: string,
+  pipelineTestingMode: boolean,
+  sourceMode: SourceMode,
+): string[] {
+  if (sourceMode === 'url-only') {
+    return pipelineTestingMode
+      ? [path.join(basePromptsDir, 'pipeline-testing', 'url-only'), path.join(basePromptsDir, 'url-only')]
+      : [path.join(basePromptsDir, 'url-only')];
+  }
+  return [pipelineTestingMode ? path.join(basePromptsDir, 'pipeline-testing') : basePromptsDir];
+}
+
 // Pure function: Load and interpolate prompt template
 export async function loadPrompt(
   promptName: string,
@@ -459,19 +461,31 @@ export async function loadPrompt(
   pipelineTestingMode: boolean = false,
   logger: ActivityLogger,
   promptDir?: string,
+  sourceMode: SourceMode = 'source-assisted',
 ): Promise<string> {
   try {
     const basePromptsDir = resolvePromptDir(promptDir);
-    const promptsDir = pipelineTestingMode ? path.join(basePromptsDir, 'pipeline-testing') : basePromptsDir;
-    const promptPath = path.join(promptsDir, `${promptName}.txt`);
-
-    if (pipelineTestingMode) {
-      logger.info(`Using pipeline testing prompt: ${promptPath}`);
+    const candidates = promptDirectoryCandidates(basePromptsDir, pipelineTestingMode, sourceMode);
+    let promptsDir: string | undefined;
+    let promptPath: string | undefined;
+    for (const candidate of candidates) {
+      const candidatePath = path.join(candidate, `${promptName}.txt`);
+      if (await fs.pathExists(candidatePath)) {
+        promptsDir = candidate;
+        promptPath = candidatePath;
+        break;
+      }
     }
 
-    if (!(await fs.pathExists(promptPath))) {
-      throw new PentestError(`Prompt file not found: ${promptPath}`, 'prompt', false, { promptName, promptPath });
+    if (!promptPath || !promptsDir) {
+      throw new PentestError(`Prompt file not found for ${promptName} (${sourceMode})`, 'prompt', false, {
+        promptName,
+        sourceMode,
+        searched: candidates,
+      });
     }
+
+    logger.info(`Using ${sourceMode}${pipelineTestingMode ? ' pipeline-testing' : ''} prompt: ${promptPath}`);
 
     // 2. Assign Playwright session based on agent name
     const enhancedVariables: PromptVariables = { ...variables };
@@ -492,7 +506,8 @@ export async function loadPrompt(
     template = await processIncludes(template, promptsDir);
 
     // 5. Interpolate variables and return final prompt
-    return await interpolateVariables(template, enhancedVariables, config, logger, basePromptsDir);
+    const interpolated = await interpolateVariables(template, enhancedVariables, config, logger, basePromptsDir);
+    return `${renderAssessmentScopeBlock(promptName, enhancedVariables, config)}\n\n${interpolated}`;
   } catch (error) {
     if (error instanceof PentestError) {
       throw error;

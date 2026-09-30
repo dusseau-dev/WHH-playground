@@ -1,11 +1,9 @@
 // Copyright (C) 2025 Keygraph, Inc.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License version 3
-// as published by the Free Software Foundation.
 
-/** Deterministic report.json to SARIF 2.1.0 renderer, for `exploit=true` runs only. */
+/** Deterministic canonical report.json to SARIF 2.1.0 rendering. */
 
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { AddFindingInput, CodeLocation } from '../collectors/finding-collector.js';
 import type { ReportData } from './report-renderer.js';
 
@@ -16,112 +14,73 @@ export interface SarifOptions {
 interface SarifRule {
   readonly id: string;
   readonly name: string;
-  readonly shortDescription: { text: string };
-  readonly fullDescription: { text: string };
-  readonly help: { text: string };
-  readonly properties: { tags: string[] };
+  readonly shortDescription: { readonly text: string };
+  readonly fullDescription: { readonly text: string };
+  readonly help: { readonly text: string };
+  readonly properties: { readonly tags: readonly string[] };
 }
+
+type FindingCategory = AddFindingInput['category'];
 
 const TOOL_NAME = 'Shannon';
 const TOOL_URI = 'https://github.com/KeygraphHQ/shannon';
-
-/** Taxonomy identity. A reference resolves the component by name, so this must not be reworded. */
 const OWASP_TAXONOMY_NAME = 'OWASP Top Ten 2025';
 
-/**
- * One rule per vulnerability class, keyed by `finding.category`.
- *
- * Rule IDs are the unit of alert grouping: renaming one detaches every alert filed under it.
- * `fullDescription` and `help` describe the class, never the instance, and GitHub requires the
- * `text` of both.
- */
-const RULES: Record<string, SarifRule> = {
-  Injection: {
-    id: 'shannon/injection',
-    name: 'Injection',
-    shortDescription: { text: 'Injection' },
-    fullDescription: {
-      text: 'Untrusted input reaches an interpreter sink (SQL, OS command, template, file path or deserializer) at a position where it can alter the structure of the statement rather than only supply data.',
-    },
-    help: {
-      text: 'Separate code from data at the sink: bind SQL parameters, pass command arguments as an array, and allowlist file paths. Escaping is a weaker control than parameterisation and breaks whenever the sink context changes.',
-    },
-    properties: { tags: ['security', 'shannon'] },
-  },
-  XSS: {
-    id: 'shannon/xss',
-    name: 'Cross-Site Scripting',
-    shortDescription: { text: 'Cross-Site Scripting' },
-    fullDescription: {
-      text: 'Untrusted input reaches a browser rendering context without the encoding that context requires.',
-    },
-    help: {
-      text: 'Encode at the point of output for the specific context (HTML body, attribute, URL, script or style); no single encoder is correct for all of them. Prefer APIs that treat input as text, such as textContent over innerHTML.',
-    },
-    properties: { tags: ['security', 'shannon'] },
-  },
-  Authentication: {
-    id: 'shannon/auth',
-    name: 'Authentication',
-    shortDescription: { text: 'Authentication' },
-    fullDescription: {
-      text: 'A weakness in credential verification or session lifecycle that lets an attacker assume another identity or retain access they should have lost.',
-    },
-    help: {
-      text: 'Issue a fresh session identifier on every privilege change, set HttpOnly, Secure and SameSite on session cookies, rate-limit credential endpoints, and verify the signature and algorithm of externally issued tokens.',
-    },
-    properties: { tags: ['security', 'shannon'] },
-  },
-  Authorization: {
-    id: 'shannon/authz',
-    name: 'Authorization',
-    shortDescription: { text: 'Authorization' },
-    fullDescription: {
-      text: 'An access control decision is missing, evaluated in the client, or applied at the wrong layer, letting a caller act on resources they do not own.',
-    },
-    help: {
-      text: 'Check ownership and role on the server for every object reference, and enforce it in the data-access layer rather than per route, denying by default. An unguessable identifier is not an access control.',
-    },
-    properties: { tags: ['security', 'shannon'] },
-  },
-  SSRF: {
-    id: 'shannon/ssrf',
-    name: 'Server-Side Request Forgery',
-    shortDescription: { text: 'Server-Side Request Forgery' },
-    fullDescription: {
-      text: 'A server-side request takes its destination from untrusted input, letting an attacker reach hosts the server can see but they cannot.',
-    },
-    help: {
-      text: 'Allowlist destination hosts and schemes, resolve DNS before validating the address so rebinding cannot slip through, and block loopback, private and link-local ranges including cloud metadata. Do not follow redirects.',
-    },
-    properties: { tags: ['security', 'shannon'] },
-  },
+const RULES: Readonly<Record<FindingCategory, SarifRule>> = {
+  Injection: rule('shannon/injection', 'Injection', 'Separate untrusted data from interpreter syntax at every sink.'),
+  XSS: rule('shannon/xss', 'Cross-Site Scripting', 'Encode untrusted output for its browser context.'),
+  Authentication: rule('shannon/auth', 'Authentication', 'Harden credential verification and session lifecycle.'),
+  Authorization: rule(
+    'shannon/authz',
+    'Authorization',
+    'Enforce server-side ownership and role checks for every resource.',
+  ),
+  SSRF: rule('shannon/ssrf', 'Server-Side Request Forgery', 'Allowlist destinations and block private network ranges.'),
 };
 
-const CATEGORY_ORDER: readonly string[] = ['Injection', 'XSS', 'Authentication', 'SSRF', 'Authorization'];
+const CATEGORY_ORDER: readonly FindingCategory[] = ['Injection', 'XSS', 'Authentication', 'Authorization', 'SSRF'];
 
-/**
- * Five severities collapse into SARIF's three usable levels, so `critical` and `high` are
- * indistinguishable. `security-severity` would separate them but lives on the rule, which would
- * flatten every finding of a class to one score instead.
- */
-function severityToLevel(severity: string | undefined): string {
-  switch (severity) {
-    case 'critical':
-    case 'high':
-      return 'error';
-    case 'medium':
-      return 'warning';
-    default:
-      return 'note';
-  }
+function rule(id: string, name: string, help: string): SarifRule {
+  return {
+    id,
+    name,
+    shortDescription: { text: name },
+    fullDescription: { text: `${name} vulnerability identified by Shannon.` },
+    help: { text: help },
+    properties: { tags: ['security', 'shannon'] },
+  };
 }
 
-function toPhysicalLocation(location: CodeLocation) {
+function severityToLevel(severity: string): 'error' | 'warning' | 'note' {
+  if (severity === 'critical' || severity === 'high') return 'error';
+  if (severity === 'medium') return 'warning';
+  return 'note';
+}
+
+/** Only repository-relative paths are allowed into source locations. */
+export function normalizeSarifSourcePath(file: string): string | null {
+  if (!file || file.includes('\0') || /^[a-zA-Z]:[\\/]/.test(file) || file.startsWith('/') || file.startsWith('\\')) {
+    return null;
+  }
+  const slashPath = file.replaceAll('\\', '/');
+  if (slashPath.split('/').includes('..')) return null;
+  const normalized = path.posix.normalize(slashPath).replace(/^\.\//, '');
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) return null;
+  return normalized;
+}
+
+function safeCodeLocation(location: CodeLocation): (CodeLocation & { readonly file: string }) | null {
+  const file = normalizeSarifSourcePath(location.file);
+  if (!file) return null;
+  if (location.start_line !== undefined && location.start_line !== null && location.start_line < 1) return null;
+  if (location.end_line !== undefined && location.end_line !== null && location.end_line < 1) return null;
+  return { ...location, file };
+}
+
+function toSarifLocation(location: CodeLocation & { readonly file: string }) {
   const region: Record<string, number> = {};
   if (location.start_line) region.startLine = location.start_line;
   if (location.end_line) region.endLine = location.end_line;
-
   return {
     physicalLocation: {
       artifactLocation: { uri: location.file },
@@ -132,162 +91,141 @@ function toPhysicalLocation(location: CodeLocation) {
   };
 }
 
-/**
- * Fall back to the HTTP entry point when a finding names no file: a result with no location is
- * silently discarded downstream. No `uriBaseId`, since the path does not resolve in the repo.
- */
-function syntheticLocationFromHttp(finding: AddFindingInput) {
-  if (!finding.http_location) return undefined;
-  let uri = finding.http_location.url;
+function safeHttpUrl(finding: AddFindingInput): URL | null {
+  if (!finding.http_location) return null;
   try {
-    const parsed = new URL(finding.http_location.url);
-    uri = `${parsed.pathname}${parsed.hash}`;
-  } catch {}
+    const url = new URL(finding.http_location.url);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    url.username = '';
+    url.password = '';
+    // Evidence identifies the endpoint and parameter separately; query values may contain secrets.
+    url.search = '';
+    url.hash = '';
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function httpFallback(finding: AddFindingInput, url: URL | null) {
+  if (!finding.http_location || !url) return null;
   return {
-    physicalLocation: { artifactLocation: { uri } },
-    message: { text: `${finding.http_location.method} ${finding.http_location.url}` },
+    physicalLocation: { artifactLocation: { uri: url.href } },
+    message: { text: `${finding.http_location.method.toUpperCase()} ${url.href}` },
   };
 }
 
-function buildMessageMarkdown(finding: AddFindingInput): string {
-  const parts = [`**${finding.title}**`, '', finding.overview, '', '**Impact**', '', finding.impact];
-  parts.push('', '**Remediation**', '', finding.remediation);
-  // Exploitation steps and proof of impact are deliberately absent: SARIF has no structural home
-  // for them, and flattening them into prose would imply this file carries the evidence.
-  parts.push('', 'Full exploitation evidence: `Security-Assessment-Report.pdf`');
-  return parts.join('\n');
-}
-
-/**
- * `owasp_category` is one label, `A05:2025 <separator> Injection`; SARIF wants the id and the name
- * as separate fields. The enum in ../collectors/finding-collector.ts fixes the shape, so the
- * separator is dropped by position rather than matched.
- */
-function splitOwaspCategory(label: string): { id: string; name: string } {
+function splitOwaspCategory(label: string): { readonly id: string; readonly name: string } {
   const [id, , ...nameParts] = label.split(' ');
   return { id: id ?? label, name: nameParts.join(' ') };
 }
 
-interface RenderedResult {
-  readonly result: Record<string, unknown>;
-  readonly category: string;
-  readonly owaspId: string;
+function fingerprint(ruleId: string, findingId: string): string {
+  return createHash('sha256').update(`${ruleId}\0${findingId}`).digest('hex');
 }
 
-function renderResult(finding: AddFindingInput, ruleId: string): RenderedResult | null {
-  const codeLocations = finding.code_locations ?? [];
-  const sinks = codeLocations.filter((l) => l.role === 'sink');
-  const related = codeLocations.filter((l) => l.role !== 'sink');
-  const primary = sinks[0] ?? codeLocations[0];
+function renderFinding(finding: AddFindingInput, ruleId: string): Record<string, unknown> | null {
+  const safeLocations = (finding.code_locations ?? []).flatMap((location) => {
+    const safe = safeCodeLocation(location);
+    return safe ? [safe] : [];
+  });
+  const primary = safeLocations.find((location) => location.role === 'sink') ?? safeLocations[0];
+  const httpUrl = safeHttpUrl(finding);
+  const fallback = primary ? null : httpFallback(finding, httpUrl);
+  if (!primary && !fallback) return null;
 
-  const locations = primary ? [toPhysicalLocation(primary)] : [syntheticLocationFromHttp(finding)].filter(Boolean);
-  if (locations.length === 0) return null;
-
-  const properties: Record<string, unknown> = { findingId: finding.finding_id };
-  if (finding.http_location?.parameter) properties.parameter = finding.http_location.parameter;
-  if (finding.status) properties.status = finding.status;
-  if (finding.auth_state) properties.authState = finding.auth_state;
-  if (finding.prerequisites) properties.prerequisites = finding.prerequisites;
-
-  const owaspId = splitOwaspCategory(finding.owasp_category).id;
-
+  const related = primary ? safeLocations.filter((location) => location !== primary) : safeLocations;
+  const owasp = splitOwaspCategory(finding.owasp_category);
   return {
-    category: finding.category,
-    owaspId,
-    result: {
-      ruleId,
-      level: severityToLevel(finding.severity),
-      message: {
-        text: `${finding.title}. ${finding.overview}`,
-        markdown: buildMessageMarkdown(finding),
-      },
-      locations,
-      ...(related.length > 0 && {
-        relatedLocations: related.map((l, i) => ({ id: i + 1, ...toPhysicalLocation(l) })),
+    ruleId,
+    level: severityToLevel(finding.severity),
+    message: {
+      text: `${finding.title}. ${finding.overview}`,
+      markdown: [
+        `**${finding.title}**`,
+        '',
+        finding.overview,
+        '',
+        '**Impact**',
+        '',
+        finding.impact,
+        '',
+        '**Remediation**',
+        '',
+        finding.remediation,
+        '',
+        'Full evidence: `Security-Assessment-Report.md`',
+      ].join('\n'),
+    },
+    locations: [primary ? toSarifLocation(primary) : fallback],
+    ...(related.length > 0 && {
+      relatedLocations: related.map((location, index) => ({ id: index + 1, ...toSarifLocation(location) })),
+    }),
+    ...(finding.http_location &&
+      httpUrl && {
+        webRequest: { method: finding.http_location.method.toUpperCase(), target: httpUrl.href },
       }),
-      ...(finding.http_location && {
-        // No `parameters`: SARIF wants a name-to-value map and the deliverable names only the
-        // parameter, so any value here would be invented. It travels in `properties` instead.
-        webRequest: { method: finding.http_location.method, target: finding.http_location.url },
-      }),
-      taxa: [
-        {
-          id: owaspId,
-          toolComponent: { name: OWASP_TAXONOMY_NAME },
-        },
-      ],
-      properties,
+    taxa: [{ id: owasp.id, toolComponent: { name: OWASP_TAXONOMY_NAME } }],
+    partialFingerprints: { 'shannon/finding-id/v1': fingerprint(ruleId, finding.finding_id) },
+    properties: {
+      findingId: finding.finding_id,
+      ...(finding.original_severity && { originalSeverity: finding.original_severity }),
+      ...(finding.triage?.verdict && { triageVerdict: finding.triage.verdict }),
+      ...(finding.http_location?.parameter && { parameter: finding.http_location.parameter }),
     },
   };
 }
 
-/** Render a SARIF 2.1.0 log from the structured report. Findings with no location are omitted. */
+/** Render SARIF. Callers own eligibility gating; locationless findings are intentionally omitted. */
 export function renderSarif(data: ReportData, options: SarifOptions): string {
-  const { report_meta, findings, not_assessed = [] } = data;
-
-  const rendered: RenderedResult[] = [];
-
-  for (const finding of findings) {
-    const rule = RULES[finding.category];
-    if (!rule) continue;
-    const result = renderResult(finding, rule.id);
-    if (result !== null) rendered.push(result);
-  }
-
-  // Only classes that produced a result are declared, and `ruleIndex` is the position in this list.
-  const usedRules = CATEGORY_ORDER.flatMap((category) => {
-    const rule = RULES[category];
-    if (!rule || !rendered.some((r) => r.category === category)) return [];
-    return [{ category, rule }];
-  });
-  const rules = usedRules.map((u) => u.rule);
-
-  const results: Record<string, unknown>[] = usedRules.flatMap(({ category }, ruleIndex) =>
-    rendered.filter((r) => r.category === category).map((r) => ({ ...r.result, ruleIndex })),
+  const sorted = [...data.findings].sort(
+    (a, b) =>
+      CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category) ||
+      a.finding_id.localeCompare(b.finding_id),
   );
-
-  const owaspCategories = [...new Set(findings.map((f) => f.owasp_category))]
-    .map(splitOwaspCategory)
-    .filter((c) => rendered.some((r) => r.owaspId === c.id))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const rendered = sorted.flatMap((finding) => {
+    const ruleDefinition = RULES[finding.category];
+    const result = renderFinding(finding, ruleDefinition.id);
+    return result ? [{ category: finding.category, owasp: splitOwaspCategory(finding.owasp_category), result }] : [];
+  });
+  const usedCategories = CATEGORY_ORDER.filter((category) => rendered.some((entry) => entry.category === category));
+  const rules = usedCategories.map((category) => RULES[category]);
+  const results = usedCategories.flatMap((category, ruleIndex) =>
+    rendered.filter((entry) => entry.category === category).map((entry) => ({ ...entry.result, ruleIndex })),
+  );
+  const taxa = [...new Map(rendered.map((entry) => [entry.owasp.id, entry.owasp])).values()].sort((a, b) =>
+    a.id.localeCompare(b.id),
+  );
+  const workspaceName = options.workspaceName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
   const log = {
     $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
     version: '2.1.0',
     runs: [
       {
-        tool: {
-          driver: {
-            name: TOOL_NAME,
-            informationUri: TOOL_URI,
-            rules,
-          },
-        },
-        // Scoped to the exploit pipeline: an analysis run of the same target has a different
-        // finding population, which would read as alerts resolved.
-        automationDetails: { id: `shannon/exploit/${options.workspaceName}` },
-        invocations: [
-          {
-            // A failed class produced no results; reporting success would read as resolved alerts.
-            executionSuccessful: not_assessed.length === 0,
-          },
-        ],
-        ...(owaspCategories.length > 0 && {
+        tool: { driver: { name: TOOL_NAME, informationUri: TOOL_URI, rules } },
+        automationDetails: { id: `shannon/safe-demonstration/${workspaceName}` },
+        invocations: [{ executionSuccessful: data.not_assessed.length === 0 }],
+        ...(taxa.length > 0 && {
           taxonomies: [
             {
               name: OWASP_TAXONOMY_NAME,
               organization: 'OWASP',
               informationUri: 'https://owasp.org/Top10/',
               shortDescription: { text: 'OWASP Top Ten 2025 categories.' },
-              taxa: owaspCategories.map((c) => ({ id: c.id, name: c.name })),
+              taxa,
             },
           ],
         }),
         results,
-        properties: { target: report_meta.target, assessmentDate: report_meta.assessment_date },
+        properties: {
+          target: data.report_meta.target,
+          assessmentDate: data.report_meta.assessment_date,
+          sourceMode: data.report_meta.source_mode,
+          notAssessed: [...data.not_assessed],
+        },
       },
     ],
   };
-
   return `${JSON.stringify(log, null, 2)}\n`;
 }

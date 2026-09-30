@@ -5,3 +5,5 @@ credentials/
 dist/
 repos/
 .turbo/
+apps/cli/test-results/
+apps/cli/playwright-report/

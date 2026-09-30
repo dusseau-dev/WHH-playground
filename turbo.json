@@ -4,11 +4,19 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**"],
-      "inputs": ["src/**/*.ts", "tsconfig.json", "package.json"]
+      "inputs": ["$TURBO_DEFAULT$", "src/**", "web/**", "prompts/**", "configs/**", "infra/**", "../../assets/**"]
     },
     "check": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**/*.ts", "tsconfig.json"]
+      "inputs": ["$TURBO_DEFAULT$", "src/**", "web/**"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": ["coverage/**"]
+    },
+    "test:integration": {
+      "dependsOn": ["build"],
+      "cache": false
     },
     "clean": {
       "cache": false

@@ -1,81 +1,90 @@
 // Copyright (C) 2025 Keygraph, Inc.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License version 3
-// as published by the Free Software Foundation.
 
-/**
- * Deterministic report.json → markdown renderer.
- *
- * Converts the structured report output (produced by the finding-collector
- * tool + set-report-meta CLI) into the same markdown format that the
- * report agent previously wrote by hand. No LLM in the loop.
- */
-
-import { BRAND_LOCKUP } from '../branding.js';
-import type { AddFindingInput, AdditionalSection, StepItem, StructuredStep } from '../collectors/finding-collector.js';
-import type { VulnClass } from '../types/config.js';
-
-// ============================================================================
-// TYPES
-// ============================================================================
+import type {
+  AddFindingInput,
+  AdditionalSection,
+  FindingSeverity,
+  StepItem,
+  StructuredStep,
+} from '../collectors/finding-collector.js';
+import { ALL_VULN_CLASSES, type SourceMode, type VulnClass } from '../types/config.js';
+import type { HttpLoadResult } from '../types/http-load.js';
+import { ASSESSMENT_SCOPE_REGISTRY, type ModuleCoverage, type ScopeCoverage } from '../types/scopes.js';
+import type { RuledOutFinding, TriageStatus } from './report-reconciliation.js';
 
 export interface ReportMeta {
   readonly target: string;
   readonly assessment_date: string;
   readonly scope: string;
   readonly executive_summary: string;
-  readonly exploit?: boolean;
+  readonly safe_demonstration: boolean;
   readonly model?: string;
+  readonly source_mode: SourceMode;
+  readonly validation_state: TriageStatus;
 }
 
 export interface ReportData {
   readonly report_meta: ReportMeta;
   readonly findings: readonly AddFindingInput[];
-  // Vuln classes whose pipeline failed and were not assessed this run. Rendered as an explicit
-  // caveat so an un-assessed class is never presented as a clean result.
-  readonly not_assessed?: readonly VulnClass[];
+  readonly ruled_out: readonly RuledOutFinding[];
+  readonly not_assessed: readonly VulnClass[];
+  readonly scope_coverage?: readonly ScopeCoverage[];
+  readonly module_coverage?: readonly ModuleCoverage[];
+  readonly http_load_capacity?: HttpLoadResult;
+  readonly triage_status: TriageStatus;
+  readonly validation_issues?: readonly string[];
 }
 
-// Without this, an analysis-only report reads as though the impact was demonstrated.
-const ANALYSIS_ONLY_DISCLAIMER = [
-  '> Exploitation was not run for this assessment. Each finding documents a vulnerability',
-  '> identified through analysis; impact is assessed rather than demonstrated, and no live',
-  '> exploitation steps or proof of impact are included.',
-].join('\n');
+const SEVERITY_ORDER: Record<FindingSeverity, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+};
 
 const NOT_ASSESSED_LABELS: Record<VulnClass, string> = {
+  injection: 'SQL/Command Injection',
+  xss: 'Cross-Site Scripting (XSS)',
   auth: 'Authentication',
   authz: 'Authorization',
-  xss: 'Cross-Site Scripting (XSS)',
-  injection: 'SQL/Command Injection',
   ssrf: 'Server-Side Request Forgery (SSRF)',
 };
 
-function renderNotAssessedSection(notAssessed: readonly VulnClass[]): string {
-  const lines: string[] = ['## Not Assessed', ''];
-  lines.push(
-    'The following vulnerability classes were NOT assessed in this run because their analysis did ' +
-      'not complete. Absence of findings for these classes does not indicate they are clean — re-run ' +
-      'to assess them:',
-  );
-  lines.push('');
-  for (const cls of notAssessed) {
-    lines.push(`- ${NOT_ASSESSED_LABELS[cls]} — analysis did not complete; not assessed.`);
-  }
-  return lines.join('\n');
+const MODE_COVERAGE: Record<SourceMode, string> = {
+  'source-assisted':
+    'Source code and the live target were available. Code locations are shown only when joined from an exact vulnerability-queue finding ID.',
+  'url-only':
+    'Assessment was limited to the live target. Source code, repository paths, and code-location attribution were not assessed.',
+};
+
+const ANALYSIS_ONLY_DISCLAIMER = [
+  '> Exploitation was not run for this assessment. Findings were identified through analysis;',
+  '> impact is assessed rather than demonstrated, and no live exploitation steps or proof of',
+  '> impact are presented.',
+].join('\n');
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-// ============================================================================
-// STEP ITEM RENDERING
-// ============================================================================
+/** Escape agent-authored inline text so it cannot change the Markdown structure. */
+export function escapeMarkdown(value: string): string {
+  return value
+    .replace(/\r?\n/g, ' ')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/([\\`*_[\]{}()#+\-.!|])/g, '\\$1');
+}
+
+function renderCodeBlock(language: string, content: string): string {
+  const longest = Math.max(0, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${fence}${language.replace(/[^a-zA-Z0-9_+-]/g, '')}\n${content}\n${fence}`;
+}
 
 function renderStepItem(item: StepItem): string {
-  if (item.kind === 'prose') {
-    return item.text;
-  }
-  const lang = item.block.language || '';
-  return `\`\`\`${lang}\n${item.block.content}\n\`\`\``;
+  return item.kind === 'prose' ? escapeMarkdown(item.text) : renderCodeBlock(item.block.language, item.block.content);
 }
 
 function renderStepItems(items: readonly StepItem[]): string {
@@ -83,219 +92,267 @@ function renderStepItems(items: readonly StepItem[]): string {
 }
 
 function renderStructuredStep(step: StructuredStep, index: number): string {
-  const lines: string[] = [];
-  const title = step.title ? `**Step ${index + 1}: ${step.title}**` : `**Step ${index + 1}**`;
-  lines.push(title);
-  lines.push('');
-  lines.push(renderStepItems(step.items));
-  return lines.join('\n');
+  const title = step.title ? `: ${escapeMarkdown(step.title)}` : '';
+  return `**Step ${index + 1}${title}**\n\n${renderStepItems(step.items)}`;
 }
 
 function renderAdditionalSection(section: AdditionalSection): string {
-  const lines: string[] = [];
-  lines.push(`#### ${section.heading}`);
-  lines.push('');
-  lines.push(renderStepItems(section.items));
-  return lines.join('\n');
+  return `#### ${escapeMarkdown(section.heading)}\n\n${renderStepItems(section.items)}`;
 }
 
-// ============================================================================
-// FINDING RENDERING
-// ============================================================================
-
-function titleCase(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function compareFindings(a: AddFindingInput, b: AddFindingInput): number {
+  return (
+    SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] ||
+    a.finding_id.localeCompare(b.finding_id) ||
+    a.title.localeCompare(b.title)
+  );
 }
 
-function renderFinding(finding: AddFindingInput, exploitEnabled: boolean): string {
-  const lines: string[] = [];
-
-  // Heading
-  lines.push(`### ${finding.finding_id}: ${finding.title}`);
-  lines.push('');
-
-  // Each row is emitted only when the mode that produced the finding supplied its field.
+function renderFinding(finding: AddFindingInput, meta: ReportMeta): string {
+  const lines: string[] = [`### ${escapeMarkdown(finding.finding_id)}: ${escapeMarkdown(finding.title)}`, ''];
   lines.push('**Summary:**');
-  if (finding.severity) {
-    lines.push(`- **Severity:** ${titleCase(finding.severity)}`);
+  const original =
+    finding.original_severity && finding.original_severity !== finding.severity
+      ? ` (downgraded from ${titleCase(finding.original_severity)})`
+      : '';
+  lines.push(`- **Severity:** ${titleCase(finding.severity)}${original}`);
+  if (finding.confidence) lines.push(`- **Confidence:** ${titleCase(finding.confidence)}`);
+  lines.push(`- **OWASP:** ${escapeMarkdown(finding.owasp_category)}`);
+  lines.push(`- **Vulnerable location:** ${escapeMarkdown(finding.vulnerable_location)}`);
+  if (finding.http_location) {
+    const parameter = finding.http_location.parameter
+      ? ` (parameter: ${escapeMarkdown(finding.http_location.parameter)})`
+      : '';
+    lines.push(
+      `- **HTTP location:** ${escapeMarkdown(finding.http_location.method.toUpperCase())} ${escapeMarkdown(finding.http_location.url)}${parameter}`,
+    );
   }
-  if (finding.confidence) {
-    lines.push(`- **Confidence:** ${titleCase(finding.confidence)}`);
-  }
-  lines.push(`- **OWASP:** ${finding.owasp_category}`);
-  lines.push(`- **Vulnerable location:** ${finding.vulnerable_location}`);
-  if (finding.auth_state) {
-    lines.push(`- **Auth state:** ${finding.auth_state}`);
-  }
-  if (exploitEnabled && finding.status) {
-    lines.push(`- **Status:** ${titleCase(finding.status)}`);
-  }
-  if (finding.prerequisites) {
-    lines.push(`- **Prerequisites:** ${finding.prerequisites}`);
-  }
-  lines.push('');
-
-  // Overview
-  lines.push('**Overview:**');
-  lines.push(finding.overview);
-  lines.push('');
-
-  // Impact
-  lines.push('**Impact:**');
-  lines.push(finding.impact);
-  lines.push('');
-
-  if (finding.exploitation_steps && finding.exploitation_steps.length > 0) {
-    lines.push('**Exploitation Steps:**');
-    lines.push('');
-    for (let i = 0; i < finding.exploitation_steps.length; i++) {
-      lines.push(renderStructuredStep(finding.exploitation_steps[i]!, i));
-      lines.push('');
+  if (meta.source_mode === 'source-assisted' && finding.code_locations?.length) {
+    const locations = [...finding.code_locations].sort(
+      (a, b) =>
+        a.file.localeCompare(b.file) || (a.start_line ?? 0) - (b.start_line ?? 0) || a.role.localeCompare(b.role),
+    );
+    for (const location of locations) {
+      const range = location.start_line
+        ? `:${location.start_line}${location.end_line && location.end_line !== location.start_line ? `-${location.end_line}` : ''}`
+        : '';
+      const symbol = location.symbol ? ` (${escapeMarkdown(location.symbol)})` : '';
+      lines.push(`- **Code location (${location.role}):** ${escapeMarkdown(location.file)}${range}${symbol}`);
     }
   }
-
-  if (finding.proof_of_impact && finding.proof_of_impact.length > 0) {
-    lines.push('**Proof of Impact:**');
-    lines.push('');
-    lines.push(renderStepItems(finding.proof_of_impact));
-    lines.push('');
+  if (finding.triage) {
+    const verdict = finding.triage.verdict ? ` — ${finding.triage.verdict}` : '';
+    lines.push(
+      `- **Triage:** ${finding.triage.validation_state === 'validated' ? 'Validated' : 'UNVALIDATED'}${verdict}`,
+    );
+    if (finding.triage.reason) lines.push(`- **Triage reason:** ${escapeMarkdown(finding.triage.reason)}`);
   }
+  if (finding.auth_state) lines.push(`- **Auth state:** ${escapeMarkdown(finding.auth_state)}`);
+  if (meta.safe_demonstration && finding.status) lines.push(`- **Status:** ${titleCase(finding.status)}`);
+  if (finding.prerequisites) lines.push(`- **Prerequisites:** ${escapeMarkdown(finding.prerequisites)}`);
 
-  // Remediation
-  lines.push('**Remediation:**');
-  lines.push(finding.remediation);
-  lines.push('');
-
-  // Notes
-  if (finding.notes && finding.notes.length > 0) {
-    lines.push('**Notes:**');
-    lines.push('');
-    lines.push(renderStepItems(finding.notes));
-    lines.push('');
+  lines.push(
+    '',
+    '**Overview:**',
+    escapeMarkdown(finding.overview),
+    '',
+    '**Impact:**',
+    escapeMarkdown(finding.impact),
+    '',
+  );
+  if (meta.safe_demonstration && finding.exploitation_steps?.length) {
+    lines.push('**Exploitation Steps:**', '');
+    finding.exploitation_steps.forEach((step, index) => {
+      lines.push(renderStructuredStep(step, index), '');
+    });
   }
-
-  // Additional sections
-  if (finding.additional_sections && finding.additional_sections.length > 0) {
-    for (const section of finding.additional_sections) {
-      lines.push(renderAdditionalSection(section));
-      lines.push('');
-    }
+  if (meta.safe_demonstration && finding.proof_of_impact?.length) {
+    lines.push('**Proof of Impact:**', '', renderStepItems(finding.proof_of_impact), '');
   }
-
+  lines.push('**Remediation:**', escapeMarkdown(finding.remediation), '');
+  if (finding.notes?.length) lines.push('**Notes:**', '', renderStepItems(finding.notes), '');
+  for (const section of finding.additional_sections ?? []) lines.push(renderAdditionalSection(section), '');
   return lines.join('\n').trimEnd();
 }
 
-// ============================================================================
-// CATEGORY GROUPING
-// ============================================================================
-
-const CATEGORY_ORDER: readonly string[] = ['Injection', 'XSS', 'Authentication', 'SSRF', 'Authorization'];
-
-function categorySort(a: string, b: string): number {
-  const ai = CATEGORY_ORDER.indexOf(a);
-  const bi = CATEGORY_ORDER.indexOf(b);
-  if (ai !== -1 && bi !== -1) return ai - bi;
-  if (ai !== -1) return -1;
-  if (bi !== -1) return 1;
-  return a.localeCompare(b);
+function renderValidation(data: ReportData): string {
+  if (data.triage_status === 'validated' && data.report_meta.validation_state === 'validated') {
+    return '> **VALIDATED:** Confirmed findings were reconciled with an unambiguous triage verdict.';
+  }
+  const lines = [
+    '> ## ⚠️ UNVALIDATED REPORT FINDINGS',
+    '>',
+    '> One or more findings could not be reconciled unambiguously. They remain visible as candidates and require human review.',
+  ];
+  if (data.validation_issues?.length) {
+    lines.push('', '**Validation issues:**', '');
+    for (const issue of [...data.validation_issues].sort()) lines.push(`- ${escapeMarkdown(issue)}`);
+  }
+  return lines.join('\n');
 }
 
-// ============================================================================
-// REPORT RENDERING
-// ============================================================================
+function renderNotAssessed(classes: readonly VulnClass[]): string {
+  const unique = ALL_VULN_CLASSES.filter((item) => classes.includes(item));
+  return [
+    '## Not Assessed',
+    '',
+    'The following vulnerability classes did not complete. Absence of findings in these classes is not a clean result:',
+    '',
+    ...unique.map((item) => `- ${NOT_ASSESSED_LABELS[item]} — not assessed.`),
+  ].join('\n');
+}
 
+function renderOwaspCoverage(coverage: readonly ScopeCoverage[]): string {
+  const availabilityLabels = { available: 'Available', partial: 'Partial', 'coming-soon': 'Coming soon' } as const;
+  const statusLabels = {
+    completed: 'Completed',
+    incomplete: 'Incomplete',
+    'not-selected': 'Not selected',
+    'coming-soon': 'Coming soon',
+  } as const;
+  const scopeLabels = new Map(ASSESSMENT_SCOPE_REGISTRY.map(({ id, label }) => [id, label]));
+  return [
+    '## OWASP Coverage',
+    '',
+    '| Category | Support | Selected checks | Run status |',
+    '| --- | --- | --- | --- |',
+    ...coverage.map((entry) => {
+      const selected = entry.selected_scopes.map((scope) => scopeLabels.get(scope) ?? scope).join(', ') || '—';
+      return `| ${entry.owasp_id} ${entry.title} | ${availabilityLabels[entry.availability]} | ${selected} | ${statusLabels[entry.status]} |`;
+    }),
+  ].join('\n');
+}
+
+function renderModuleCoverage(coverage: readonly ModuleCoverage[]): string {
+  const statusLabels: Record<ModuleCoverage['status'], string> = {
+    completed: 'Completed',
+    partial: 'Partial',
+    failed: 'Failed',
+    skipped: 'Skipped',
+    unavailable: 'Unavailable',
+    'not-run': 'Not run',
+  };
+  return [
+    '## Assessment Methods',
+    '',
+    'Module status is derived from module evidence, not from vulnerability-agent completion.',
+    '',
+    '| Method / module | Status | Evidence |',
+    '| --- | --- | --- |',
+    ...coverage.map(
+      (entry) =>
+        `| ${escapeMarkdown(entry.title)} | ${statusLabels[entry.status]} | ${entry.evidence_path ? escapeMarkdown(entry.evidence_path) : '—'} |`,
+    ),
+  ].join('\n');
+}
+
+function formatMetric(value: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 }).format(value);
+}
+
+function formatLatency(value: number | null): string {
+  return value === null ? 'Not observed' : `${formatMetric(value)} ms`;
+}
+
+function renderHttpLoadCapacity(result?: HttpLoadResult): string {
+  if (!result) {
+    return [
+      '## HTTP Load and Capacity',
+      '',
+      '| Metric | Observation |',
+      '| --- | --- |',
+      '| Status | Incomplete |',
+      '',
+      'No valid HTTP load result artifact was available. The selected check remains incomplete.',
+    ].join('\n');
+  }
+
+  const statusCounts =
+    Object.entries(result.status_counts)
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .map(([status, count]) => `${status}: ${formatMetric(count)}`)
+      .join(', ') || 'None observed';
+
+  return [
+    '## HTTP Load and Capacity',
+    '',
+    '| Metric | Observation |',
+    '| --- | --- |',
+    `| Status | ${titleCase(result.status)} |`,
+    `| Configured concurrency | ${formatMetric(result.concurrency)} |`,
+    `| Configured request rate | ${formatMetric(result.requests_per_second)} requests/second |`,
+    `| Configured duration | ${formatMetric(result.duration_seconds)} seconds |`,
+    `| Observed elapsed time | ${formatMetric(result.elapsed_seconds)} seconds |`,
+    `| Requests sent | ${formatMetric(result.sent)} |`,
+    `| Responses completed | ${formatMetric(result.completed)} |`,
+    `| Successful responses | ${formatMetric(result.success)} |`,
+    `| Failed responses | ${formatMetric(result.failure)} |`,
+    `| Request errors | ${formatMetric(result.errors)} |`,
+    `| Response bytes read | ${formatMetric(result.bytes_read)} |`,
+    `| Average response time | ${formatLatency(result.average_latency_ms)} |`,
+    `| Minimum response time | ${formatLatency(result.minimum_latency_ms)} |`,
+    `| Maximum response time | ${formatLatency(result.maximum_latency_ms)} |`,
+    `| HTTP status counts | ${statusCounts} |`,
+    '',
+    'These are observations from this bounded run and do not establish a general capacity guarantee or future availability.',
+  ].join('\n');
+}
+
+function renderRuledOut(entries: readonly RuledOutFinding[]): string {
+  const lines = ['## Considered & Ruled Out', ''];
+  if (entries.length === 0) return [...lines, '_Nothing was ruled out._'].join('\n');
+  lines.push('| ID | Type | Finding | Outcome | Reason |', '| --- | --- | --- | --- | --- |');
+  for (const entry of [...entries].sort((a, b) => a.finding_id.localeCompare(b.finding_id))) {
+    const outcome = entry.verdict === 'CHAIN_REQUIRED' ? 'Chain required; not standalone-exploitable' : 'Ruled out';
+    lines.push(
+      `| ${escapeMarkdown(entry.finding_id)} | ${escapeMarkdown(entry.category)} | ${escapeMarkdown(entry.title)} | ${outcome} | ${escapeMarkdown(entry.reason)} |`,
+    );
+  }
+  return lines.join('\n');
+}
+
+/** Deterministically render the canonical report model. */
 export function renderReport(data: ReportData): string {
-  const { report_meta, findings, not_assessed = [] } = data;
-  const notAssessedClasses = [...new Set(not_assessed)];
-  const exploitEnabled = report_meta.exploit ?? true;
-  const sections: string[] = [];
+  const meta = data.report_meta;
+  const httpLoadSelected =
+    data.scope_coverage?.some((entry) => entry.selected_scopes.includes('http-load-capacity')) ?? false;
+  const sections: string[] = [
+    '# Security Assessment Report',
+    '',
+    '## Executive Summary',
+    `- Target: ${escapeMarkdown(meta.target)}`,
+    `- Assessment Date: ${escapeMarkdown(meta.assessment_date)}`,
+    `- Scope: ${escapeMarkdown(meta.scope)}`,
+    `- Safe Demonstration: ${meta.safe_demonstration ? 'enabled' : 'disabled'}`,
+    ...(meta.model ? [`- Model: ${escapeMarkdown(meta.model)}`] : []),
+    `- Validation: ${data.triage_status === 'validated' ? 'Validated' : 'UNVALIDATED'}`,
+    '',
+    escapeMarkdown(meta.executive_summary),
+    '',
+    '## Mode',
+    '',
+    meta.source_mode === 'url-only' ? 'URL-Only' : 'Source-Assisted',
+    '',
+    '## Coverage',
+    '',
+    MODE_COVERAGE[meta.source_mode],
+    '',
+    ...(data.scope_coverage ? [renderOwaspCoverage(data.scope_coverage), ''] : []),
+    ...(httpLoadSelected || data.http_load_capacity ? [renderHttpLoadCapacity(data.http_load_capacity), ''] : []),
+    ...(data.module_coverage ? [renderModuleCoverage(data.module_coverage), ''] : []),
+    renderValidation(data),
+  ];
 
-  // 1. Executive Summary
-  sections.push('# Security Assessment Report');
-  sections.push('');
-  sections.push(`*${BRAND_LOCKUP}*`);
-  sections.push('');
-  sections.push('## Executive Summary');
-  sections.push(`- Target: ${report_meta.target}`);
-  sections.push(`- Assessment Date: ${report_meta.assessment_date}`);
-  sections.push(`- Scope: ${report_meta.scope}`);
-  sections.push(`- Exploitation: ${exploitEnabled ? 'enabled' : 'disabled'}`);
-  if (report_meta.model) {
-    sections.push(`- Model: ${report_meta.model}`);
+  if (!meta.safe_demonstration) sections.push('', ANALYSIS_ONLY_DISCLAIMER);
+  if (data.not_assessed.length > 0) sections.push('', renderNotAssessed(data.not_assessed));
+
+  sections.push('', '## Confirmed Findings', '');
+  const sortedFindings = [...data.findings].sort(compareFindings);
+  if (sortedFindings.length === 0) {
+    sections.push('_No findings passed triage validation._');
+  } else {
+    for (const finding of sortedFindings) sections.push(renderFinding(finding, meta), '');
   }
-  sections.push('');
-  sections.push(report_meta.executive_summary);
-  sections.push('');
-  if (!exploitEnabled) {
-    sections.push(ANALYSIS_ONLY_DISCLAIMER);
-    sections.push('');
-  }
-
-  if (findings.length === 0) {
-    if (notAssessedClasses.length > 0) {
-      // Some classes were not assessed — a blanket "no vulnerabilities" statement would be a false
-      // clean bill of health. Scope the clean statement to assessed classes and list the gaps.
-      sections.push('No vulnerabilities were identified in the classes that were assessed.');
-      sections.push('');
-      sections.push(renderNotAssessedSection(notAssessedClasses));
-    } else {
-      sections.push('No vulnerabilities were identified during this assessment.');
-    }
-    return sections.join('\n').trimEnd() + '\n';
-  }
-
-  if (notAssessedClasses.length > 0) {
-    sections.push(renderNotAssessedSection(notAssessedClasses));
-    sections.push('');
-  }
-
-  // 2. Summary by Vulnerability Type
-  const byCategory = new Map<string, AddFindingInput[]>();
-  for (const f of findings) {
-    const list = byCategory.get(f.category) ?? [];
-    list.push(f);
-    byCategory.set(f.category, list);
-  }
-
-  const sortedCategories = [...byCategory.keys()].sort(categorySort);
-
-  sections.push('## Summary by Vulnerability Type');
-  sections.push('');
-  for (const cat of sortedCategories) {
-    const catFindings = byCategory.get(cat)!;
-    sections.push(`### ${cat}`);
-    sections.push('');
-    for (const f of catFindings) {
-      // Both ratings when the mode produced both. Confidence is labelled so it is never
-      // read as a severity in the position where a severity usually sits.
-      const ratings: string[] = [];
-      if (f.severity) {
-        ratings.push(titleCase(f.severity));
-      }
-      if (f.confidence) {
-        ratings.push(`${titleCase(f.confidence)} confidence`);
-      }
-      const suffix = ratings.length > 0 ? ` (${ratings.join(', ')})` : '';
-      sections.push(`- **${f.finding_id}:** ${f.title}${suffix}`);
-    }
-    sections.push('');
-  }
-
-  // 3. Per-category finding sections
-  const subheading = exploitEnabled ? 'Successfully Exploited Vulnerabilities' : 'Identified Vulnerabilities';
-  const heading = exploitEnabled ? 'Exploitation Evidence' : 'Findings';
-
-  for (const cat of sortedCategories) {
-    const catFindings = byCategory.get(cat)!;
-    sections.push(`# ${cat} ${heading}`);
-    sections.push('');
-    sections.push(`## ${subheading}`);
-    sections.push('');
-    for (const f of catFindings) {
-      sections.push(renderFinding(f, exploitEnabled));
-      sections.push('');
-    }
-  }
-
-  return sections.join('\n').trimEnd() + '\n';
+  sections.push(renderRuledOut(data.ruled_out));
+  return `${sections.join('\n').trimEnd()}\n`;
 }

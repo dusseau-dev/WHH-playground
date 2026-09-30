@@ -1,20 +1,19 @@
 /**
- * `shannon build` command — build the worker Docker image from the repository.
- * Requires a clone (Dockerfile in the working directory).
+ * `shannon build` command — build the worker Docker image locally.
+ * Only available in local mode (running from cloned repository).
  */
 
-import { buildImage, canBuildImage, ensureDocker } from '../docker.js';
-import { fail } from '../errors.js';
+import { buildImage } from '../docker.js';
+import { isLocal } from '../mode.js';
 
-export function build(noCache: boolean, version: string): void {
-  ensureDocker();
-
-  if (!canBuildImage()) {
-    fail(
-      'Build is only available when running from the Shannon repository',
-      '  (Dockerfile not found in current directory)',
-    );
+export function build(noCache: boolean): void {
+  if (!isLocal()) {
+    console.error('ERROR: Build is only available when running from the Shannon repository');
+    console.error('  (Dockerfile not found in current directory)');
+    console.error('');
+    console.error('For npx usage, run: shannon update');
+    process.exit(1);
   }
 
-  buildImage(noCache, version);
+  buildImage(noCache);
 }

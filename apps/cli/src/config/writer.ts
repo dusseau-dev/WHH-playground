@@ -10,10 +10,9 @@ import { getConfigFile } from '../home.js';
 export interface ShannonConfig {
   core?: { model?: string; base_url?: string };
   anthropic?: { api_key?: string; oauth_token?: string };
-  openai?: { api_key?: string; format?: string };
+  openai?: { api_key?: string; format?: 'chat-completions' | 'responses' };
   xai?: { api_key?: string };
   bedrock?: { region?: string; token?: string };
-  /** Generic credential for any provider Shannon does not curate. Maps to SHANNON_AI_API_KEY. */
   provider?: { api_key?: string };
 }
 
@@ -27,4 +26,5 @@ export function saveConfig(config: ShannonConfig): void {
 
   const content = stringify(config);
   fs.writeFileSync(configPath, content, { mode: 0o600 });
+  fs.chmodSync(configPath, 0o600);
 }

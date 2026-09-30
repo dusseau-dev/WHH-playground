@@ -23,11 +23,11 @@ import { NoOpCheckpointProvider } from '../interfaces/checkpoint-provider.js';
 import type { FindingsProvider } from '../interfaces/findings-provider.js';
 import { NoOpFindingsProvider } from '../interfaces/findings-provider.js';
 import type { ReportOutputProvider } from '../interfaces/report-output-provider.js';
-import { NoOpReportOutputProvider } from '../interfaces/report-output-provider.js';
 import type { ContainerConfig } from '../types/config.js';
 import { AgentExecutionService } from './agent-execution.js';
 import { ConfigLoaderService } from './config-loader.js';
 import { ExploitationCheckerService } from './exploitation-checker.js';
+import { DefaultReportOutputProvider } from './report-output.js';
 
 /**
  * Dependencies required to create a Container.
@@ -73,10 +73,10 @@ export class Container {
     this.exploitationChecker = new ExploitationCheckerService();
     this.agentExecution = new AgentExecutionService(this.configLoader);
 
-    // Wire providers with default no-ops when not provided
+    // Wire providers with OSS defaults when not provided.
     this.findingsProvider = deps.findingsProvider ?? new NoOpFindingsProvider();
     this.checkpointProvider = deps.checkpointProvider ?? new NoOpCheckpointProvider();
-    this.reportOutputProvider = deps.reportOutputProvider ?? new NoOpReportOutputProvider();
+    this.reportOutputProvider = deps.reportOutputProvider ?? new DefaultReportOutputProvider();
   }
 }
 
@@ -95,7 +95,7 @@ const DEFAULT_CONFIG: ContainerConfig = {
 /**
  * Factory function for creating containers.
  *
- * Default: creates a plain Container with NoOp providers. Consumers can call
+ * Default: creates a plain Container with built-in report output and no-op extension providers. Consumers can call
  * setContainerFactory() at worker startup to inject custom provider
  * implementations into every container.
  */
