@@ -64,11 +64,7 @@ export function safeErrorMessage(error: unknown, redactor = new SecretRedactor()
 }
 
 export function sanitizeReportMarkdown(markdown: string, redactor = new SecretRedactor()): string {
-  const withoutDangerousBlocks = markdown.replace(
-    /<(script|style|iframe|object|embed|form|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
-    '',
-  );
-  const withoutHtml = withoutDangerousBlocks.replace(/<[^>]+>/g, '');
-  const withoutJavascriptLinks = withoutHtml.replace(/\]\(\s*javascript:[^)]+\)/gi, '](#)');
+  const escapedHtml = markdown.replaceAll('<', '&lt;');
+  const withoutJavascriptLinks = escapedHtml.replace(/\]\(\s*javascript:[^)]+\)/gi, '](#)');
   return redactor.redactText(withoutJavascriptLinks.replace(/\0/g, ''));
 }

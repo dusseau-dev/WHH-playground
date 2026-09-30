@@ -669,7 +669,7 @@ describe('legacy workspaces and artifacts', () => {
     );
     await fs.writeFile(
       path.join(deliverables, 'comprehensive_security_assessment_report.md'),
-      '# Report\n<script>alert(1)</script>\n[bad](javascript:alert(1))',
+      '# Report\n<scrip<script>alert(1)</script>t>alert(2)</script>\n[bad](javascript:alert(1))',
     );
 
     const detail = await controller.getRunDetail('artifact-run');
@@ -678,6 +678,8 @@ describe('legacy workspaces and artifacts', () => {
     const report = await controller.getReport('artifact-run');
     expect(report.markdown).toMatch(/^## Mode\n\nURL-Only/);
     expect(report.markdown).not.toContain('<script>');
+    expect(report.markdown).not.toContain('javascript:');
+    expect(report.markdown).toContain('&lt;scrip&lt;script>');
     await expect(controller.getArtifactPath('artifact-run', '../run.json')).rejects.toThrow(/allowlisted/);
   });
 
