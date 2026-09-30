@@ -6,6 +6,8 @@ import type {
   AssessmentTestSurface,
   BootstrapResponse,
   CreateRunRequest,
+  DetectionValidationSettings,
+  DetectionValidationSummary,
   Finding,
   ModelCatalog,
   ModuleExecutionStatus,
@@ -41,6 +43,7 @@ interface RawConfig {
   testScopes?: AssessmentTestScope[];
   testSurfaces?: AssessmentTestSurface[];
   httpLoad?: import('../types/api').HttpLoadSettings;
+  detectionValidation?: DetectionValidationSettings;
   assessmentModules?: AssessmentModule[];
   moduleSafety?: ModuleSafetyConfig;
   safeDemonstration?: boolean;
@@ -125,6 +128,7 @@ interface RawProgress {
     evidencePath?: string;
   }>;
   httpLoadStatus?: 'completed' | 'interrupted' | 'incomplete' | null;
+  detectionValidationStatus?: DetectionValidationSummary['status'] | null;
   expectedAgents?: string[];
   completedAgents: string[];
   failedAgent: string | null;
@@ -158,6 +162,7 @@ interface RawRunDetail {
     contentType: string;
   }>;
   evidenceFiles: string[];
+  detectionValidation?: DetectionValidationSummary;
 }
 
 interface RawProfile {
@@ -168,7 +173,7 @@ interface RawProfile {
   sourceMode: SourceMode;
   repoPath?: string;
   config: RawConfig;
-  hasSecret: Partial<Record<'password' | 'totpSecret' | 'emailPassword' | 'emailTotpSecret', boolean>>;
+  hasSecret: Partial<Record<TargetSecretField, boolean>>;
   updatedAt: string;
 }
 
@@ -342,6 +347,17 @@ function httpLoadStageStatus(run: RawRunRecord, progress: RawProgress | null): P
   return 'pending';
 }
 
+function detectionStageStatus(run: RawRunRecord, progress: RawProgress | null): PipelineStage['status'] {
+  const status = progress?.detectionValidationStatus;
+  if (status === 'passed' || status === 'failed') return 'completed';
+  if (status === 'partial') return 'partial';
+  if (status === 'unavailable') return 'unavailable';
+  if (run.status === 'cancelled') return 'cancelled';
+  if (progress?.currentPhase === 'detection-validation') return 'running';
+  if (run.status === 'completed') return 'unavailable';
+  return 'pending';
+}
+
 function toStages(raw: RawRunDetail): PipelineStage[] {
   const progress = raw.progress;
   const planned = progress?.expectedAgents ?? expectedAgents(raw.run);
@@ -402,7 +418,18 @@ function toStages(raw: RawRunDetail): PipelineStage[] {
         },
       ]
     : [];
-  return [...agentStages, ...moduleStages, ...loadStages];
+  const detectionStages: PipelineStage[] = scope.testScopes.includes('alerting-effectiveness')
+    ? [
+        {
+          id: 'detection-validation',
+          label: 'Detection validation',
+          lane: 'Detection',
+          status: detectionStageStatus(raw.run, progress),
+          ...(progress?.detectionValidationStatus && { detail: `Result: ${progress.detectionValidationStatus}` }),
+        },
+      ]
+    : [];
+  return [...agentStages, ...moduleStages, ...loadStages, ...detectionStages];
 }
 
 function toFinding(verdict: RawVerdict): Finding {
@@ -452,8 +479,11 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
   const completedModuleCount = moduleResults.length;
   const httpLoadSelected = normalizedScope.testScopes.includes('http-load-capacity');
   const completedHttpLoadCount = httpLoadSelected && progress?.httpLoadStatus ? 1 : 0;
-  const totalStages = plan.length + normalizedModules.assessmentModules.length + (httpLoadSelected ? 1 : 0);
-  const completedStages = completedCount + completedModuleCount + completedHttpLoadCount;
+  const detectionSelected = normalizedScope.testScopes.includes('alerting-effectiveness');
+  const completedDetectionCount = detectionSelected && progress?.detectionValidationStatus ? 1 : 0;
+  const totalStages =
+    plan.length + normalizedModules.assessmentModules.length + (httpLoadSelected ? 1 : 0) + (detectionSelected ? 1 : 0);
+  const completedStages = completedCount + completedModuleCount + completedHttpLoadCount + completedDetectionCount;
   const result: RunDetail = {
     id: run.runId,
     workspaceId: run.runId,
@@ -468,6 +498,7 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
       safeDemonstration: spec.config.safeDemonstration ?? spec.config.demonstrate ?? true,
       concurrency: spec.config.pipeline?.maxConcurrentPipelines ?? 5,
       ...(spec.config.httpLoad && { httpLoad: spec.config.httpLoad }),
+      ...(spec.config.detectionValidation && { detectionValidation: spec.config.detectionValidation }),
       ...normalizedModules,
     },
     progress: {
@@ -479,6 +510,7 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
       activeModules: progress?.activeModules ?? [],
       moduleResults,
       httpLoadStatus: progress?.httpLoadStatus ?? null,
+      detectionValidationStatus: progress?.detectionValidationStatus ?? null,
     },
     metrics: {
       ...(elapsedMs !== undefined && { elapsedMs }),
@@ -514,6 +546,7 @@ function toRunSummary(run: RawRunRecord, detail?: RawRunDetail): RunDetail {
           ]
         : []),
     requiredSecretFields: spec.requiredSecretFields,
+    ...(detail?.detectionValidation && { detectionValidation: detail.detectionValidation }),
     ...(((run.kind === 'managed' && run.lastError) || progress?.error) && {
       failure: {
         message: (run.kind === 'managed' ? run.lastError : undefined) ?? progress?.error ?? 'Run failed',
@@ -543,6 +576,7 @@ function toProfile(raw: RawProfile): Profile {
     secretState: {
       password: { present: raw.hasSecret.password === true, persistence: secretPersistence },
       totp: { present: raw.hasSecret.totpSecret === true, persistence: secretPersistence },
+      splunkToken: { present: raw.hasSecret.splunkToken === true, persistence: secretPersistence },
     },
     scope: {
       testCategories: normalizedScope.testCategories,
@@ -551,6 +585,7 @@ function toProfile(raw: RawProfile): Profile {
       safeDemonstration: raw.config.safeDemonstration ?? raw.config.demonstrate ?? true,
       concurrency: raw.config.pipeline?.maxConcurrentPipelines ?? 5,
       ...(raw.config.httpLoad && { httpLoad: raw.config.httpLoad }),
+      ...(raw.config.detectionValidation && { detectionValidation: raw.config.detectionValidation }),
       ...normalizedModules,
     },
     ...(auth && {
@@ -588,6 +623,7 @@ function configBody(input: CreateRunRequest | SaveProfileRequest): RawConfig {
     testScopes: input.scope.testScopes,
     testSurfaces: input.scope.testSurfaces,
     ...(input.scope.httpLoad && { httpLoad: input.scope.httpLoad }),
+    ...(input.scope.detectionValidation && { detectionValidation: input.scope.detectionValidation }),
     assessmentModules: input.scope.assessmentModules,
     moduleSafety: input.scope.moduleSafety,
     safeDemonstration: input.scope.safeDemonstration,
@@ -611,7 +647,8 @@ function configBody(input: CreateRunRequest | SaveProfileRequest): RawConfig {
 function targetSecrets(input: CreateRunRequest | SaveProfileRequest) {
   const password = input.secrets?.password ?? input.authentication?.password;
   const totpSecret = input.secrets?.totpSecret ?? input.authentication?.totpSecret;
-  return { ...(password && { password }), ...(totpSecret && { totpSecret }) };
+  const splunkToken = input.secrets?.splunkToken;
+  return { ...(password && { password }), ...(totpSecret && { totpSecret }), ...(splunkToken && { splunkToken }) };
 }
 
 function profileBody(input: SaveProfileRequest) {

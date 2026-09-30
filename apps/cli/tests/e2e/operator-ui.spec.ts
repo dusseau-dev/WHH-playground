@@ -51,6 +51,13 @@ interface MockRun {
       testSurfaces: string[];
       safeDemonstration: boolean;
       pipeline: { maxConcurrentPipelines: number };
+      moduleSafety?: { targetEnvironment: 'production' | 'staging' };
+      detectionValidation?: {
+        canaryPath: string;
+        minimumDetectionRate: number;
+        maxWaitSeconds: number;
+        splunk: { managementUrl: string; telemetryIndex: string; alertIndex: string };
+      };
     };
     requiredSecretFields: string[];
   };
@@ -76,6 +83,7 @@ interface MockDetail {
     elapsedMs: number;
     triageRan: boolean;
     httpLoadStatus?: 'completed' | 'interrupted' | 'incomplete' | null;
+    detectionValidationStatus?: 'passed' | 'failed' | 'partial' | 'unavailable' | null;
     summary: { totalCostUsd: number; totalDurationMs: number };
   } | null;
   metrics: { total_duration_ms: number; total_cost_usd: number } | null;
@@ -88,6 +96,36 @@ interface MockDetail {
     contentType: string;
   }>;
   evidenceFiles: string[];
+  detectionValidation?: {
+    status: 'passed' | 'failed' | 'partial' | 'unavailable';
+    detectionGapPercentagePoints: number;
+    cohorts: {
+      ai: {
+        total: number;
+        detected: number;
+        detectionRate: number;
+        threshold: number;
+        passed: boolean;
+        medianLatencyMs?: number;
+      };
+      human: {
+        total: number;
+        detected: number;
+        detectionRate: number;
+        threshold: number;
+        passed: boolean;
+        medianLatencyMs?: number;
+      };
+    };
+    scenarios: Array<{
+      id: string;
+      cohort: 'ai' | 'human';
+      technique: string;
+      emissionStatus: 'sent' | 'error';
+      detected: boolean;
+      latencyMs?: number;
+    }>;
+  };
 }
 
 const timestamp = '2026-07-18T16:00:00.000Z';
@@ -552,6 +590,102 @@ test('configures an explicitly authorized elevated HTTP load assessment', async 
     },
   });
   await expect(page.getByText('HTTP load and capacity', { exact: true }).last()).toBeVisible();
+  await expectNoAxeViolations(page);
+});
+
+test('configures a staging-only detection validation assessment', async ({ page }) => {
+  const api = new MockApi(page);
+  await api.install();
+  await page.goto('/assessments/new');
+
+  await page.getByLabel('Target URL').fill('https://detection-staging.example.test');
+  await page.getByRole('button', { name: 'Clear all checks' }).click();
+  await page.getByRole('button', { name: 'Expand A09:2025 Security Logging and Alerting Failures' }).click();
+  await page.getByText('Alerting effectiveness', { exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Detection validation' })).toBeVisible();
+  await expect(page.getByLabel('Canary path')).toHaveValue('/__shannon__/detection-simulation');
+  await expect(page.getByLabel('Minimum detection rate')).toHaveValue('1');
+  await expect(page.getByLabel('Maximum wait (seconds)')).toHaveValue('180');
+  await expect(page.getByText('Select a staging clone below before running this check.')).toBeVisible();
+
+  await page.getByLabel('Target environment').selectOption('staging');
+  await page.getByLabel('Splunk management URL').fill('https://splunk.example.test:8089');
+  await page.getByLabel('Telemetry index').fill('waf_events');
+  await page.getByLabel('Alert index').fill('security_alerts');
+  await page.getByRole('textbox', { name: 'Splunk token' }).fill('browser-only-token');
+  await page.getByText('I confirm I am authorized to test this target.').click();
+  await page.getByRole('button', { name: 'Start assessment' }).click();
+
+  await expect(page).toHaveURL(/\/runs\/new-assessment$/);
+  expect(api.lastStartBody).toMatchObject({
+    authorizationConfirmed: true,
+    config: {
+      testCategories: [],
+      testScopes: ['alerting-effectiveness'],
+      moduleSafety: { targetEnvironment: 'staging' },
+      detectionValidation: {
+        canaryPath: '/__shannon__/detection-simulation',
+        minimumDetectionRate: 1,
+        maxWaitSeconds: 180,
+        splunk: {
+          managementUrl: 'https://splunk.example.test:8089',
+          telemetryIndex: 'waf_events',
+          alertIndex: 'security_alerts',
+        },
+      },
+    },
+    secrets: { splunkToken: 'browser-only-token' },
+  });
+  await expectNoAxeViolations(page);
+});
+
+test('shows detection validation cohort and scenario evidence in run detail', async ({ page }) => {
+  const api = new MockApi(page);
+  await api.install();
+  const detectionRun = run('detection-run');
+  detectionRun.snapshot.config.testCategories = [];
+  detectionRun.snapshot.config.testScopes = ['alerting-effectiveness'];
+  detectionRun.snapshot.config.moduleSafety = { targetEnvironment: 'staging' };
+  detectionRun.snapshot.config.detectionValidation = {
+    canaryPath: '/__shannon__/detection-simulation',
+    minimumDetectionRate: 1,
+    maxWaitSeconds: 180,
+    splunk: {
+      managementUrl: 'https://splunk.example.test:8089',
+      telemetryIndex: 'waf_events',
+      alertIndex: 'security_alerts',
+    },
+  };
+  const validated = api.seed(detectionRun);
+  validated.detectionValidation = {
+    status: 'failed',
+    detectionGapPercentagePoints: 20,
+    cohorts: {
+      ai: { total: 5, detected: 4, detectionRate: 0.8, threshold: 1, passed: false, medianLatencyMs: 2100 },
+      human: { total: 5, detected: 5, detectionRate: 1, threshold: 1, passed: true, medianLatencyMs: 1800 },
+    },
+    scenarios: [
+      {
+        id: 'ai-credential-submission',
+        cohort: 'ai',
+        technique: 'Synthetic credential submission',
+        emissionStatus: 'sent',
+        detected: false,
+      },
+    ],
+  };
+  if (validated.progress) validated.progress.detectionValidationStatus = 'failed';
+
+  await page.goto('/runs/detection-run');
+  await expect(page.getByRole('heading', { name: 'Detection validation' })).toBeVisible();
+  await expect(page.getByText('AI-authored 4/5 · 80%')).toBeVisible();
+  await expect(page.getByText('Human-authored 5/5 · 100%')).toBeVisible();
+  await expect(page.getByText('Gap 20 percentage points')).toBeVisible();
+  await expect(page.getByText('Synthetic credential submission')).toBeVisible();
+  await expect(page.getByText('Missed')).toBeVisible();
+  const detectionStage = page.locator('.timeline-stage').filter({ hasText: 'Detection validation' });
+  await expect(detectionStage.locator('.stage-icon[title="completed"]')).toBeVisible();
+  await expect(detectionStage.getByText('Result: failed')).toBeVisible();
   await expectNoAxeViolations(page);
 });
 

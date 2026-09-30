@@ -212,6 +212,55 @@ describe('persistOrValidateRunScope', () => {
     ).rejects.toThrow(/Resume scope mismatch/);
   });
 
+  it('excludes the Splunk token from resume hashing while binding non-secret detection settings', async () => {
+    const outputPath = await makeTempRoot();
+    const detectionYaml = (token: string, alertIndex = 'security_alerts') => `
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  max_wait_seconds: 30
+  splunk:
+    management_url: https://splunk.example.test:8089
+    telemetry_index: waf_events
+    alert_index: ${alertIndex}
+    token: ${token}
+`;
+    const scope = { testScopes: ['alerting-effectiveness'] as const };
+
+    await persistOrValidateRunScope(
+      inputFor(outputPath, {
+        workflowId: 'workflow-detection-first',
+        configYAML: detectionYaml('token-one'),
+        ...scope,
+      }),
+      [],
+      false,
+    );
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-detection-resume',
+          configYAML: detectionYaml('token-two'),
+          ...scope,
+        }),
+        [],
+        false,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      persistOrValidateRunScope(
+        inputFor(outputPath, {
+          workflowId: 'workflow-detection-change',
+          configYAML: detectionYaml('token-three', 'different_alerts'),
+          ...scope,
+        }),
+        [],
+        false,
+      ),
+    ).rejects.toThrow(/Resume scope mismatch/);
+  });
+
   it('validates and upgrades the pre-granular config hash projection', async () => {
     const outputPath = await makeTempRoot();
     await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-original' }), ['xss'], true);

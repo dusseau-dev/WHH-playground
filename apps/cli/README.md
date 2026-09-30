@@ -36,4 +36,9 @@ npx @keygraph/shannon ui
 
 Direct configuration uses `SHANNON_AI_MODEL=<provider>:<model-id>` plus the selected provider's credential variable. Google Vertex AI is no longer supported; legacy Vertex configuration returns migration guidance to choose a supported provider or gateway. Keep credentials in the setup-managed config or a secret manager, never in `SHANNON_AI_MODEL`.
 
+The local UI also supports the opt-in, staging-only `alerting-effectiveness` check. Configure an HTTPS no-op canary that
+returns `204` plus an HTTPS Splunk management origin and least-privilege search token. Shannon stores profile tokens in
+the existing Keychain/session secret store and shows cohort detection rates, latency, gap, and scenario outcomes in Run
+Detail without exposing request bodies or raw Splunk events.
+
 </div>

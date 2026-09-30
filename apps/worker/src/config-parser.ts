@@ -14,11 +14,16 @@ import type {
   Authentication,
   Config,
   DistributedConfig,
+  DistributedDetectionValidationConfig,
   DistributedModuleSafetyYamlConfig,
   ModuleSafetyYamlConfig,
   Rule,
   SourceMode,
 } from './types/config.js';
+import {
+  type DetectionValidationSettingsInput,
+  normalizeDetectionValidationSettings,
+} from './types/detection-validation.js';
 import { ErrorCode } from './types/errors.js';
 import { assertExclusiveHttpLoadExecution, normalizeHttpLoadSettings } from './types/http-load.js';
 import { type ModuleSafetyInput, normalizeAssessmentModules, normalizeAssessmentScope } from './types/scopes.js';
@@ -95,6 +100,50 @@ function distributedModuleSafety(
     load_stage_duration_seconds: config.moduleSafety.loadStageDurationSeconds,
     load_error_rate_threshold: config.moduleSafety.loadErrorRateThreshold,
     load_p95_latency_ms_threshold: config.moduleSafety.loadP95LatencyMsThreshold,
+  };
+}
+
+function detectionValidationInput(
+  config: Config['detection_validation'],
+): DetectionValidationSettingsInput | undefined {
+  if (!config) return;
+  return {
+    ...(config.canary_path !== undefined && { canaryPath: config.canary_path }),
+    ...(config.minimum_detection_rate !== undefined && { minimumDetectionRate: config.minimum_detection_rate }),
+    ...(config.max_wait_seconds !== undefined && { maxWaitSeconds: config.max_wait_seconds }),
+    splunk: {
+      managementUrl: config.splunk.management_url,
+      telemetryIndex: config.splunk.telemetry_index,
+      alertIndex: config.splunk.alert_index,
+      ...(config.splunk.telemetry_sourcetype && { telemetrySourcetype: config.splunk.telemetry_sourcetype }),
+      ...(config.splunk.alert_sourcetype && { alertSourcetype: config.splunk.alert_sourcetype }),
+    },
+  };
+}
+
+function normalizeDetectionValidationConfig(
+  scopes: readonly Parameters<typeof normalizeDetectionValidationSettings>[0][number][],
+  config: Config['detection_validation'],
+  targetEnvironment: ReturnType<typeof normalizeAssessmentModules>['moduleSafety']['targetEnvironment'],
+): DistributedDetectionValidationConfig | undefined {
+  const settings = normalizeDetectionValidationSettings(scopes, detectionValidationInput(config), targetEnvironment);
+  if (!settings) return;
+  const token = config?.splunk.token;
+  if (!token) throw new Error('Detection validation requires a Splunk token');
+  return {
+    canary_path: settings.canaryPath,
+    minimum_detection_rate: settings.minimumDetectionRate,
+    max_wait_seconds: settings.maxWaitSeconds,
+    splunk: {
+      management_url: settings.splunk.managementUrl,
+      telemetry_index: settings.splunk.telemetryIndex,
+      alert_index: settings.splunk.alertIndex,
+      ...(settings.splunk.telemetrySourcetype && {
+        telemetry_sourcetype: settings.splunk.telemetrySourcetype,
+      }),
+      ...(settings.splunk.alertSourcetype && { alert_sourcetype: settings.splunk.alertSourcetype }),
+      token,
+    },
   };
 }
 
@@ -189,6 +238,11 @@ export function normalizeDistributedConfig(
     ...(config.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
   });
   assertExclusiveHttpLoadExecution(scope.testScopes, modules.assessmentModules);
+  const detectionValidation = normalizeDetectionValidationConfig(
+    scope.testScopes,
+    config.detection_validation,
+    modules.moduleSafety.targetEnvironment,
+  );
   return {
     ...rest,
     vuln_classes: scope.vulnClasses,
@@ -203,6 +257,7 @@ export function normalizeDistributedConfig(
         duration_seconds: httpLoad.durationSeconds,
       },
     }),
+    ...(detectionValidation && { detection_validation: detectionValidation }),
     safeDemonstration: resolveSafeDemonstrationFlag(config),
     report: {
       ...report,
@@ -591,6 +646,11 @@ const validateConfig = (config: Config): void => {
       ...(config.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
     });
     assertExclusiveHttpLoadExecution(scope.testScopes, modules.assessmentModules);
+    normalizeDetectionValidationConfig(
+      scope.testScopes,
+      config.detection_validation,
+      modules.moduleSafety.targetEnvironment,
+    );
   } catch (error) {
     throw new PentestError(
       error instanceof Error ? error.message : String(error),
@@ -612,6 +672,7 @@ const validateConfig = (config: Config): void => {
     !!config.assessment_modules ||
     !!config.module_safety ||
     !!config.http_load ||
+    !!config.detection_validation ||
     config.safe_demonstration !== undefined ||
     config.exploit !== undefined ||
     !!config.report ||
@@ -918,6 +979,11 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
     ...(config?.module_safety && { moduleSafety: moduleSafetyInput(config.module_safety) }),
   });
   assertExclusiveHttpLoadExecution(scope.testScopes, modules.assessmentModules);
+  const detectionValidation = normalizeDetectionValidationConfig(
+    scope.testScopes,
+    config?.detection_validation,
+    modules.moduleSafety.targetEnvironment,
+  );
 
   const safeDemonstration = resolveSafeDemonstrationFlag(config);
 
@@ -947,6 +1013,7 @@ export const distributeConfig = (config: Config | null): DistributedConfig => {
         duration_seconds: httpLoad.durationSeconds,
       },
     }),
+    ...(detectionValidation && { detection_validation: detectionValidation }),
     safeDemonstration,
     report,
     rules_of_engagement,

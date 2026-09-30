@@ -61,6 +61,71 @@ module_safety:
     });
   });
 
+  it('normalizes staging detection validation and keeps its token only in protected config data', () => {
+    const distributed = distributeConfig(
+      parseConfigYAML(`
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  canary_path: /security/canary
+  minimum_detection_rate: 0.8
+  max_wait_seconds: 240
+  splunk:
+    management_url: https://splunk.example.test:8089
+    telemetry_index: waf_events
+    alert_index: security_alerts
+    alert_sourcetype: notable
+    token: splunk-secret
+`),
+    );
+
+    expect(distributed.detection_validation).toEqual({
+      canary_path: '/security/canary',
+      minimum_detection_rate: 0.8,
+      max_wait_seconds: 240,
+      splunk: {
+        management_url: 'https://splunk.example.test:8089',
+        telemetry_index: 'waf_events',
+        alert_index: 'security_alerts',
+        alert_sourcetype: 'notable',
+        token: 'splunk-secret',
+      },
+    });
+  });
+
+  it('requires a Splunk token for the selected detection validation scope', () => {
+    expect(() =>
+      parseConfigYAML(`
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  splunk:
+    management_url: https://splunk.example.test:8089
+    telemetry_index: waf_events
+    alert_index: security_alerts
+`),
+    ).toThrow(/Splunk token/i);
+  });
+
+  it('rejects encoded traversal in the detection validation canary path', () => {
+    expect(() =>
+      parseConfigYAML(`
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  canary_path: /safe/%252e%252e/admin
+  splunk:
+    management_url: https://splunk.example.test:8089
+    telemetry_index: waf_events
+    alert_index: security_alerts
+    token: splunk-secret
+`),
+    ).toThrow(/traversal/i);
+  });
+
   it('expands legacy classes into granular checks', () => {
     const distributed = distributeConfig(parseConfigYAML('vuln_classes: [authz]'));
     expect(distributed.test_scopes).toContain('csrf');

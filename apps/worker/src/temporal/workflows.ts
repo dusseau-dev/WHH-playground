@@ -36,6 +36,10 @@ import type { AgentName, VulnType } from '../types/agents.js';
 import { ALL_AGENTS } from '../types/agents.js';
 import type { VulnClass } from '../types/config.js';
 import {
+  type DetectionValidationSettings,
+  normalizeDetectionValidationSettings,
+} from '../types/detection-validation.js';
+import {
   assertExclusiveHttpLoadExecution,
   assertHttpLoadAuthorization,
   type HttpLoadSettings,
@@ -173,6 +177,13 @@ const httpLoadActs = proxyActivities<typeof activities>({
   retry: { maximumAttempts: 1 },
 });
 
+// The runner is internally idempotent and persists evidence; Temporal must not duplicate target traffic.
+const detectionValidationActs = proxyActivities<typeof activities>({
+  startToCloseTimeout: '15 minutes',
+  heartbeatTimeout: '15 seconds',
+  retry: { maximumAttempts: 1 },
+});
+
 /**
  * Compute aggregated metrics from the current pipeline state.
  * Called on both success and failure to provide partial metrics.
@@ -265,6 +276,22 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
   } catch (error) {
     throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
   }
+  let detectionValidation: DetectionValidationSettings | undefined;
+  try {
+    detectionValidation = normalizeDetectionValidationSettings(
+      assessmentScope.testScopes,
+      input.detectionValidation,
+      assessmentModules.moduleSafety.targetEnvironment,
+    );
+    if (detectionValidation && input.detectionValidationAuthorizationConfirmed !== true) {
+      throw new Error('Detection validation requires ownership or written authorization confirmation');
+    }
+    if (detectionValidation && new URL(input.webUrl).protocol !== 'https:') {
+      throw new Error('Detection validation requires an HTTPS target with valid TLS');
+    }
+  } catch (error) {
+    throw ApplicationFailure.nonRetryable(error instanceof Error ? error.message : String(error), 'ConfigurationError');
+  }
   let safeDemonstration: boolean;
   try {
     safeDemonstration = resolveSafeDemonstrationInput(input);
@@ -289,6 +316,7 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     triageRan: false,
     moduleResults: [],
     httpLoadStatus: null,
+    detectionValidationStatus: null,
     summary: null,
   };
 
@@ -336,6 +364,8 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
     ...(httpLoad && { httpLoad }),
     ...(httpLoad && { httpLoadAuthorizationConfirmed: true }),
     ...(httpLoad && { elevatedLoadConfirmed: input.elevatedLoadConfirmed === true }),
+    ...(detectionValidation && { detectionValidation }),
+    ...(detectionValidation && { detectionValidationAuthorizationConfirmed: true }),
   };
 
   await preflightActs.prepareWorkingDirectory(activityInput);
@@ -391,6 +421,12 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
         if (loadResult.status !== 'completed') {
           log.warn(`HTTP load assessment ended with status ${loadResult.status}; coverage remains incomplete`);
         }
+      }
+      if (detectionValidation) {
+        state.currentPhase = 'detection-validation';
+        state.currentAgent = null;
+        const detectionResult = await detectionValidationActs.loadDetectionValidationResultActivity(activityInput);
+        state.detectionValidationStatus = detectionResult?.status ?? null;
       }
       await a.injectReportMetadataActivity(activityInput);
       await a.injectReportModeSectionsActivity(activityInput);
@@ -619,6 +655,21 @@ export async function pentestPipeline(input: PipelineInput): Promise<PipelineSta
       await a.logPhaseTransition(activityInput, 'assessment-modules', 'complete');
     } finally {
       state.activeModules = [];
+    }
+
+    // === Phase 2.75: Staging-only Detection Validation ===
+    if (detectionValidation) {
+      state.currentPhase = 'detection-validation';
+      state.currentAgent = null;
+      await a.logPhaseTransition(activityInput, 'detection-validation', 'start');
+      const detectionResult = await detectionValidationActs.runDetectionValidationActivity(activityInput);
+      state.detectionValidationStatus = detectionResult.status;
+      if (detectionResult.status !== 'passed') {
+        log.warn(
+          `Detection validation ended with status ${detectionResult.status}; the workflow will complete with evidence`,
+        );
+      }
+      await a.logPhaseTransition(activityInput, 'detection-validation', 'complete');
     }
 
     // === Phases 3-4: Vulnerability Analysis + Exploitation (Pipelined) ===

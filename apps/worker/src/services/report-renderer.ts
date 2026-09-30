@@ -10,6 +10,7 @@ import type {
 import { ALL_VULN_CLASSES, type SourceMode, type VulnClass } from '../types/config.js';
 import type { HttpLoadResult } from '../types/http-load.js';
 import { ASSESSMENT_SCOPE_REGISTRY, type ModuleCoverage, type ScopeCoverage } from '../types/scopes.js';
+import type { DetectionValidationResult } from './detection-validation-runner.js';
 import type { RuledOutFinding, TriageStatus } from './report-reconciliation.js';
 
 export interface ReportMeta {
@@ -31,6 +32,7 @@ export interface ReportData {
   readonly scope_coverage?: readonly ScopeCoverage[];
   readonly module_coverage?: readonly ModuleCoverage[];
   readonly http_load_capacity?: HttpLoadResult;
+  readonly detection_validation?: DetectionValidationResult;
   readonly triage_status: TriageStatus;
   readonly validation_issues?: readonly string[];
 }
@@ -298,6 +300,60 @@ function renderHttpLoadCapacity(result?: HttpLoadResult): string {
   ].join('\n');
 }
 
+function formatPercentage(value: number): string {
+  return `${formatMetric(value * 100)}%`;
+}
+
+function renderDetectionValidation(result?: DetectionValidationResult): string {
+  if (!result) {
+    return [
+      '## Detection Validation',
+      '',
+      '| Metric | Observation |',
+      '| --- | --- |',
+      '| Status | Incomplete |',
+      '',
+      'No valid detection-validation evidence was available. The selected check remains incomplete.',
+    ].join('\n');
+  }
+  const cohortRows = (['ai', 'human'] as const).map((cohort) => {
+    const score = result.cohorts[cohort];
+    const label = cohort === 'ai' ? 'AI-authored' : 'Human-authored';
+    const latency =
+      score.median_latency_ms === undefined ? 'Not observed' : `${formatMetric(score.median_latency_ms)} ms`;
+    return `| ${label} | ${score.detected}/${score.total} | ${formatPercentage(score.detection_rate)} | ${formatPercentage(score.threshold)} | ${score.passed ? 'Passed' : 'Failed'} | ${latency} |`;
+  });
+  const scenarioRows = [...result.scenarios]
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .map((scenario) => {
+      const cohort = scenario.cohort === 'ai' ? 'AI-authored' : 'Human-authored';
+      const outcome =
+        scenario.emission_status === 'error' ? 'Emission error' : scenario.detected ? 'Detected' : 'Not detected';
+      const latency = scenario.latency_ms === undefined ? 'Not observed' : `${formatMetric(scenario.latency_ms)} ms`;
+      return `| ${escapeMarkdown(scenario.id)} | ${cohort} | ${outcome} | ${latency} |`;
+    });
+
+  return [
+    '## Detection Validation',
+    '',
+    `Status: **${titleCase(result.status)}**`,
+    '',
+    '| Cohort | Detected | Detection rate | Threshold | Result | Median latency |',
+    '| --- | ---: | ---: | ---: | --- | ---: |',
+    ...cohortRows,
+    '',
+    '| Metric | Observation |',
+    '| --- | --- |',
+    `| Detection gap | ${formatMetric(result.detection_gap_percentage_points)} percentage points |`,
+    '',
+    '| Scenario | Cohort | Outcome | First-seen latency |',
+    '| --- | --- | --- | ---: |',
+    ...scenarioRows,
+    '',
+    'The gap is a descriptive comparison of this fixed paired corpus; it does not establish causation.',
+  ].join('\n');
+}
+
 function renderRuledOut(entries: readonly RuledOutFinding[]): string {
   const lines = ['## Considered & Ruled Out', ''];
   if (entries.length === 0) return [...lines, '_Nothing was ruled out._'].join('\n');
@@ -316,6 +372,8 @@ export function renderReport(data: ReportData): string {
   const meta = data.report_meta;
   const httpLoadSelected =
     data.scope_coverage?.some((entry) => entry.selected_scopes.includes('http-load-capacity')) ?? false;
+  const detectionValidationSelected =
+    data.scope_coverage?.some((entry) => entry.selected_scopes.includes('alerting-effectiveness')) ?? false;
   const sections: string[] = [
     '# Security Assessment Report',
     '',
@@ -339,6 +397,9 @@ export function renderReport(data: ReportData): string {
     '',
     ...(data.scope_coverage ? [renderOwaspCoverage(data.scope_coverage), ''] : []),
     ...(httpLoadSelected || data.http_load_capacity ? [renderHttpLoadCapacity(data.http_load_capacity), ''] : []),
+    ...(detectionValidationSelected || data.detection_validation
+      ? [renderDetectionValidation(data.detection_validation), '']
+      : []),
     ...(data.module_coverage ? [renderModuleCoverage(data.module_coverage), ''] : []),
     renderValidation(data),
   ];

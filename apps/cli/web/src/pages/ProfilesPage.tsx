@@ -79,6 +79,17 @@ function profileValues(profile: Profile): AssessmentFormValues {
     httpLoadRequestsPerSecond: profile.scope.httpLoad?.requestsPerSecond ?? defaults.httpLoadRequestsPerSecond,
     httpLoadDurationSeconds: profile.scope.httpLoad?.durationSeconds ?? defaults.httpLoadDurationSeconds,
     elevatedLoadConfirmed: false,
+    detectionCanaryPath: profile.scope.detectionValidation?.canaryPath ?? defaults.detectionCanaryPath,
+    detectionMinimumRate: profile.scope.detectionValidation?.minimumDetectionRate ?? defaults.detectionMinimumRate,
+    detectionMaxWaitSeconds: profile.scope.detectionValidation?.maxWaitSeconds ?? defaults.detectionMaxWaitSeconds,
+    splunkManagementUrl: profile.scope.detectionValidation?.splunk.managementUrl ?? "",
+    splunkTelemetryIndex: profile.scope.detectionValidation?.splunk.telemetryIndex ?? "",
+    splunkAlertIndex: profile.scope.detectionValidation?.splunk.alertIndex ?? "",
+    splunkTelemetrySourcetype: profile.scope.detectionValidation?.splunk.telemetrySourcetype ?? "",
+    splunkAlertSourcetype: profile.scope.detectionValidation?.splunk.alertSourcetype ?? "",
+    splunkToken: "",
+    hasStoredSplunkToken: profile.secretState.splunkToken.present,
+    clearSplunkToken: false,
     authenticationEnabled: profile.authentication?.enabled ?? false,
     loginType: profile.authentication?.loginType ?? "form",
     loginUrl: profile.authentication?.loginUrl ?? "",
@@ -114,9 +125,11 @@ function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
         ...(values.totpSecret ? { totpSecret: values.totpSecret } : {}),
       }
     : undefined;
-  const clearSecrets = [values.clearPassword ? "password" : undefined, values.clearTotp ? "totpSecret" : undefined].filter(
-    (value): value is "password" | "totpSecret" => Boolean(value),
-  );
+  const clearSecrets = [
+    values.clearPassword ? "password" : undefined,
+    values.clearTotp ? "totpSecret" : undefined,
+    values.clearSplunkToken ? "splunkToken" : undefined,
+  ].filter((value): value is "password" | "totpSecret" | "splunkToken" => Boolean(value));
   return {
     name: values.name,
     targetUrl: values.targetUrl,
@@ -128,6 +141,20 @@ function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
       testSurfaces,
       safeDemonstration: values.safeDemonstration,
       concurrency: values.concurrency,
+      ...(testScopes.includes("alerting-effectiveness") && {
+        detectionValidation: {
+          canaryPath: values.detectionCanaryPath,
+          minimumDetectionRate: values.detectionMinimumRate,
+          maxWaitSeconds: values.detectionMaxWaitSeconds,
+          splunk: {
+            managementUrl: values.splunkManagementUrl,
+            telemetryIndex: values.splunkTelemetryIndex,
+            alertIndex: values.splunkAlertIndex,
+            ...(values.splunkTelemetrySourcetype && { telemetrySourcetype: values.splunkTelemetrySourcetype }),
+            ...(values.splunkAlertSourcetype && { alertSourcetype: values.splunkAlertSourcetype }),
+          },
+        },
+      }),
       assessmentModules,
       moduleSafety: {
         targetEnvironment: values.targetEnvironment,
@@ -141,6 +168,7 @@ function profileRequest(values: AssessmentFormValues): SaveProfileRequest {
       },
     },
     ...(authentication ? { authentication } : {}),
+    ...(values.splunkToken ? { secrets: { splunkToken: values.splunkToken } } : {}),
     rules: {
       focus: list(values.focusRules),
       avoid: list(values.avoidRules),
@@ -367,6 +395,7 @@ export function ProfilesPage() {
                 showProfileName
                 passwordState={activeProfile?.secretState.password}
                 totpState={activeProfile?.secretState.totp}
+                splunkTokenState={activeProfile?.secretState.splunkToken}
               />
               {saveMutation.isError ? (
                 <ErrorState

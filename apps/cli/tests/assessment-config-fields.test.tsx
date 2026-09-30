@@ -35,6 +35,14 @@ function ModelForm() {
   );
 }
 
+function DetectionForm() {
+  const defaults = structuredClone(assessmentDefaults);
+  defaults.testScopes['alerting-effectiveness'] = true;
+  defaults.targetEnvironment = 'staging';
+  const form = useForm<AssessmentFormValues>({ defaultValues: defaults });
+  return <AssessmentConfigFields form={form} />;
+}
+
 describe('assessment model configuration', () => {
   it('uses the configured source without exposing credential fields and groups manual overrides', () => {
     render(<ModelForm />);
@@ -55,5 +63,15 @@ describe('assessment model configuration', () => {
       'xAI',
       'Custom gateway',
     ]);
+  });
+
+  it('reveals the staging-only detection validation fields conditionally', () => {
+    render(<DetectionForm />);
+
+    expect(screen.getByText('Detection validation')).toBeInTheDocument();
+    expect(screen.getByLabelText('Canary path')).toHaveValue('/__shannon__/detection-simulation');
+    expect(screen.getByLabelText('Splunk management URL')).toBeInTheDocument();
+    expect(screen.getByLabelText('Splunk token')).toHaveAttribute('type', 'password');
+    expect(screen.getByText(/fixed, inert paired corpus/i)).toBeInTheDocument();
   });
 });

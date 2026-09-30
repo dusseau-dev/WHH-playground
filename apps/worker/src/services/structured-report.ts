@@ -20,6 +20,7 @@ import { atomicWrite, ensureDirectory } from '../utils/file-io.js';
 import { redactSecrets } from '../utils/redactSecrets.js';
 import { loadAssessmentModuleResults } from './assessment-module-runner.js';
 import { attachQueueCodeLocations } from './code-location-join.js';
+import { type DetectionValidationResult, isDetectionValidationResult } from './detection-validation-runner.js';
 import { reconcileReportFindings } from './report-reconciliation.js';
 import { type ReportData, renderReport } from './report-renderer.js';
 
@@ -46,6 +47,7 @@ export interface StructuredReportSessionOptions {
   readonly selectedTestScopes?: readonly AssessmentScope[];
   readonly selectedAssessmentModules?: readonly AssessmentModule[];
   readonly httpLoadResult?: HttpLoadResult;
+  readonly detectionValidationResult?: DetectionValidationResult;
 }
 
 export interface StructuredReportSession {
@@ -158,6 +160,9 @@ export function isReportData(value: unknown): value is ReportData {
       return false;
     }
   }
+  if (value.detection_validation !== undefined && !isDetectionValidationResult(value.detection_validation)) {
+    return false;
+  }
   return value.findings.every(
     (finding) =>
       isRecord(finding) &&
@@ -208,6 +213,31 @@ export async function synchronizeHttpLoadReportFiles(
       parsedResult.status === 'completed' ? [HTTP_LOAD_SCOPE] : [],
     ),
     http_load_capacity: parsedResult,
+  };
+  await writeStructuredReportFiles(deliverablesPath, updated);
+  return true;
+}
+
+/** Reconcile persisted detection evidence into an already-generated canonical report. */
+export async function synchronizeDetectionValidationReportFiles(
+  deliverablesPath: string,
+  selectedTestScopes: readonly AssessmentScope[],
+  result: DetectionValidationResult,
+): Promise<boolean> {
+  const reportPath = path.join(deliverablesPath, REPORT_DATA_FILENAME);
+  if (!(await fs.pathExists(reportPath))) return false;
+  if (!isDetectionValidationResult(result)) throw new Error('Invalid detection validation evidence');
+
+  const raw = (await fs.readJson(reportPath)) as unknown;
+  if (!isReportData(raw)) throw new Error('Cannot synchronize detection evidence into invalid report.json');
+  const completedScopes = [
+    ...(raw.http_load_capacity?.status === 'completed' ? [HTTP_LOAD_SCOPE] : []),
+    ...(['passed', 'failed'].includes(result.status) ? (['alerting-effectiveness'] as const) : []),
+  ];
+  const updated: ReportData = {
+    ...raw,
+    scope_coverage: buildScopeCoverage(selectedTestScopes, raw.not_assessed, completedScopes),
+    detection_validation: result,
   };
   await writeStructuredReportFiles(deliverablesPath, updated);
   return true;
@@ -270,12 +300,14 @@ function composeReportData(
     findings: reconciliation.findings,
     ruled_out: reconciliation.ruled_out,
     not_assessed: notAssessed,
-    scope_coverage: buildScopeCoverage(
-      scope.testScopes,
-      notAssessed,
-      options.httpLoadResult?.status === 'completed' ? [HTTP_LOAD_SCOPE] : [],
-    ),
+    scope_coverage: buildScopeCoverage(scope.testScopes, notAssessed, [
+      ...(options.httpLoadResult?.status === 'completed' ? [HTTP_LOAD_SCOPE] : []),
+      ...(['passed', 'failed'].includes(options.detectionValidationResult?.status ?? '')
+        ? (['alerting-effectiveness'] as const)
+        : []),
+    ]),
     ...(options.httpLoadResult && { http_load_capacity: options.httpLoadResult }),
+    ...(options.detectionValidationResult && { detection_validation: options.detectionValidationResult }),
     ...(options.selectedAssessmentModules && {
       module_coverage: buildModuleCoverage(options.selectedAssessmentModules, moduleResults),
     }),

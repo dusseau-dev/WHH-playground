@@ -27,6 +27,55 @@ const authentication = {
 };
 
 describe('managed run launch', () => {
+  it('requires a Splunk token for detection validation runs', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller } = testController(workspacesDir);
+    await expect(
+      controller.startRun({
+        targetUrl: 'https://target.test',
+        sourceMode: 'url-only',
+        workspace: 'detection-without-token',
+        authorizationConfirmed: true,
+        config: {
+          testScopes: ['alerting-effectiveness'],
+          moduleSafety: { targetEnvironment: 'staging' },
+          detectionValidation: {
+            splunk: {
+              managementUrl: 'https://splunk.example.test:8089',
+              telemetryIndex: 'waf_events',
+              alertIndex: 'security_alerts',
+            },
+          },
+        },
+      }),
+    ).rejects.toThrow(/Splunk token/i);
+  });
+
+  it('requires HTTPS target transport for detection validation runs', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller } = testController(workspacesDir);
+    await expect(
+      controller.startRun({
+        targetUrl: 'http://target.test',
+        sourceMode: 'url-only',
+        workspace: 'detection-http-target',
+        authorizationConfirmed: true,
+        config: {
+          testScopes: ['alerting-effectiveness'],
+          moduleSafety: { targetEnvironment: 'staging' },
+          detectionValidation: {
+            splunk: {
+              managementUrl: 'https://splunk.example.test:8089',
+              telemetryIndex: 'waf_events',
+              alertIndex: 'security_alerts',
+            },
+          },
+        },
+        secrets: { splunkToken: 'token' },
+      }),
+    ).rejects.toThrow(/HTTPS target/i);
+  });
+
   it('persists an immutable non-secret snapshot before starting Temporal and Docker', async () => {
     const workspacesDir = await temporaryDirectory();
     const { controller, runtime, temporal } = testController(workspacesDir);
@@ -679,6 +728,105 @@ describe('legacy workspaces and artifacts', () => {
     expect(report.markdown).toMatch(/^## Mode\n\nURL-Only/);
     expect(report.markdown).not.toContain('<script>');
     await expect(controller.getArtifactPath('artifact-run', '../run.json')).rejects.toThrow(/allowlisted/);
+  });
+
+  it('returns a redacted detection-validation summary in run detail', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller } = testController(workspacesDir);
+    await controller.startRun({
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      workspace: 'detection-summary-run',
+      authorizationConfirmed: true,
+      config: {
+        testScopes: ['alerting-effectiveness'],
+        moduleSafety: { targetEnvironment: 'staging' },
+        detectionValidation: {
+          splunk: {
+            managementUrl: 'https://splunk.example.test:8089',
+            telemetryIndex: 'waf_events',
+            alertIndex: 'security_alerts',
+          },
+        },
+      },
+      secrets: { splunkToken: 'must-not-appear' },
+    });
+    const deliverables = path.join(workspacesDir, 'detection-summary-run', '.shannon', 'deliverables');
+    await fs.writeFile(
+      path.join(deliverables, 'detection-validation.json'),
+      JSON.stringify({
+        schema_version: 1,
+        status: 'failed',
+        detection_gap_percentage_points: 20,
+        cohorts: {
+          ai: { total: 5, detected: 4, detection_rate: 0.8, threshold: 1, passed: false, median_latency_ms: 2100 },
+          human: { total: 5, detected: 5, detection_rate: 1, threshold: 1, passed: true, median_latency_ms: 1800 },
+        },
+        scenarios: [
+          {
+            id: 'credential-submission-ai',
+            cohort: 'ai',
+            technique: 'Fake credential submission',
+            emission_status: 'sent',
+            detected: false,
+          },
+        ],
+        token: 'must-not-appear',
+        raw: 'raw Splunk event must-not-appear',
+      }),
+    );
+
+    const detail = await controller.getRunDetail('detection-summary-run');
+    expect(detail.detectionValidation).toEqual({
+      status: 'failed',
+      detectionGapPercentagePoints: 20,
+      cohorts: {
+        ai: { total: 5, detected: 4, detectionRate: 0.8, threshold: 1, passed: false, medianLatencyMs: 2100 },
+        human: { total: 5, detected: 5, detectionRate: 1, threshold: 1, passed: true, medianLatencyMs: 1800 },
+      },
+      scenarios: [
+        {
+          id: 'credential-submission-ai',
+          cohort: 'ai',
+          technique: 'Fake credential submission',
+          emissionStatus: 'sent',
+          detected: false,
+        },
+      ],
+    });
+    expect(JSON.stringify(detail)).not.toContain('must-not-appear');
+    expect(JSON.stringify(detail)).not.toContain('raw Splunk event');
+  });
+
+  it('keeps run detail available when optional detection evidence is malformed', async () => {
+    const workspacesDir = await temporaryDirectory();
+    const { controller } = testController(workspacesDir);
+    await controller.startRun({
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      workspace: 'malformed-detection-run',
+      config: {},
+    });
+    const deliverables = path.join(workspacesDir, 'malformed-detection-run', '.shannon', 'deliverables');
+    await fs.writeFile(path.join(deliverables, 'detection-validation.json'), '{not-json');
+
+    const detail = await controller.getRunDetail('malformed-detection-run');
+    expect(detail.run.runId).toBe('malformed-detection-run');
+    expect(detail.detectionValidation).toBeUndefined();
+
+    await fs.writeFile(
+      path.join(deliverables, 'detection-validation.json'),
+      JSON.stringify({
+        status: 'partial',
+        detection_gap_percentage_points: 0,
+        cohorts: {
+          ai: { total: 5, detected: 0, detection_rate: 0, threshold: 1, passed: false },
+          human: { total: 5, detected: 0, detection_rate: 0, threshold: 1, passed: false },
+        },
+        scenarios: [{ raw: 'unexpected' }],
+      }),
+    );
+    await expect(controller.getRunDetail('malformed-detection-run')).resolves.not.toHaveProperty('detectionValidation');
   });
 
   it('reports fixed Markdown, PDF, and SARIF availability while preserving legacy Markdown', async () => {

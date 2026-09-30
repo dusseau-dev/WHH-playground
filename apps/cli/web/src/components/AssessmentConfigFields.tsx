@@ -32,6 +32,19 @@ const isHttpUrl = (value: string) => {
   return ["http:", "https:"].includes(new URL(value).protocol);
 };
 const optionalUrl = z.string().trim().refine((value) => !value || isHttpUrl(value), "Enter an HTTP(S) URL");
+const isHttpsOrigin = (value: string) => {
+  if (!URL.canParse(value)) return false;
+  const parsed = new URL(value);
+  return parsed.protocol === "https:" && !parsed.username && !parsed.password && parsed.pathname === "/" && !parsed.search && !parsed.hash;
+};
+const isSafeCanaryPath = (value: string) => {
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("?") || value.includes("#") || value.includes("\\")) return false;
+  try {
+    return !decodeURIComponent(value).split("/").some((segment) => segment === "." || segment === "..");
+  } catch {
+    return false;
+  }
+};
 const modelSources = ["environment", "openrouter", "anthropic", "openai", "xai", "custom"] as const;
 const visibleAssessmentModuleDefinitions = assessmentModuleDefinitions;
 
@@ -62,6 +75,17 @@ export const assessmentFormSchema = z
     httpLoadRequestsPerSecond: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.requestsPerSecond),
     httpLoadDurationSeconds: z.number().int().min(1).max(HTTP_LOAD_EMERGENCY_LIMITS.durationSeconds),
     elevatedLoadConfirmed: z.boolean(),
+    detectionCanaryPath: z.string().trim(),
+    detectionMinimumRate: z.number().min(0).max(1),
+    detectionMaxWaitSeconds: z.number().int().min(30).max(600),
+    splunkManagementUrl: z.string().trim(),
+    splunkTelemetryIndex: z.string().trim(),
+    splunkAlertIndex: z.string().trim(),
+    splunkTelemetrySourcetype: z.string().trim(),
+    splunkAlertSourcetype: z.string().trim(),
+    splunkToken: z.string(),
+    hasStoredSplunkToken: z.boolean(),
+    clearSplunkToken: z.boolean(),
     safeDemonstration: z.boolean(),
     concurrency: z.number().int().min(1).max(5),
     authenticationEnabled: z.boolean(),
@@ -149,6 +173,37 @@ export const assessmentFormSchema = z
         message: "Confirm the elevated load envelope before continuing",
       });
     }
+    if (value.testScopes["alerting-effectiveness"]) {
+      if (!URL.canParse(value.targetUrl) || new URL(value.targetUrl).protocol !== "https:") {
+        context.addIssue({ code: "custom", path: ["targetUrl"], message: "Detection validation requires an HTTPS target" });
+      }
+      if (value.targetEnvironment !== "staging") {
+        context.addIssue({ code: "custom", path: ["targetEnvironment"], message: "Detection validation is staging-only" });
+      }
+      if (!isSafeCanaryPath(value.detectionCanaryPath)) {
+        context.addIssue({ code: "custom", path: ["detectionCanaryPath"], message: "Use a same-origin relative canary path" });
+      }
+      if (!isHttpsOrigin(value.splunkManagementUrl)) {
+        context.addIssue({ code: "custom", path: ["splunkManagementUrl"], message: "Enter an HTTPS Splunk origin" });
+      }
+      const identifier = /^[A-Za-z0-9_.-]+$/;
+      const sourcetype = /^[A-Za-z0-9_.:-]+$/;
+      if (!identifier.test(value.splunkTelemetryIndex)) {
+        context.addIssue({ code: "custom", path: ["splunkTelemetryIndex"], message: "Enter a valid telemetry index" });
+      }
+      if (!identifier.test(value.splunkAlertIndex)) {
+        context.addIssue({ code: "custom", path: ["splunkAlertIndex"], message: "Enter a valid alert index" });
+      }
+      if (value.splunkTelemetrySourcetype && !sourcetype.test(value.splunkTelemetrySourcetype)) {
+        context.addIssue({ code: "custom", path: ["splunkTelemetrySourcetype"], message: "Enter a valid telemetry sourcetype" });
+      }
+      if (value.splunkAlertSourcetype && !sourcetype.test(value.splunkAlertSourcetype)) {
+        context.addIssue({ code: "custom", path: ["splunkAlertSourcetype"], message: "Enter a valid alert sourcetype" });
+      }
+      if (!value.splunkToken && !value.hasStoredSplunkToken) {
+        context.addIssue({ code: "custom", path: ["splunkToken"], message: "Splunk token is required" });
+      }
+    }
     if (value.authenticationEnabled) {
       if (!value.loginUrl) context.addIssue({ code: "custom", path: ["loginUrl"], message: "Login URL is required" });
       if (!value.username) context.addIssue({ code: "custom", path: ["username"], message: "Username is required" });
@@ -203,6 +258,17 @@ export const assessmentDefaults: AssessmentFormValues = {
   httpLoadRequestsPerSecond: HTTP_LOAD_DEFAULTS.requestsPerSecond,
   httpLoadDurationSeconds: HTTP_LOAD_DEFAULTS.durationSeconds,
   elevatedLoadConfirmed: false,
+  detectionCanaryPath: "/__shannon__/detection-simulation",
+  detectionMinimumRate: 1,
+  detectionMaxWaitSeconds: 180,
+  splunkManagementUrl: "",
+  splunkTelemetryIndex: "",
+  splunkAlertIndex: "",
+  splunkTelemetrySourcetype: "",
+  splunkAlertSourcetype: "",
+  splunkToken: "",
+  hasStoredSplunkToken: false,
+  clearSplunkToken: false,
   safeDemonstration: true,
   concurrency: 3,
   authenticationEnabled: false,
@@ -241,6 +307,7 @@ interface Props {
   modelCatalogUnavailable?: boolean;
   passwordState?: SecretState | undefined;
   totpState?: SecretState | undefined;
+  splunkTokenState?: SecretState | undefined;
 }
 
 export function AssessmentConfigFields({
@@ -255,10 +322,12 @@ export function AssessmentConfigFields({
   modelCatalogUnavailable = false,
   passwordState,
   totpState,
+  splunkTokenState,
 }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [showTotp, setShowTotp] = useState(false);
   const [showProviderApiKey, setShowProviderApiKey] = useState(false);
+  const [showSplunkToken, setShowSplunkToken] = useState(false);
   const { register, watch, setValue, getValues, formState } = form;
   const mode = watch("sourceMode");
   const modelSource = watch("modelSource");
@@ -278,6 +347,7 @@ export function AssessmentConfigFields({
     if (scopeValues[id]) selectedScopes.push(id);
   }
   const httpLoadSelected = selectedScopes.includes("http-load-capacity");
+  const detectionValidationSelected = selectedScopes.includes("alerting-effectiveness");
   const elevatedHttpLoad =
     httpLoadConcurrency > HTTP_LOAD_ELEVATED_THRESHOLDS.concurrency ||
     httpLoadRequestsPerSecond > HTTP_LOAD_ELEVATED_THRESHOLDS.requestsPerSecond ||
@@ -587,6 +657,88 @@ export function AssessmentConfigFields({
                 <FieldError message={formState.errors.elevatedLoadConfirmed?.message} />
               </label>
             ) : null}
+          </fieldset>
+        ) : null}
+        {detectionValidationSelected ? (
+          <fieldset className="http-load-panel field--wide">
+            <legend>Detection validation</legend>
+            <div className="http-load-heading">
+              <ShieldCheck size={18} aria-hidden="true" />
+              <span>Fixed, inert paired corpus for authorized staging targets</span>
+            </div>
+            {targetEnvironment !== "staging" ? (
+              <InlineNotice tone="warning">Select a staging clone below before running this check.</InlineNotice>
+            ) : null}
+            <div className="form-grid">
+              <label className="field field--wide">
+                <span className="field-label">Canary path</span>
+                <input autoComplete="off" {...register("detectionCanaryPath")} aria-invalid={Boolean(formState.errors.detectionCanaryPath)} />
+                <FieldError message={formState.errors.detectionCanaryPath?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Minimum detection rate</span>
+                <input type="number" min={0} max={1} step={0.01} {...register("detectionMinimumRate", { valueAsNumber: true })} />
+                <FieldError message={formState.errors.detectionMinimumRate?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Maximum wait (seconds)</span>
+                <input type="number" min={30} max={600} {...register("detectionMaxWaitSeconds", { valueAsNumber: true })} />
+                <FieldError message={formState.errors.detectionMaxWaitSeconds?.message} />
+              </label>
+              <label className="field field--wide">
+                <span className="field-label">Splunk management URL</span>
+                <input type="url" placeholder="https://splunk.example.com:8089" autoComplete="off" {...register("splunkManagementUrl")} aria-invalid={Boolean(formState.errors.splunkManagementUrl)} />
+                <FieldError message={formState.errors.splunkManagementUrl?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Telemetry index</span>
+                <input autoComplete="off" {...register("splunkTelemetryIndex")} aria-invalid={Boolean(formState.errors.splunkTelemetryIndex)} />
+                <FieldError message={formState.errors.splunkTelemetryIndex?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Alert index</span>
+                <input autoComplete="off" {...register("splunkAlertIndex")} aria-invalid={Boolean(formState.errors.splunkAlertIndex)} />
+                <FieldError message={formState.errors.splunkAlertIndex?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Telemetry sourcetype (optional)</span>
+                <input autoComplete="off" {...register("splunkTelemetrySourcetype")} />
+                <FieldError message={formState.errors.splunkTelemetrySourcetype?.message} />
+              </label>
+              <label className="field">
+                <span className="field-label">Alert sourcetype (optional)</span>
+                <input autoComplete="off" {...register("splunkAlertSourcetype")} />
+                <FieldError message={formState.errors.splunkAlertSourcetype?.message} />
+              </label>
+              <div className="field field--wide">
+                <label className="field-label" htmlFor="splunk-token">Splunk token</label>
+                <span className="secret-input">
+                  <input
+                    id="splunk-token"
+                    type={showSplunkToken ? "text" : "password"}
+                    autoComplete="off"
+                    placeholder={splunkTokenState?.present ? "Stored token retained" : "Least-privilege search token"}
+                    {...register("splunkToken")}
+                    aria-invalid={Boolean(formState.errors.splunkToken)}
+                  />
+                  <IconButton
+                    type="button"
+                    label={showSplunkToken ? "Hide Splunk token" : "Show Splunk token"}
+                    icon={showSplunkToken ? EyeOff : Eye}
+                    onClick={() => setShowSplunkToken((value) => !value)}
+                  />
+                </span>
+                <FieldError message={formState.errors.splunkToken?.message} />
+                {splunkTokenState?.present ? <small className="field-hint">A stored token is available and will not be displayed.</small> : null}
+              </div>
+              {splunkTokenState?.present ? (
+                <label className="compact-check field--wide">
+                  <input type="checkbox" {...register("clearSplunkToken")} />
+                  Clear the stored Splunk token when this profile is saved
+                </label>
+              ) : null}
+            </div>
+            <p className="http-load-envelope">One calibration request and ten sequential simulations; redirects are never followed.</p>
           </fieldset>
         ) : null}
         <fieldset className="module-selector">

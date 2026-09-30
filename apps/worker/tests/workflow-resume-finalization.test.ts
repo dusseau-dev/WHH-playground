@@ -55,13 +55,17 @@ const harness = vi.hoisted(() => {
   const modules = {
     runAssessmentModulesActivity: activity('modules', moduleResults),
   };
+  const detection = {
+    runDetectionValidationActivity: activity('detection-validation', { status: 'failed' }),
+    loadDetectionValidationResultActivity: activity('load-detection-evidence', { status: 'failed' }),
+  };
   const preflight = {
     prepareWorkingDirectory: activity('prepare'),
     runPreflightValidation: activity('preflight'),
     syncPlaywrightStealthConfig: activity('playwright'),
   };
   const auth = { runAuthenticationValidation: activity('auth') };
-  return { order, general, modules, preflight, auth };
+  return { order, general, modules, detection, preflight, auth };
 });
 
 vi.mock('@temporalio/workflow', () => ({
@@ -74,6 +78,7 @@ vi.mock('@temporalio/workflow', () => ({
   proxyActivities: (options: { startToCloseTimeout: string; retry?: { maximumAttempts?: number } }) => {
     if (options.startToCloseTimeout === '2 minutes') return harness.preflight;
     if (options.startToCloseTimeout === '10 minutes') return harness.auth;
+    if (options.startToCloseTimeout === '15 minutes') return harness.detection;
     if (options.startToCloseTimeout === '2 hours' && options.retry?.maximumAttempts === 1) return harness.modules;
     return harness.general;
   },
@@ -141,6 +146,87 @@ describe('all-complete resume finalization', () => {
     ).rejects.toThrow('load generator unavailable');
 
     expect(harness.general.runReportAgent).not.toHaveBeenCalled();
+  });
+
+  it('runs detection validation as a dedicated non-fatal executor', async () => {
+    const state = await pentestPipeline({
+      webUrl: 'https://example.test',
+      sourceMode: 'url-only',
+      workingDirectory: '/app/target',
+      testScopes: ['alerting-effectiveness'],
+      vulnClasses: [],
+      moduleSafety: { targetEnvironment: 'staging' },
+      detectionValidation: {
+        canaryPath: '/__shannon__/detection-simulation',
+        minimumDetectionRate: 1,
+        maxWaitSeconds: 30,
+        splunk: {
+          managementUrl: 'https://splunk.example.test:8089',
+          telemetryIndex: 'waf_events',
+          alertIndex: 'security_alerts',
+        },
+      },
+      detectionValidationAuthorizationConfirmed: true,
+      safeDemonstration: false,
+    });
+
+    expect(harness.order.indexOf('detection-validation')).toBeGreaterThan(harness.order.indexOf('run-recon'));
+    expect(harness.order.indexOf('report')).toBeGreaterThan(harness.order.indexOf('detection-validation'));
+    expect(state).toMatchObject({ status: 'completed', detectionValidationStatus: 'failed' });
+    expect(harness.general.runTriageAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects detection validation against a non-HTTPS target before activities', async () => {
+    await expect(
+      pentestPipeline({
+        webUrl: 'http://example.test',
+        sourceMode: 'url-only',
+        workingDirectory: '/app/target',
+        testScopes: ['alerting-effectiveness'],
+        vulnClasses: [],
+        moduleSafety: { targetEnvironment: 'staging' },
+        detectionValidation: {
+          canaryPath: '/__shannon__/detection-simulation',
+          minimumDetectionRate: 1,
+          maxWaitSeconds: 30,
+          splunk: {
+            managementUrl: 'https://splunk.example.test:8089',
+            telemetryIndex: 'waf_events',
+            alertIndex: 'security_alerts',
+          },
+        },
+        detectionValidationAuthorizationConfirmed: true,
+      }),
+    ).rejects.toThrow(/HTTPS target/i);
+  });
+
+  it('loads prior detection evidence during all-complete resume finalization', async () => {
+    const state = await pentestPipeline({
+      webUrl: 'https://example.test',
+      sourceMode: 'url-only',
+      workingDirectory: '/app/target',
+      sessionId: 'workspace-a',
+      resumeFromWorkspace: 'workspace-a',
+      vulnClasses: [],
+      testScopes: ['alerting-effectiveness'],
+      moduleSafety: { targetEnvironment: 'staging' },
+      detectionValidation: {
+        canaryPath: '/__shannon__/detection-simulation',
+        minimumDetectionRate: 1,
+        maxWaitSeconds: 30,
+        splunk: {
+          managementUrl: 'https://splunk.example.test:8089',
+          telemetryIndex: 'waf_events',
+          alertIndex: 'security_alerts',
+        },
+      },
+      detectionValidationAuthorizationConfirmed: true,
+      safeDemonstration: false,
+    });
+
+    expect(harness.detection.loadDetectionValidationResultActivity).toHaveBeenCalledOnce();
+    expect(harness.detection.runDetectionValidationActivity).not.toHaveBeenCalled();
+    expect(state.detectionValidationStatus).toBe('failed');
   });
 
   it('repairs report artifacts, checkpoints them, and records workflow completion', async () => {

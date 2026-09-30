@@ -97,6 +97,38 @@ module_safety:
     });
   });
 
+  it('normalizes detection validation YAML and extracts the Splunk token', () => {
+    const parsed = parseAssessmentConfigYaml(`
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  canary_path: /security/canary
+  minimum_detection_rate: 0.8
+  max_wait_seconds: 240
+  splunk:
+    management_url: https://splunk.example.test:8089
+    telemetry_index: waf_events
+    alert_index: security_alerts
+    telemetry_sourcetype: aws:waf
+    token: splunk-secret
+`);
+
+    expect(parsed.config.detectionValidation).toEqual({
+      canaryPath: '/security/canary',
+      minimumDetectionRate: 0.8,
+      maxWaitSeconds: 240,
+      splunk: {
+        managementUrl: 'https://splunk.example.test:8089',
+        telemetryIndex: 'waf_events',
+        alertIndex: 'security_alerts',
+        telemetrySourcetype: 'aws:waf',
+      },
+    });
+    expect(parsed.secrets).toEqual({ splunkToken: 'splunk-secret' });
+    expect(parsed.config).not.toHaveProperty('splunkToken');
+  });
+
   it('expands legacy categories to all owned checks', () => {
     const parsed = parseAssessmentConfigYaml('test_categories: [authz]');
     expect(parsed.config.testScopes).toContain('csrf');
@@ -163,6 +195,50 @@ describe('profiles and secret stores', () => {
     expect(yaml).toContain('memory:profile-test:password');
     expect(response.hasSecret.password).toBe(true);
     await expect(store.resolve('profile-test')).resolves.toMatchObject({ secrets: { password: 'do-not-persist' } });
+  });
+
+  it('stores, resolves, and clears the Splunk token through profile secret references', async () => {
+    const profilesDir = await temporaryDirectory();
+    const store = new ProfileStore({
+      profilesDir,
+      secretStore: new MemorySecretStore(),
+      idGenerator: () => 'profile-splunk',
+    });
+    const config = {
+      testScopes: ['alerting-effectiveness' as const],
+      moduleSafety: { targetEnvironment: 'staging' as const },
+      detectionValidation: {
+        splunk: {
+          managementUrl: 'https://splunk.example.test:8089',
+          telemetryIndex: 'waf_events',
+          alertIndex: 'security_alerts',
+        },
+      },
+    };
+
+    const created = await store.create({
+      name: 'Splunk target',
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      config,
+      secrets: { splunkToken: 'do-not-persist' },
+    });
+    const yaml = await fs.readFile(path.join(profilesDir, 'profile-splunk.yaml'), 'utf8');
+    expect(yaml).not.toContain('do-not-persist');
+    expect(yaml).toContain('memory:profile-splunk:splunkToken');
+    expect(created.hasSecret.splunkToken).toBe(true);
+    await expect(store.resolve('profile-splunk')).resolves.toMatchObject({
+      secrets: { splunkToken: 'do-not-persist' },
+    });
+
+    const updated = await store.update('profile-splunk', {
+      name: 'Splunk target',
+      targetUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      config,
+      clearSecrets: ['splunkToken'],
+    });
+    expect(updated.hasSecret.splunkToken).toBeUndefined();
   });
 
   it('imports legacy YAML and moves its password out of the file', async () => {
