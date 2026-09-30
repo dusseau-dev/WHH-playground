@@ -914,7 +914,7 @@ Book a free 15-min session for hands-on help with bugs, deployments, or config q
 
 [Join our Discord](https://discord.gg/cmctpMBXwE) to ask questions, share feedback, and connect with other Shannon users.
 
-**Contributing:** At this time, we're not accepting external code contributions (PRs).  
+**Contributing:** At this time, we're not accepting external code contributions (PRs).<br>
 Issues are welcome for bug reports and feature requests.
 
 - **Report bugs** via [GitHub Issues](https://github.com/KeygraphHQ/shannon/issues)

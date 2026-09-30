@@ -8,6 +8,27 @@ const severityRank: Record<Severity, number> = {
   info: 4,
 };
 
+const standardCurrencyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const fractionalCurrencyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 3,
+  maximumFractionDigits: 3,
+});
+
+const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
 export function sortFindings(findings: Finding[]): Finding[] {
   return [...findings].sort((left, right) => {
     const severityDifference = severityRank[left.severity] - severityRank[right.severity];
@@ -36,24 +57,14 @@ export function formatDuration(milliseconds?: number): string {
 
 export function formatCost(cost?: number): string {
   if (cost === undefined || !Number.isFinite(cost)) return '—';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cost < 1 ? 3 : 2,
-    maximumFractionDigits: cost < 1 ? 3 : 2,
-  }).format(cost);
+  return (cost < 1 ? fractionalCurrencyFormatter : standardCurrencyFormatter).format(cost);
 }
 
 export function formatTimestamp(timestamp?: string): string {
   if (!timestamp) return '—';
   const date = new Date(timestamp);
   if (Number.isNaN(date.valueOf())) return '—';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date);
+  return timestampFormatter.format(date);
 }
 
 export function statusLabel(status: RunStatus): string {
