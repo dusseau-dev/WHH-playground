@@ -6,6 +6,7 @@
 
 import { Context } from '@temporalio/activity';
 import type { ActivityLogger } from '../types/activity-logger.js';
+import { redactLogText, redactSecrets } from '../utils/redactSecrets.js';
 
 /**
  * ActivityLogger backed by Temporal's Context.current().log.
@@ -13,15 +14,15 @@ import type { ActivityLogger } from '../types/activity-logger.js';
  */
 export class TemporalActivityLogger implements ActivityLogger {
   info(message: string, attrs?: Record<string, unknown>): void {
-    Context.current().log.info(message, attrs ?? {});
+    Context.current().log.info(redactLogText(message), redactSecrets(attrs ?? {}));
   }
 
   warn(message: string, attrs?: Record<string, unknown>): void {
-    Context.current().log.warn(message, attrs ?? {});
+    Context.current().log.warn(redactLogText(message), redactSecrets(attrs ?? {}));
   }
 
   error(message: string, attrs?: Record<string, unknown>): void {
-    Context.current().log.error(message, attrs ?? {});
+    Context.current().log.error(redactLogText(message), redactSecrets(attrs ?? {}));
   }
 }
 

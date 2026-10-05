@@ -1,22 +1,8 @@
-// Copyright (C) 2025 Keygraph, Inc.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License version 3
-// as published by the Free Software Foundation.
-
-/**
- * Per-session custom tools registered for every agent: `todo_write` and `glob`.
- *
- * These replace harness built-ins that pi does not ship. `todo_write` is a
- * full-state-replace planning scratchpad mirrored to the workflow log; `glob` is
- * fast-glob file matching (pi has no `Glob` built-in).
- */
-
 import { defineTool, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { fs, glob, path } from 'zx';
 
-import type { AuditLogger } from '../audit-logger.js';
+const GLOB_STAT_BATCH_SIZE = 32;
 
 export interface TodoItem {
   content: string;
@@ -24,46 +10,39 @@ export interface TodoItem {
   activeForm: string;
 }
 
-function renderTodos(todos: readonly TodoItem[]): string {
-  const mark = (status: TodoItem['status']): string => {
-    if (status === 'completed') return 'x';
-    if (status === 'in_progress') return '~';
-    return ' ';
-  };
+export interface TodoAuditLogger {
+  logNote?(category: string, message: string): Promise<void>;
+  logToolEnd?(result: unknown): Promise<void>;
+}
+
+export function renderTodos(todos: readonly TodoItem[]): string {
+  const mark = (status: TodoItem['status']): string =>
+    status === 'completed' ? 'x' : status === 'in_progress' ? '~' : ' ';
   return todos.map((todo) => `[${mark(todo.status)}] ${todo.content}`).join('  ');
 }
 
-export function createTodoWriteTool(auditLogger: AuditLogger): ToolDefinition {
+export function createTodoWriteTool(auditLogger: TodoAuditLogger): ToolDefinition {
   let current: TodoItem[] = [];
-
   return defineTool({
     name: 'todo_write',
     label: 'Todo Write',
-    description:
-      'Use this tool to create and manage a structured task list for your current session. ' +
-      'Pass the complete todo list on every call; it replaces the stored list entirely. Each ' +
-      'todo has a status of pending, in_progress, or completed.',
+    description: 'Replace the current session todo list with the complete list supplied in this call.',
     promptSnippet: 'todo_write: create and manage a structured task list',
     parameters: Type.Object({
       todos: Type.Array(
         Type.Object({
-          content: Type.String({ description: 'Imperative task description, e.g. "Map SSRF sinks".' }),
+          content: Type.String({ description: 'Imperative task description.' }),
           status: Type.Union([Type.Literal('pending'), Type.Literal('in_progress'), Type.Literal('completed')]),
-          activeForm: Type.String({ description: 'Present-continuous form, e.g. "Mapping SSRF sinks".' }),
+          activeForm: Type.String({ description: 'Present-continuous task description.' }),
         }),
       ),
     }),
     async execute(_toolCallId, params) {
       current = params.todos as TodoItem[];
+      await auditLogger.logNote?.('todo', renderTodos(current));
       const completed = current.filter((todo) => todo.status === 'completed').length;
-      await auditLogger.logNote('todo', renderTodos(current));
       return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `Todos updated (${current.length} items, ${completed} completed).`,
-          },
-        ],
+        content: [{ type: 'text' as const, text: `Todos updated (${current.length} items, ${completed} completed).` }],
         details: undefined,
       };
     },
@@ -74,13 +53,11 @@ export function createGlobTool(cwd: string): ToolDefinition {
   return defineTool({
     name: 'glob',
     label: 'Glob',
-    description:
-      'Fast file pattern matching. Supports glob patterns like "**/*.ts" or "src/**/*.{js,ts}". ' +
-      'Returns matching file paths sorted by modification time, most recent first.',
+    description: 'Match file paths with glob patterns and return most recently modified files first.',
     promptSnippet: 'glob: find files by name pattern',
     parameters: Type.Object({
-      pattern: Type.String({ description: 'The glob pattern to match files against.' }),
-      path: Type.Optional(Type.String({ description: 'Directory to search in. Omit for the repository root.' })),
+      pattern: Type.String({ description: 'Glob pattern to match.' }),
+      path: Type.Optional(Type.String({ description: 'Directory to search, relative to the working directory.' })),
     }),
     async execute(_toolCallId, params) {
       const searchRoot = params.path ? path.resolve(cwd, params.path) : cwd;
@@ -91,24 +68,27 @@ export function createGlobTool(cwd: string): ToolDefinition {
         onlyFiles: true,
         followSymbolicLinks: false,
       });
-
       if (matches.length === 0) {
         return { content: [{ type: 'text' as const, text: 'No files found' }], details: undefined };
       }
-
-      const withMtime = await Promise.all(
-        matches.map(async (file) => {
-          try {
-            return { file, mtime: (await fs.stat(file)).mtimeMs };
-          } catch {
-            return { file, mtime: 0 };
-          }
-        }),
-      );
-      withMtime.sort((a, b) => b.mtime - a.mtime);
-
+      const withMtime: Array<{ file: string; mtime: number }> = [];
+      for (let offset = 0; offset < matches.length; offset += GLOB_STAT_BATCH_SIZE) {
+        const batch = matches.slice(offset, offset + GLOB_STAT_BATCH_SIZE);
+        withMtime.push(
+          ...(await Promise.all(
+            batch.map(async (file) => {
+              try {
+                return { file, mtime: (await fs.stat(file)).mtimeMs };
+              } catch {
+                return { file, mtime: 0 };
+              }
+            }),
+          )),
+        );
+      }
+      withMtime.sort((a, b) => b.mtime - a.mtime || a.file.localeCompare(b.file));
       return {
-        content: [{ type: 'text' as const, text: withMtime.map((match) => match.file).join('\n') }],
+        content: [{ type: 'text' as const, text: withMtime.map(({ file }) => file).join('\n') }],
         details: undefined,
       };
     },

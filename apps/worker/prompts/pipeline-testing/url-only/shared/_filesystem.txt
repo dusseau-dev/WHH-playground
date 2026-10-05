@@ -1,0 +1,1 @@
+URL-only pipeline test. Work only in {{WORKING_DIRECTORY}}. Use browser/API-observable evidence and .shannon/deliverables for outputs.

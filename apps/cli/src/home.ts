@@ -1,7 +1,7 @@
 /**
  * Shannon state directory management.
  *
- * Local mode (cloned repo): uses ./workspaces/
+ * Local mode (cloned repo): uses ./workspaces/, ./credentials/
  * NPX mode: uses ~/.shannon/workspaces/, ~/.shannon/
  */
 

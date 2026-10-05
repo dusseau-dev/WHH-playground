@@ -15,18 +15,18 @@
 import { readFile, rm } from 'node:fs/promises';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { runPiPrompt } from '../ai/pi/pi-executor.js';
+import { type PiPromptResult, runPiPrompt } from '../ai/pi/pi-executor.js';
 import type { CapturedSubmitTool } from '../ai/submit-tool.js';
 import type { AuditSession } from '../audit/index.js';
 import { authStateFile } from '../audit/utils.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
 import type { AgentEndResult } from '../types/audit.js';
-import type { DistributedConfig } from '../types/config.js';
+import type { DistributedConfig, ProviderConfig } from '../types/config.js';
 import { ErrorCode } from '../types/errors.js';
-import type { AgentMetrics } from '../types/metrics.js';
 import { err, ok, type Result } from '../types/result.js';
 import { PentestError } from './error-handling.js';
 import { loadPrompt } from './prompt-manager.js';
+import { collectConfiguredSecrets, collectRuntimeProviderSecrets } from './redaction.js';
 
 const FAILURE_POINTS = ['username_or_password', 'totp_secret', 'out_of_band'] as const;
 type AuthFailurePoint = (typeof FAILURE_POINTS)[number];
@@ -41,8 +41,7 @@ interface AuthValidationVerdict {
   failure_detail?: string;
 }
 
-/** Submit tool capturing the login verdict (pi has no JSON-schema output format). */
-function createAuthSubmitTool(): CapturedSubmitTool {
+export function createAuthSubmitTool(): CapturedSubmitTool {
   let captured: AuthValidationVerdict | undefined;
   return {
     tool: defineTool({
@@ -63,11 +62,11 @@ function createAuthSubmitTool(): CapturedSubmitTool {
           Type.String({
             maxLength: 250,
             description:
-              'Free-form 1-2 sentence diagnostic of what the page showed (error messages, page state) when login failed. Required when login_success is false. Mask any sensitive values.',
+              'Free-form 1-2 sentence diagnostic of what the page showed when login failed. Mask sensitive values.',
           }),
         ),
       }),
-      execute: async (_toolCallId, params) => {
+      async execute(_toolCallId, params) {
         captured = params as AuthValidationVerdict;
         return {
           content: [{ type: 'text' as const, text: 'Auth result recorded.' }],
@@ -78,8 +77,8 @@ function createAuthSubmitTool(): CapturedSubmitTool {
     }),
     getCaptured: () => captured,
     directive:
-      '\n\nYou MUST call the submit_auth_result tool exactly once as your final action ' +
-      'to deliver the authentication verdict. Do not output JSON as text.',
+      '\n\nYou MUST call the submit_auth_result tool exactly once as your final action to deliver the ' +
+      'authentication verdict. Do not output JSON as text.',
   };
 }
 
@@ -87,27 +86,33 @@ const AGENT_NAME = 'validate-authentication';
 
 export interface ValidateAuthInput {
   readonly distributedConfig: DistributedConfig;
-  readonly repoPath: string;
+  readonly workingDirectory: string;
+  readonly repoPath?: string;
+  readonly sourceMode: import('../types/config.js').SourceMode;
   readonly webUrl: string;
   readonly logger: ActivityLogger;
   readonly auditSession: AuditSession;
   readonly attemptNumber: number;
+  readonly apiKey?: string;
+  readonly providerConfig?: ProviderConfig;
   readonly deliverablesSubdir?: string;
   readonly promptDir?: string;
   readonly pipelineTestingMode?: boolean;
   readonly cancellationSignal?: AbortSignal;
 }
 
-export async function validateAuthentication(
-  input: ValidateAuthInput,
-): Promise<Result<AgentMetrics | null, PentestError>> {
+export async function validateAuthentication(input: ValidateAuthInput): Promise<Result<void, PentestError>> {
   const {
     distributedConfig,
+    workingDirectory,
     repoPath,
+    sourceMode,
     webUrl,
     logger,
     auditSession,
     attemptNumber,
+    apiKey,
+    providerConfig,
     deliverablesSubdir,
     promptDir,
     pipelineTestingMode,
@@ -116,8 +121,13 @@ export async function validateAuthentication(
 
   const authentication = distributedConfig.authentication;
   if (!authentication) {
-    return ok(null);
+    return ok(undefined);
   }
+
+  auditSession.setRedactionSecrets([
+    ...collectConfiguredSecrets(distributedConfig, providerConfig, apiKey),
+    ...collectRuntimeProviderSecrets(),
+  ]);
 
   logger.info('Validating authentication credentials with live browser...', {
     loginUrl: authentication.login_url,
@@ -129,30 +139,36 @@ export async function validateAuthentication(
 
   const prompt = await loadPrompt(
     AGENT_NAME,
-    { webUrl, repoPath, AUTH_STATE_FILE: stateFile },
+    {
+      webUrl,
+      workingDirectory,
+      ...(repoPath !== undefined && { repoPath }),
+      AUTH_STATE_FILE: stateFile,
+    },
     distributedConfig,
     pipelineTestingMode ?? false,
     logger,
     promptDir,
+    sourceMode,
   );
 
   await auditSession.startAgent(AGENT_NAME, prompt, attemptNumber);
   const startTime = Date.now();
 
-  const submitTool = createAuthSubmitTool();
-  const result = await runPiPrompt(
+  cancellationSignal?.throwIfAborted();
+  const result = await runPiPrompt({
     prompt,
-    repoPath,
-    '',
-    'Authentication validation',
-    AGENT_NAME,
+    workingDirectory,
+    description: 'Authentication validation',
+    agentName: AGENT_NAME,
     auditSession,
     logger,
-    undefined, // callerTools
-    deliverablesSubdir,
-    cancellationSignal,
-    submitTool,
-  );
+    ...(deliverablesSubdir && { deliverablesSubdir }),
+    ...(cancellationSignal && { cancellationSignal }),
+    submitTool: createAuthSubmitTool(),
+    runtimeOptions: { modelTier: 'medium', providerConfig, apiKey },
+  });
+  cancellationSignal?.throwIfAborted();
 
   let classification = classifyResult(result, authentication);
 
@@ -163,32 +179,22 @@ export async function validateAuthentication(
     }
   }
 
-  const durationMs = Date.now() - startTime;
   const endResult: AgentEndResult = {
     attemptNumber,
-    duration_ms: durationMs,
+    duration_ms: Date.now() - startTime,
     cost_usd: result.cost || 0,
+    ...(result.inputTokens !== undefined && { input_tokens: result.inputTokens }),
+    ...(result.outputTokens !== undefined && { output_tokens: result.outputTokens }),
+    ...(result.cacheReadTokens !== undefined && { cache_read_tokens: result.cacheReadTokens }),
+    ...(result.cacheWriteTokens !== undefined && { cache_write_tokens: result.cacheWriteTokens }),
+    ...(result.turns !== undefined && { num_turns: result.turns }),
     success: classification.ok,
     ...(result.model !== undefined && { model: result.model }),
     ...(!classification.ok && { error: classification.error.message }),
   };
   await auditSession.endAgent(AGENT_NAME, endResult);
 
-  if (!classification.ok) {
-    return err(classification.error);
-  }
-
-  const metrics: AgentMetrics = {
-    durationMs,
-    inputTokens: result.inputTokens ?? null,
-    outputTokens: result.outputTokens ?? null,
-    cacheReadTokens: result.cacheReadTokens ?? null,
-    cacheWriteTokens: result.cacheWriteTokens ?? null,
-    costUsd: result.cost ?? null,
-    numTurns: result.turns ?? null,
-    ...(result.model !== undefined && { model: result.model }),
-  };
-  return ok(metrics);
+  return classification;
 }
 
 async function verifySavedAuthState(stateFile: string, logger: ActivityLogger): Promise<Result<void, PentestError>> {
@@ -223,36 +229,32 @@ async function verifySavedAuthState(stateFile: string, logger: ActivityLogger): 
     );
   }
 
-  const cookies = storageEntries(parsed, 'cookies');
-  const origins = storageEntries(parsed, 'origins');
-  if (!cookies || !origins) {
+  const cookieCount = countStorageEntries(parsed, 'cookies');
+  const originCount = countStorageEntries(parsed, 'origins');
+  if (cookieCount === 0 && originCount === 0) {
     return err(
       new PentestError(
-        `Preflight saved an authenticated session to ${stateFile}, but it is not a storage state — cookies and origins arrays are missing.`,
+        `Preflight saved an authenticated session to ${stateFile}, but it contains no cookies or origins — the browser was not actually logged in.`,
         'validation',
         true,
-        { stateFile, hasCookies: !!cookies, hasOrigins: !!origins },
+        { stateFile, cookieCount, originCount },
         ErrorCode.AGENT_EXECUTION_FAILED,
       ),
     );
   }
 
-  logger.info('Preflight authenticated session saved', {
-    stateFile,
-    cookieCount: cookies.length,
-    originCount: origins.length,
-  });
+  logger.info('Preflight authenticated session saved', { stateFile, cookieCount, originCount });
   return ok(undefined);
 }
 
-function storageEntries(parsed: unknown, key: 'cookies' | 'origins'): unknown[] | null {
-  if (typeof parsed !== 'object' || parsed === null) return null;
+function countStorageEntries(parsed: unknown, key: 'cookies' | 'origins'): number {
+  if (typeof parsed !== 'object' || parsed === null) return 0;
   const value = (parsed as Record<string, unknown>)[key];
-  return Array.isArray(value) ? value : null;
+  return Array.isArray(value) ? value.length : 0;
 }
 
 function classifyResult(
-  result: import('../ai/pi/pi-executor.js').PiPromptResult,
+  result: PiPromptResult,
   authentication: NonNullable<DistributedConfig['authentication']>,
 ): Result<void, PentestError> {
   if (!result.success) {

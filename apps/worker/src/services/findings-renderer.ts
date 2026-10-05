@@ -7,9 +7,10 @@
 /**
  * Deterministic queue-JSON to findings-MD renderer.
  *
- * Used when exploit=false: the exploit agents didn't run, so there is no
+ * Used when safe demonstrations are disabled: the demonstration agents did not
+ * run, so there is no
  * `*_exploitation_evidence.md` to concatenate into the report. This module
- * reads each `*_exploitation_queue.json` (already validated by the submit tool against the
+ * reads each `*_exploitation_queue.json` (already SDK-validated against the
  * schemas in ../ai/queue-schemas.ts) and writes a `*_findings.md` per class
  * in the canonical body shape that report-executive.txt's cleanup expects.
  *
@@ -20,12 +21,18 @@ import { fs, path } from 'zx';
 import type { AuthFinding, AuthzFinding, InjectionFinding, SsrfFinding, XssFinding } from '../ai/queue-schemas.js';
 import { deliverablesDir } from '../paths.js';
 import type { ActivityLogger } from '../types/activity-logger.js';
-import type { VulnClass } from '../types/config.js';
+import type { SourceMode, VulnClass } from '../types/config.js';
 
-const DISCLAIMER = [
-  '> Exploitation phase was not run for this assessment. Each entry documents a',
-  '> vulnerability identified through static analysis; live exploitation steps and',
-  '> proof of impact are not included.',
+const SOURCE_ASSISTED_DISCLAIMER = [
+  '> Safe-demonstration agents were not run for this assessment. Each entry',
+  '> documents a candidate supported by the evidence collected during analysis;',
+  '> live proof of impact is not included.',
+].join('\n');
+
+const URL_ONLY_DISCLAIMER = [
+  '> Safe-demonstration agents were not run for this assessment. Each entry',
+  '> documents a candidate identified through URL-only dynamic testing; code-level',
+  '> coverage, source-location attribution, and live proof of impact are not included.',
 ].join('\n');
 
 interface ClassConfig<T> {
@@ -33,7 +40,7 @@ interface ClassConfig<T> {
   readonly noneFoundLabel: string;
   readonly queueFile: string;
   readonly findingsFile: string;
-  readonly renderEntry: (entry: T) => string;
+  readonly renderEntry: (entry: T, sourceMode: SourceMode) => string;
 }
 
 interface QueueDocument<T> {
@@ -48,20 +55,18 @@ function summaryRow(label: string, value: string | undefined | null | boolean): 
   return `- **${label}:** ${value}`;
 }
 
-function formatLocation(endpoint: string | undefined, codeLocation: string | undefined): string {
+function formatSourceAssistedLocation(endpoint: string | undefined, codeLocation: string | undefined): string {
   if (endpoint && codeLocation) return `${endpoint} (${codeLocation})`;
   return endpoint ?? codeLocation ?? '';
 }
 
-/** The analysis queue carries no severity, so confidence is the only rating. */
-interface CommonEntryFields {
-  readonly confidence: string;
+function formatUrlOnlyLocation(endpoint: string | undefined): string {
+  return endpoint ?? '';
 }
 
 function buildEntry(
   id: string,
   title: string,
-  common: CommonEntryFields,
   summaryRows: ReadonlyArray<string | null>,
   notes: string | undefined,
 ): string {
@@ -69,7 +74,6 @@ function buildEntry(
   lines.push(`### ${id}: ${title}`);
   lines.push('');
   lines.push('**Summary:**');
-  lines.push(`- **Confidence:** ${common.confidence}`);
   for (const row of summaryRows) {
     if (row !== null) lines.push(row);
   }
@@ -82,13 +86,16 @@ function buildEntry(
 
 // === Per-Class Renderers ===
 
-function renderAuthEntry(e: AuthFinding): string {
+function renderAuthEntry(e: AuthFinding, sourceMode: SourceMode): string {
+  const location =
+    sourceMode === 'url-only'
+      ? formatUrlOnlyLocation(e.source_endpoint)
+      : formatSourceAssistedLocation(e.source_endpoint, e.vulnerable_code_location);
   return buildEntry(
     e.ID,
     e.vulnerability_type,
-    { confidence: e.confidence },
     [
-      summaryRow('Vulnerable location', formatLocation(e.source_endpoint, e.vulnerable_code_location)),
+      summaryRow('Vulnerable location', location),
       summaryRow('Overview', e.missing_defense),
       summaryRow('Impact', e.exploitation_hypothesis),
     ],
@@ -96,13 +103,16 @@ function renderAuthEntry(e: AuthFinding): string {
   );
 }
 
-function renderSsrfEntry(e: SsrfFinding): string {
+function renderSsrfEntry(e: SsrfFinding, sourceMode: SourceMode): string {
+  const location =
+    sourceMode === 'url-only'
+      ? formatUrlOnlyLocation(e.source_endpoint)
+      : formatSourceAssistedLocation(e.source_endpoint, e.vulnerable_code_location);
   return buildEntry(
     e.ID,
     e.vulnerability_type,
-    { confidence: e.confidence },
     [
-      summaryRow('Vulnerable location', formatLocation(e.source_endpoint, e.vulnerable_code_location)),
+      summaryRow('Vulnerable location', location),
       summaryRow('Overview', e.missing_defense),
       summaryRow('Impact', e.exploitation_hypothesis),
     ],
@@ -110,13 +120,16 @@ function renderSsrfEntry(e: SsrfFinding): string {
   );
 }
 
-function renderAuthzEntry(e: AuthzFinding): string {
+function renderAuthzEntry(e: AuthzFinding, sourceMode: SourceMode): string {
+  const location =
+    sourceMode === 'url-only'
+      ? formatUrlOnlyLocation(e.endpoint)
+      : formatSourceAssistedLocation(e.endpoint, e.vulnerable_code_location);
   return buildEntry(
     e.ID,
     e.vulnerability_type,
-    { confidence: e.confidence },
     [
-      summaryRow('Vulnerable location', formatLocation(e.endpoint, e.vulnerable_code_location)),
+      summaryRow('Vulnerable location', location),
       summaryRow('Overview', e.guard_evidence),
       summaryRow('Impact', e.side_effect),
     ],
@@ -124,23 +137,31 @@ function renderAuthzEntry(e: AuthzFinding): string {
   );
 }
 
-function renderInjectionEntry(e: InjectionFinding): string {
-  const location = e.path && e.sink_call ? `${e.sink_call} (path: ${e.path})` : (e.sink_call ?? e.path);
+function renderInjectionEntry(e: InjectionFinding, sourceMode: SourceMode): string {
+  const location =
+    sourceMode === 'url-only'
+      ? e.path
+      : e.path && e.sink_call
+        ? `${e.sink_call} (path: ${e.path})`
+        : (e.sink_call ?? e.path);
   return buildEntry(
     e.ID,
     e.vulnerability_type,
-    { confidence: e.confidence },
     [summaryRow('Vulnerable location', location), summaryRow('Overview', e.mismatch_reason)],
     e.notes,
   );
 }
 
-function renderXssEntry(e: XssFinding): string {
-  const location = e.path && e.sink_function ? `${e.sink_function} (path: ${e.path})` : (e.sink_function ?? e.path);
+function renderXssEntry(e: XssFinding, sourceMode: SourceMode): string {
+  const location =
+    sourceMode === 'url-only'
+      ? e.path
+      : e.path && e.sink_function
+        ? `${e.sink_function} (path: ${e.path})`
+        : (e.sink_function ?? e.path);
   return buildEntry(
     e.ID,
     e.vulnerability_type,
-    { confidence: e.confidence },
     [summaryRow('Vulnerable location', location), summaryRow('Overview', e.mismatch_reason)],
     e.notes,
   );
@@ -154,45 +175,45 @@ const CLASSES: Record<VulnClass, ClassConfig<unknown>> = {
     noneFoundLabel: 'authentication',
     queueFile: 'auth_exploitation_queue.json',
     findingsFile: 'auth_findings.md',
-    renderEntry: (e) => renderAuthEntry(e as AuthFinding),
+    renderEntry: (e, sourceMode) => renderAuthEntry(e as AuthFinding, sourceMode),
   },
   authz: {
     heading: 'Authorization',
     noneFoundLabel: 'authorization',
     queueFile: 'authz_exploitation_queue.json',
     findingsFile: 'authz_findings.md',
-    renderEntry: (e) => renderAuthzEntry(e as AuthzFinding),
+    renderEntry: (e, sourceMode) => renderAuthzEntry(e as AuthzFinding, sourceMode),
   },
   injection: {
     heading: 'Injection',
     noneFoundLabel: 'injection',
     queueFile: 'injection_exploitation_queue.json',
     findingsFile: 'injection_findings.md',
-    renderEntry: (e) => renderInjectionEntry(e as InjectionFinding),
+    renderEntry: (e, sourceMode) => renderInjectionEntry(e as InjectionFinding, sourceMode),
   },
   xss: {
     heading: 'XSS',
     noneFoundLabel: 'XSS',
     queueFile: 'xss_exploitation_queue.json',
     findingsFile: 'xss_findings.md',
-    renderEntry: (e) => renderXssEntry(e as XssFinding),
+    renderEntry: (e, sourceMode) => renderXssEntry(e as XssFinding, sourceMode),
   },
   ssrf: {
     heading: 'SSRF',
     noneFoundLabel: 'SSRF',
     queueFile: 'ssrf_exploitation_queue.json',
     findingsFile: 'ssrf_findings.md',
-    renderEntry: (e) => renderSsrfEntry(e as SsrfFinding),
+    renderEntry: (e, sourceMode) => renderSsrfEntry(e as SsrfFinding, sourceMode),
   },
 };
 
 // === Class File Assembly ===
 
-function renderClassFile(config: ClassConfig<unknown>, entries: readonly unknown[]): string {
+function renderClassFile(config: ClassConfig<unknown>, entries: readonly unknown[], sourceMode: SourceMode): string {
   const sections: string[] = [];
   sections.push(`# ${config.heading} Findings`);
   sections.push('');
-  sections.push(DISCLAIMER);
+  sections.push(sourceMode === 'url-only' ? URL_ONLY_DISCLAIMER : SOURCE_ASSISTED_DISCLAIMER);
   sections.push('');
   sections.push('## Identified Vulnerabilities');
   sections.push('');
@@ -201,7 +222,7 @@ function renderClassFile(config: ClassConfig<unknown>, entries: readonly unknown
     sections.push('');
   } else {
     for (const entry of entries) {
-      sections.push(config.renderEntry(entry));
+      sections.push(config.renderEntry(entry, sourceMode));
       sections.push('');
     }
   }
@@ -221,6 +242,7 @@ export async function renderFindingsFromQueues(
   sourceDir: string,
   deliverablesSubdir: string | undefined,
   logger: ActivityLogger,
+  sourceMode: SourceMode = 'source-assisted',
 ): Promise<void> {
   const dir = deliverablesDir(sourceDir, deliverablesSubdir);
 
@@ -240,7 +262,7 @@ export async function renderFindingsFromQueues(
     try {
       const doc = (await fs.readJson(queuePath)) as QueueDocument<unknown>;
       const entries = doc.vulnerabilities ?? [];
-      const markdown = renderClassFile(config, entries);
+      const markdown = renderClassFile(config, entries, sourceMode);
       await fs.writeFile(findingsPath, markdown);
       logger.info(`${config.heading}: rendered ${entries.length} finding(s) to ${config.findingsFile}`);
     } catch (error) {

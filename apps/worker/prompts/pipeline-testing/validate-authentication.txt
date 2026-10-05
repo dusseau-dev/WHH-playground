@@ -2,3 +2,4 @@ Write a stub authenticated session via Bash so the preflight's saved-state check
   echo '{"cookies":[{"name":"stub","value":"x","domain":"example.com","path":"/"}],"origins":[]}' > {{AUTH_STATE_FILE}}
 
 Then return the structured verdict `{ "login_success": true }` and stop.
+Your final action must be one call to submit_auth_result.

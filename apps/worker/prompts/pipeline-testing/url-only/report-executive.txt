@@ -1,0 +1,3 @@
+@include(shared/_filesystem.txt)
+
+Read available queues, evidence, and triage verdicts. Call `set_report_meta` exactly once for {{WEB_URL}} and call `add_finding` for each included finding. Copy every `finding_id` exactly from its queue `ID`; never normalize, trim, recase, or invent it. Apply {{REPORT_FILTERS_BLOCK}} {{REPORT_FILTER_RULES}}. Use only these tools and never create or edit report files. Say Done after the tool calls.

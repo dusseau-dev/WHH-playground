@@ -11,3 +11,4 @@ Please complete these tasks using your CLI tools:
    - Run: `save-deliverable --type XSS_ANALYSIS --content '# XSS Analysis Report\n\nAnalysis complete. No XSS vulnerabilities identified.'`
 
 As a final step, return an empty array for vulnerabilities.
+Your final action must be one call to submit_exploitation_queue.

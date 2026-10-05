@@ -1,0 +1,7 @@
+@include(shared/_filesystem.txt)
+
+Run:
+save-deliverable --type RECON --content '# Reconnaissance
+
+URL-only dynamic pipeline test complete.'
+Then say Done.

@@ -11,9 +11,12 @@
 /**
  * Cross-cutting session metadata used by services, temporal, and audit.
  */
+import type { SourceMode } from './config.js';
+
 export interface SessionMetadata {
   id: string;
   webUrl: string;
+  sourceMode?: SourceMode;
   repoPath?: string;
   outputPath?: string;
   [key: string]: unknown;
@@ -31,7 +34,7 @@ export interface AgentEndResult {
   output_tokens?: number | undefined;
   cache_read_tokens?: number | undefined;
   cache_write_tokens?: number | undefined;
-  turns?: number | undefined;
+  num_turns?: number | undefined;
   success: boolean;
   model?: string | undefined;
   error?: string | undefined;

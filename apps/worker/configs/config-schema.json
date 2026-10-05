@@ -102,6 +102,22 @@
       "required": ["login_type", "login_url", "credentials", "success_condition"],
       "additionalProperties": false
     },
+    "pipeline": {
+      "type": "object",
+      "description": "Pipeline execution settings for retry behavior and concurrency",
+      "properties": {
+        "retry_preset": {
+          "type": "string",
+          "enum": ["default", "subscription"],
+          "description": "Retry preset. 'subscription' extends timeouts for Anthropic subscription rate limit windows (5h+)."
+        },
+        "max_concurrent_pipelines": {
+          "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 5 }, { "type": "string", "pattern": "^[1-5]$" }],
+          "description": "Max concurrent vulnerability pipelines (1-5, default: 5)"
+        }
+      },
+      "additionalProperties": false
+    },
     "rules": {
       "type": "object",
       "description": "Testing rules that define what to focus on or avoid during penetration testing",
@@ -132,14 +148,146 @@
         "type": "string",
         "enum": ["injection", "xss", "auth", "authz", "ssrf"]
       },
-      "minItems": 1,
+      "minItems": 0,
       "maxItems": 5,
       "uniqueItems": true
     },
+    "test_scopes": {
+      "type": "array",
+      "description": "Granular security checks to run. Omit to expand the selected legacy vulnerability classes.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "object-access",
+          "privilege-boundaries",
+          "tenant-isolation",
+          "csrf",
+          "ssrf",
+          "cors",
+          "security-headers",
+          "open-redirects",
+          "dependency-risk",
+          "package-provenance",
+          "build-pipeline-integrity",
+          "sensitive-data-exposure",
+          "transport-session-protection",
+          "sql-nosql-injection",
+          "command-injection",
+          "template-injection",
+          "xxe",
+          "path-traversal-file-inclusion",
+          "reflected-xss",
+          "stored-xss",
+          "dom-xss",
+          "business-logic",
+          "workflow-bypass",
+          "file-upload",
+          "rate-limiting",
+          "http-load-capacity",
+          "account-enumeration",
+          "login-controls",
+          "account-recovery-mfa",
+          "session-lifecycle",
+          "unsafe-deserialization",
+          "upload-integrity",
+          "security-event-logging",
+          "alerting-effectiveness",
+          "audit-trail-integrity",
+          "verbose-errors",
+          "fail-open"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "test_surfaces": {
+      "type": "array",
+      "description": "Interaction surfaces to exercise during the assessment.",
+      "items": {
+        "type": "string",
+        "enum": ["browser", "api-graphql", "websockets"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "assessment_modules": {
+      "type": "array",
+      "description": "Assessment methods and operational modules. These run independently from granular vulnerability checks.",
+      "items": {
+        "type": "string",
+        "enum": ["passive-exposure", "automated-dast", "supply-chain", "http-load-capacity"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "module_safety": {
+      "type": "object",
+      "description": "Fail-closed environment, traffic, and automatic-stop policy for assessment modules.",
+      "properties": {
+        "target_environment": { "type": "string", "enum": ["production", "staging"] },
+        "allow_active_dast": { "type": "boolean" },
+        "acknowledge_load_risk": { "type": "boolean" },
+        "max_requests_per_second": { "type": "number", "minimum": 1, "maximum": 10 },
+        "max_concurrency": { "type": "integer", "minimum": 1, "maximum": 25 },
+        "load_stage_duration_seconds": { "type": "integer", "minimum": 10, "maximum": 600 },
+        "load_error_rate_threshold": { "type": "number", "minimum": 0.001, "maximum": 0.5 },
+        "load_p95_latency_ms_threshold": { "type": "integer", "minimum": 100, "maximum": 60000 }
+      },
+      "additionalProperties": false
+    },
+    "http_load": {
+      "type": "object",
+      "description": "Single-host HTTP load parameters. Requires the http-load-capacity test scope and explicit run-time authorization.",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "requests_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        }
+      },
+      "additionalProperties": false
+    },
+    "detection_validation": {
+      "type": "object",
+      "description": "Staging-only fixed-corpus validation of WAF and SIEM alerting through Splunk.",
+      "properties": {
+        "canary_path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "minimum_detection_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_wait_seconds": { "type": "integer", "minimum": 30, "maximum": 600 },
+        "splunk": {
+          "type": "object",
+          "properties": {
+            "management_url": { "type": "string", "format": "uri", "maxLength": 2048 },
+            "telemetry_index": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "alert_index": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "telemetry_sourcetype": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "alert_sourcetype": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "token": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          },
+          "required": ["management_url", "telemetry_index", "alert_index"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["splunk"],
+      "additionalProperties": false
+    },
     "exploit": {
-      "type": "string",
-      "enum": ["true", "false"],
-      "description": "Whether to run the exploitation phase (default true). Set false to run only analysis."
+      "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+      "description": "Deprecated: use safe_demonstration. Whether to run safe demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
+    },
+    "safe_demonstration": {
+      "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+      "description": "Whether to run safe, authorized demonstrations of confirmed findings (default true). Natural YAML booleans and legacy quoted strings are accepted."
     },
     "report": {
       "type": "object",
@@ -162,9 +310,8 @@
           "description": "Free-text guidance to the report agent (e.g., 'Drop findings about missing security headers')."
         },
         "sarif": {
-          "type": "string",
-          "enum": ["true", "false"],
-          "description": "Emit a SARIF 2.1.0 log (report.sarif) beside the report. On by default for exploit runs; set \"false\" to opt out. Ignored when exploit=false."
+          "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
+          "description": "Emit report.sarif for safe-demonstration runs with fully validated triage. Natural YAML booleans and legacy quoted strings are accepted."
         }
       },
       "additionalProperties": false
@@ -193,7 +340,15 @@
     { "required": ["rules"] },
     { "required": ["authentication", "rules"] },
     { "required": ["description"] },
+    { "required": ["pipeline"] },
     { "required": ["vuln_classes"] },
+    { "required": ["test_scopes"] },
+    { "required": ["test_surfaces"] },
+    { "required": ["assessment_modules"] },
+    { "required": ["module_safety"] },
+    { "required": ["http_load"] },
+    { "required": ["detection_validation"] },
+    { "required": ["safe_demonstration"] },
     { "required": ["exploit"] },
     { "required": ["report"] },
     { "required": ["rules_of_engagement"] }
@@ -206,6 +361,7 @@
       "properties": {
         "description": {
           "type": "string",
+          "minLength": 1,
           "maxLength": 200,
           "description": "Human-readable description of the rule"
         },
@@ -221,7 +377,7 @@
           "description": "Value to match"
         }
       },
-      "required": ["type", "value"],
+      "required": ["description", "type", "value"],
       "additionalProperties": false
     }
   }
