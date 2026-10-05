@@ -40,7 +40,7 @@
     "zx": "^8.0.0"
   },
   "devDependencies": {
-    "@temporalio/testing": "^1.20.2",
+    "@temporalio/testing": "^1.24.0",
     "@types/js-yaml": "^4.0.9",
     "vitest": "^4.1.10"
   }
