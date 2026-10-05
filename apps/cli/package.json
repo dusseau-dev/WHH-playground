@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsdown && vite build --config web/vite.config.ts",
     "check": "tsc --noEmit && tsc -p web/tsconfig.json --noEmit",
-    "test": "vitest run --exclude tests/integration/** --exclude tests/e2e/**",
+    "test": "vitest run --exclude \"tests/integration/**\" --exclude \"tests/e2e/**\"",
     "test:e2e": "playwright test",
     "test:integration": "vitest run tests/integration",
     "clean": "rm -rf dist"

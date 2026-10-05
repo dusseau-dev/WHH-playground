@@ -16,7 +16,7 @@ Use the CLI directly or open the bundled localhost operator UI with `npx @keygra
 
 ---
 
-**Full README and usage guide**  
+**Full README and usage guide**<br>
 [https://github.com/KeygraphHQ/shannon#readme](https://github.com/KeygraphHQ/shannon#readme)
 
 ```bash
