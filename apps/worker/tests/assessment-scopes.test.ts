@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizeDetectionValidationSettings } from '../src/types/detection-validation.js';
 import {
   ASSESSMENT_MODULE_REGISTRY,
   ASSESSMENT_SCOPE_REGISTRY,
@@ -27,7 +28,7 @@ describe('assessment scope registry', () => {
       'A10:2025',
     ]);
     expect(OWASP_CATEGORY_REGISTRY.find(({ id }) => id === 'A03:2025')?.availability).toBe('coming-soon');
-    expect(OWASP_CATEGORY_REGISTRY.find(({ id }) => id === 'A09:2025')?.availability).toBe('coming-soon');
+    expect(OWASP_CATEGORY_REGISTRY.find(({ id }) => id === 'A09:2025')?.availability).toBe('partial');
   });
 
   it('maps every standard check to one durable execution lane', () => {
@@ -61,6 +62,61 @@ describe('assessment scope registry', () => {
       testSurfaces: DEFAULT_ASSESSMENT_SURFACES,
       vulnClasses: [],
     });
+  });
+
+  it('exposes alerting effectiveness as an opt-in activity-backed check', () => {
+    expect(ASSESSMENT_SCOPE_REGISTRY.find(({ id }) => id === 'alerting-effectiveness')).toEqual({
+      id: 'alerting-effectiveness',
+      label: 'Alerting effectiveness',
+      owaspId: 'A09:2025',
+      availability: 'available',
+      executor: 'detection-validation',
+      bulkSelectable: false,
+    });
+    expect(DEFAULT_ASSESSMENT_SCOPES).not.toContain('alerting-effectiveness');
+    expect(normalizeAssessmentScope({ testScopes: ['alerting-effectiveness'] })).toEqual({
+      testScopes: ['alerting-effectiveness'],
+      testSurfaces: DEFAULT_ASSESSMENT_SURFACES,
+      vulnClasses: [],
+    });
+  });
+});
+
+describe('detection validation settings', () => {
+  const splunk = {
+    managementUrl: 'https://splunk.example.test:8089',
+    telemetryIndex: 'waf_events',
+    alertIndex: 'security_alerts',
+    alertSourcetype: 'notable',
+  };
+
+  it('normalizes the staging-only executor contract', () => {
+    expect(normalizeDetectionValidationSettings(['alerting-effectiveness'], { splunk }, 'staging')).toEqual({
+      canaryPath: '/__shannon__/detection-simulation',
+      minimumDetectionRate: 1,
+      maxWaitSeconds: 180,
+      splunk,
+    });
+  });
+
+  it('rejects unsafe boundaries and invalid numeric settings', () => {
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { minimumDetectionRate: 1.1, splunk },
+        'staging',
+      ),
+    ).toThrow(/rate/i);
+    expect(() =>
+      normalizeDetectionValidationSettings(['alerting-effectiveness'], { maxWaitSeconds: 29, splunk }, 'staging'),
+    ).toThrow(/wait/i);
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { canaryPath: '/safe?query=1', splunk },
+        'staging',
+      ),
+    ).toThrow(/query|fragment/i);
   });
 });
 

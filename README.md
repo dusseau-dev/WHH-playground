@@ -495,6 +495,34 @@ npx @keygraph/shannon start -u https://example.com -c ./my-app-config.yaml
 npx @keygraph/shannon start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
 ```
 
+##### Staging-only detection validation
+
+Select `alerting-effectiveness` to run Shannon's dedicated A09 detection-validation executor. It sends a frozen,
+non-executable corpus of five matched AI-authored and five human-authored simulations to a same-origin canary endpoint,
+then checks Splunk telemetry and alert indexes for the stable scenario markers. The canary and Splunk origins must use
+valid TLS; the canary must return `204` and must not redirect.
+
+```yaml
+test_scopes: [alerting-effectiveness]
+module_safety:
+  target_environment: staging
+detection_validation:
+  canary_path: /__shannon__/detection-simulation
+  minimum_detection_rate: 1
+  max_wait_seconds: 180
+  splunk:
+    management_url: https://splunk.example.com:8089
+    telemetry_index: waf_events
+    alert_index: security_alerts
+    token: "least-privilege-search-token"
+```
+
+Both cohorts default to a 100% threshold. A scored miss is recorded as a failed assessment while the Shannon workflow
+still completes so its evidence remains available. Connectivity, authorization, or calibration failures are reported as
+unavailable; emission or scoring gaps are partial. Splunk Cloud operators must enable REST API access and supply a token
+with search access to only the configured indexes. Profile import extracts the token into Shannon's existing Keychain or
+session secret store, and exported profiles never contain it.
+
 <details>
 <summary>Clone and Build command equivalents</summary>
 

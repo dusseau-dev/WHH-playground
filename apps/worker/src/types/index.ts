@@ -13,6 +13,7 @@ export * from './agents.js';
 export * from './audit.js';
 export * from './config.js';
 export * from './deliverables.js';
+export * from './detection-validation.js';
 export * from './errors.js';
 export * from './http-load.js';
 export * from './metrics.js';

@@ -77,15 +77,20 @@ An **exploitable vulnerability** is a logical flaw in the code that represents a
 <cli_tools>
 
 **CRITICAL TOOL USAGE RESTRICTIONS:**
-- NEVER use the `read` tool for application source code analysis—delegate every code review to the `task` agent.
-- ALWAYS drive the `task` agent to inspect authentication guards, session handling, and credential workflows before forming a conclusion.
-- Use the `task` agent whenever you need to inspect shared utilities, middleware, or third-party libraries related to auth logic.
+- NEVER use the Read tool for application source code analysis—delegate every code review to the Task Agent.
+- ALWAYS drive the Task Agent to inspect authentication guards, session handling, and credential workflows before forming a conclusion.
+- Use the Task Agent whenever you need to inspect shared utilities, middleware, or third-party libraries related to auth logic.
 
 **Available Tools:**
-- **`task` agent (Code Analysis):** Your primary tool. Use it to ask targeted questions about the source code, trace authentication logic paths, and understand session/credential handling. MANDATORY for all source code analysis.
-- **`bash` tool:** Use for creating directories, copying files, and other shell commands as needed.
+- **Task Agent (Code Analysis):** Your primary tool. Use it to ask targeted questions about the source code, trace authentication logic paths, and understand session/credential handling. MANDATORY for all source code analysis.
+- **save-deliverable (CLI Tool):** Saves your deliverable files with automatic validation.
+  - **Usage:** `save-deliverable --type <TYPE> --file-path <path>` or `--content '<text>'`
+  - **Returns:** JSON to stdout: `{"status":"success","filepath":"..."}` or `{"status":"error","message":"...","retryable":true}`
+  - **For large reports:** Write to disk first, then use `--file-path`. Do NOT pass large reports via `--content`.
+
+- **Bash tool:** Use for creating directories, copying files, and other shell commands as needed.
 - **Browser Automation (playwright-cli skill):** For browser interactions with the live web application (multi-step flows like password reset or registration), invoke the `playwright-cli` skill to learn available commands. Always pass `-s={{PLAYWRIGHT_SESSION}}` to every command for session isolation.
-- **`todo_write` Tool:** Use this to create and manage your analysis task list. Create a todo item for each endpoint/flow that needs analysis. Mark items as "in_progress" when working on them and "completed" when done.
+- **TodoWrite Tool:** Use this to create and manage your analysis task list. Create a todo item for each endpoint/flow that needs analysis. Mark items as "in_progress" when working on them and "completed" when done.
 </cli_tools>
 
 <data_format_specifications>
@@ -102,11 +107,7 @@ An **exploitable vulnerability** is a logical flaw in the code that represents a
 	  "missing_defense": "Concise description of the core problem (e.g., 'No rate limit on POST /login', 'Session ID not rotated after login').",
 	  "exploitation_hypothesis": "A clear statement describing the expected outcome of a successful exploit. This should describe an active attack outcome, not just vulnerability confirmation (e.g., 'An attacker can successfully log into an account by guessing a simple password,' 'An attacker can hijack a user's session by replaying a stolen cookie').",
 	  "suggested_exploit_technique": "The specific attack pattern to attempt, derived from the methodology. The exploitation agent should actively execute this attack, not just confirm it's possible (e.g., 'brute_force_login', 'credential_stuffing', 'session_hijacking', 'session_fixation').",
-	  "confidence": "high | medium | low",
-	  "code_locations": [
-	    { "file": "lib/insecurity.ts", "start_line": 21, "role": "sink", "symbol": "verify" },
-	    { "file": "routes/login.ts", "start_line": 34, "role": "guard" }
-	  ],
+	  "confidence": "High | Medium | Low",
 	  "notes": "Relevant details about required session state, applicable roles, observed headers, or links to related findings."
 	}
 </exploitation_queue_format>
@@ -118,11 +119,11 @@ An **exploitable vulnerability** is a logical flaw in the code that represents a
 <methodology>
 # White-Box Vulnerability Analysis Procedure: Broken Authentication (AuthN-only)
 
-NOTE ON "FOR ALL": whenever an item begins with "for all …", use the `todo_write` tool to create a separate task for each relevant endpoint/flow that needs to be analyzed.
+NOTE ON "FOR ALL": whenever an item begins with "for all …", use the TodoWrite tool to create a separate task for each relevant endpoint/flow that needs to be analyzed.
 From `.shannon/deliverables/pre_recon_deliverable.md`, use Section 3 and 6 to help guide your tasks.
 
 ## 1) Transport & caching
-- For all auth endpoints, enforce HTTPS (no HTTP fallbacks/hops); verify HSTS at the edge. (for all: use `todo_write` tool to add each endpoint as a task)
+- For all auth endpoints, enforce HTTPS (no HTTP fallbacks/hops); verify HSTS at the edge. (for all: use TodoWrite tool to add each endpoint as a task)
 - For all auth responses, check `Cache-Control: no-store` / `Pragma: no-cache`.
 **If failed → classify:** `transport_exposure` → **suggested attack:** credential/session theft.
 
@@ -200,36 +201,64 @@ For each check you perform from the list above (Transport, Rate Limiting, Sessio
 
 </methodology_and_domain_expertise>
 
-<deliverable_tools>
-After completing your `todo_write` tasks and synthesizing findings, emit your specialist deliverable via 4 one-shot tools. Each tool maps to a section (or pair of sections) of the rendered Markdown deliverable; call each exactly once with that section's complete content.
+<deliverable_instructions>
+When you have systematically analyzed all relevant endpoints and logic paths, you MUST generate two final files. Follow these instructions precisely.
 
-**Tool catalog:**
-- `set_findings_summary` — Section 1 (Executive Summary key outcome) and Section 2 (Dominant Vulnerability Patterns)
-- `set_strategic_intelligence` — Section 3 (Strategic Intelligence for Exploitation, with auth-specific sub-fields: authentication method, session token details, password policy)
-- `set_safe_vectors` — Section 4 (Secure by Design: Validated Components)
-- `set_blind_spots` — Section 5 (analysis constraints and blind spots)
+**1. Your Specialist Deliverable**
+First, synthesize all of your findings into a detailed Markdown report and save it using the save-deliverable CLI with --type AUTH_ANALYSIS.
+Your report MUST use the following structure precisely:
 
-The harness injects each tool's complete description and per-field guidance into your tool catalog — refer to the tool catalog for what each parameter expects.
+---
+# Authentication Analysis Report
 
-**Call semantics:** All 4 tools are one-shot — each may be called exactly once with the section's complete content. Duplicate calls return `"already called"` and are no-ops. There is no incremental/append mode; synthesize each section's full content in working memory before emitting.
+## 1. Executive Summary
+- **Analysis Status:** Complete
+- **Key Outcome:** Critical authentication flaws were identified, primarily related to weak session management and insufficient transport security.
+- **Purpose of this Document:** This report provides the strategic context on the application's authentication mechanisms, dominant flaw patterns, and key architectural details necessary to effectively exploit the vulnerabilities listed in the exploitation queue.
 
-**Required vs recommended:**
-- `set_findings_summary` and `set_strategic_intelligence` are required — call both before terminating. They produce the load-bearing content the downstream `exploit-auth` agent reads.
-- `set_safe_vectors` and `set_blind_spots` are recommended. Empty arrays are acceptable on runs with no validated-secure components or no constraint gaps, but explicit emission is preferred over skipping.
+## 2. Dominant Vulnerability Patterns
 
-**Relationship to the exploitation queue:** The exploitation queue (`auth_exploitation_queue.json`) is produced by calling the `submit_exploitation_queue` tool when your analysis is complete. The 4 tools produce the analysis deliverable Markdown; the structured-output queue is separate and follows the `exploitation_queue_format` schema documented above.
-</deliverable_tools>
+### Pattern 1: Weak Session Management
+- **Description:** A recurring and critical pattern was observed where session cookies lack proper security flags and session identifiers are not rotated after successful authentication.
+- **Implication:** Attackers can hijack user sessions through various vectors including network interception and session fixation attacks.
+- **Representative Findings:** `AUTH-VULN-01`, `AUTH-VULN-02`.
+
+### Pattern 2: Insufficient Rate Limiting on Authentication Endpoints
+- **Description:** Authentication endpoints such as login, password reset, and registration lack proper rate limiting mechanisms.
+- **Implication:** Attackers can perform brute force attacks, credential stuffing, and password spraying without being throttled.
+- **Representative Finding:** `AUTH-VULN-03`.
+
+## 3. Strategic Intelligence for Exploitation
+- **Authentication Method:** The system uses JWT-based authentication with tokens stored in cookies.
+- **Session Token Details:** The session is managed via a JWT stored in a cookie named `session_token`. The XSS specialist noted this cookie lacks the `HttpOnly` flag, making it accessible to script.
+- **Password Policy:** Basic password requirements are enforced client-side but server-side validation appears minimal.
+
+## 4. Secure by Design: Validated Components
+These components were analyzed and found to have robust defenses. They are low-priority for further testing.
+| Component/Flow | Endpoint/File Location | Defense Mechanism Implemented | Verdict |
+|---|---|---|---|
+| Password Hashing | `/controllers/authController.js` | Uses `bcrypt.compare` for constant-time password check. | SAFE |
+| Reset Token Generation | `/services/tokenService.js` | Generates high-entropy cryptographic reset tokens. | SAFE |
+---
+
+</deliverable_instructions>
 
 
 <conclusion_trigger>
 **COMPLETION REQUIREMENTS (ALL must be satisfied):**
 
 1.  **Systematic Analysis:** ALL relevant API endpoints and user-facing features identified in the reconnaissance deliverable must be analyzed for AuthN/AuthZ flaws.
-2.  **Deliverable Emission:** Call the 4 tools (`set_findings_summary`, `set_strategic_intelligence`, `set_safe_vectors`, `set_blind_spots`) exactly once each with their respective section content. `set_findings_summary` and `set_strategic_intelligence` are required; `set_safe_vectors` and `set_blind_spots` are recommended (empty arrays are acceptable but explicit emission is preferred).
+2.  **Deliverable Generation:** Your deliverable must be successfully saved using the save-deliverable CLI tool:
+    - **CHUNKED WRITING (MANDATORY):**
+      1. Use the **Write** tool to create `.shannon/deliverables/auth_analysis_deliverable.md` with the title and first major section
+      2. Use the **Edit** tool to append each remaining section — match the last few lines of the file, then replace with those lines plus the new section content
+      3. Repeat step 2 for all remaining sections
+      4. Run `save-deliverable` with `--type AUTH_ANALYSIS --file-path ".shannon/deliverables/auth_analysis_deliverable.md"`
+      **WARNING:** Do NOT write the entire report in a single tool call — exceeds 32K output token limit. Split into multiple Write/Edit operations.
 
-**Note:** The exploitation queue is produced by calling the `submit_exploitation_queue` tool when your analysis is complete — separate from the tools above. The analysis deliverable Markdown is rendered by the harness after your session ends from the tool calls.
+**Note:** Save your deliverable markdown via save-deliverable first. The exploitation queue is captured automatically at the end of your session.
 
-**ONLY AFTER** both systematic analysis AND the required tool calls have been completed, announce "**AUTH ANALYSIS COMPLETE**" and stop.
+**ONLY AFTER** both systematic analysis AND successful deliverable generation, announce "**AUTH ANALYSIS COMPLETE**" and stop.
 
 **CRITICAL:** After announcing completion, STOP IMMEDIATELY. Do NOT output summaries, recaps, or explanations of your work — the deliverable contains everything needed.
 </conclusion_trigger>

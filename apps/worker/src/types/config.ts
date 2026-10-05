@@ -10,6 +10,29 @@
 
 import type { AssessmentModule, AssessmentScope, AssessmentSurface, TargetEnvironment } from './scopes.js';
 
+export interface DetectionValidationSplunkYamlConfig {
+  management_url: string;
+  telemetry_index: string;
+  alert_index: string;
+  telemetry_sourcetype?: string;
+  alert_sourcetype?: string;
+  token?: string;
+}
+
+export interface DetectionValidationYamlConfig {
+  canary_path?: string;
+  minimum_detection_rate?: number;
+  max_wait_seconds?: number;
+  splunk: DetectionValidationSplunkYamlConfig;
+}
+
+export interface DistributedDetectionValidationConfig {
+  canary_path: string;
+  minimum_detection_rate: number;
+  max_wait_seconds: number;
+  splunk: DetectionValidationSplunkYamlConfig & { token: string };
+}
+
 export interface HttpLoadConfig {
   concurrency?: number;
   requests_per_second?: number;
@@ -122,6 +145,8 @@ export interface Config {
   module_safety?: ModuleSafetyYamlConfig;
   /** Explicitly authorized single-host HTTP load settings. */
   http_load?: HttpLoadConfig;
+  /** Staging-only fixed-corpus alerting effectiveness assessment. */
+  detection_validation?: DetectionValidationYamlConfig;
   /** Whether to run safe, authorized demonstrations of confirmed findings. */
   safe_demonstration?: boolean | 'true' | 'false';
   /** @deprecated Use safe_demonstration. */
@@ -149,6 +174,8 @@ export interface DistributedConfig {
   module_safety?: DistributedModuleSafetyYamlConfig;
   /** Present only when the HTTP load scope is selected. */
   http_load?: DistributedHttpLoadConfig;
+  /** Present only when the alerting-effectiveness scope is selected. */
+  detection_validation?: DistributedDetectionValidationConfig;
   /** Whether to run safe, authorized demonstrations of confirmed findings. */
   safeDemonstration: boolean;
   report: DistributedReportConfig;

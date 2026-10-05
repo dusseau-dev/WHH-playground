@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeDetectionValidationSettings } from './detection-validation.js';
 import {
   assertExclusiveHttpLoadExecution,
   assertHttpLoadAuthorization,
@@ -21,7 +22,7 @@ export const VULNERABILITY_CLASSES = ['injection', 'xss', 'auth', 'authz', 'ssrf
 export const VulnerabilityClassSchema = z.enum(VULNERABILITY_CLASSES);
 export type VulnerabilityClass = z.infer<typeof VulnerabilityClassSchema>;
 
-export const SECRET_FIELDS = ['password', 'totpSecret', 'emailPassword', 'emailTotpSecret'] as const;
+export const SECRET_FIELDS = ['password', 'totpSecret', 'emailPassword', 'emailTotpSecret', 'splunkToken'] as const;
 export const SecretFieldSchema = z.enum(SECRET_FIELDS);
 export type SecretField = z.infer<typeof SecretFieldSchema>;
 
@@ -137,6 +138,23 @@ const SafeProviderConfigSchema = ProviderConfigBaseSchema.omit({
   awsSessionToken: true,
 }).superRefine(validateProviderConfig);
 
+const DetectionValidationConfigSchema = z
+  .object({
+    canaryPath: z.string().min(1).max(1024).optional(),
+    minimumDetectionRate: z.number().min(0).max(1).optional(),
+    maxWaitSeconds: z.number().int().min(30).max(600).optional(),
+    splunk: z
+      .object({
+        managementUrl: z.string().url().max(2048),
+        telemetryIndex: z.string().min(1).max(128),
+        alertIndex: z.string().min(1).max(128),
+        telemetrySourcetype: z.string().min(1).max(128).optional(),
+        alertSourcetype: z.string().min(1).max(128).optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
 const AssessmentConfigBaseSchema = z
   .object({
     description: z.string().trim().min(1).max(500).optional(),
@@ -151,6 +169,7 @@ const AssessmentConfigBaseSchema = z
       })
       .strict()
       .optional(),
+    detectionValidation: DetectionValidationConfigSchema.optional(),
     assessmentModules: z.array(z.enum(assessmentModuleIds)).optional(),
     moduleSafety: z
       .object({
@@ -240,6 +259,28 @@ const AssessmentConfigBaseSchema = z
         message: error instanceof Error ? error.message : String(error),
       });
     }
+    try {
+      const scope = normalizeTestScopeSelection({
+        ...(value.testScopes && { testScopes: value.testScopes }),
+        ...(value.testSurfaces && { testSurfaces: value.testSurfaces }),
+        ...(value.testCategories && { testCategories: value.testCategories }),
+      });
+      const modules = normalizeAssessmentModules({
+        ...(value.assessmentModules && { assessmentModules: value.assessmentModules }),
+        ...(value.moduleSafety && { moduleSafety: value.moduleSafety }),
+      });
+      normalizeDetectionValidationSettings(
+        scope.testScopes,
+        value.detectionValidation,
+        modules.moduleSafety.targetEnvironment,
+      );
+    } catch (error) {
+      context.addIssue({
+        code: 'custom',
+        path: ['detectionValidation'],
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
 export const AssessmentConfigSchema = AssessmentConfigBaseSchema.transform(
@@ -248,6 +289,7 @@ export const AssessmentConfigSchema = AssessmentConfigBaseSchema.transform(
     demonstrate,
     exploit,
     httpLoad: httpLoadInput,
+    detectionValidation: detectionValidationInput,
     assessmentModules,
     moduleSafety,
     ...config
@@ -267,12 +309,18 @@ export const AssessmentConfigSchema = AssessmentConfigBaseSchema.transform(
           })
         : undefined;
     assertExclusiveHttpLoadExecution(scope.testScopes, modules?.assessmentModules ?? []);
+    const detectionValidation = normalizeDetectionValidationSettings(
+      scope.testScopes,
+      detectionValidationInput,
+      (modules ?? normalizeAssessmentModules({})).moduleSafety.targetEnvironment,
+    );
     return {
       ...config,
       testCategories: scope.testCategories,
       testScopes: scope.testScopes,
       testSurfaces: scope.testSurfaces,
       ...(httpLoad && { httpLoad }),
+      ...(detectionValidation && { detectionValidation }),
       ...(modules && modules),
       ...(resolvedSafeDemonstration !== undefined && { safeDemonstration: resolvedSafeDemonstration }),
     };
@@ -292,6 +340,7 @@ export const TargetSecretsSchema = z
       .string()
       .regex(/^[A-Za-z2-7]+=*$/)
       .optional(),
+    splunkToken: z.string().min(1).max(4096).optional(),
   })
   .strict();
 export type TargetSecrets = z.infer<typeof TargetSecretsSchema>;
@@ -324,7 +373,7 @@ export const ProfileDraftSchema = z
     repoPath: z.string().trim().min(1).max(4096).optional(),
     config: AssessmentConfigSchema.optional(),
     secrets: TargetSecretsSchema.optional(),
-    clearSecrets: z.array(SecretFieldSchema).max(4).optional(),
+    clearSecrets: z.array(SecretFieldSchema).max(5).optional(),
   })
   .strict()
   .superRefine(validateSourceMode);
@@ -336,6 +385,7 @@ export const SecretReferencesSchema = z
     totpSecret: z.string().min(1).optional(),
     emailPassword: z.string().min(1).optional(),
     emailTotpSecret: z.string().min(1).optional(),
+    splunkToken: z.string().min(1).optional(),
   })
   .strict();
 export type SecretReferences = z.infer<typeof SecretReferencesSchema>;
@@ -460,6 +510,23 @@ export const RunLaunchSpecSchema = RunLaunchSpecBaseSchema.superRefine((value, c
       code: 'custom',
       path: ['authorizationConfirmed'],
       message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (value.config.detectionValidation && value.authorizationConfirmed !== true) {
+    context.addIssue({
+      code: 'custom',
+      path: ['authorizationConfirmed'],
+      message: 'Detection validation requires ownership or written authorization confirmation',
+    });
+  }
+  if (
+    value.config.detectionValidation &&
+    (!URL.canParse(value.targetUrl) || new URL(value.targetUrl).protocol !== 'https:')
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['targetUrl'],
+      message: 'Detection validation requires an HTTPS target with valid TLS',
     });
   }
 });
@@ -591,6 +658,7 @@ export const WorkflowProgressSchema = z
       )
       .optional(),
     httpLoadStatus: z.enum(['completed', 'interrupted', 'incomplete']).nullable().optional(),
+    detectionValidationStatus: z.enum(['passed', 'failed', 'partial', 'unavailable']).nullable().optional(),
     completedAgents: z.array(z.string()),
     failedAgent: z.string().nullable(),
     error: z.string().nullable(),
@@ -632,6 +700,30 @@ export const TriageVerdictsSchema = z
   .strict();
 export type TriageVerdicts = z.infer<typeof TriageVerdictsSchema>;
 
+export interface DetectionValidationSummary {
+  status: 'passed' | 'failed' | 'partial' | 'unavailable';
+  detectionGapPercentagePoints: number;
+  cohorts: Record<
+    'ai' | 'human',
+    {
+      total: number;
+      detected: number;
+      detectionRate: number;
+      threshold: number;
+      passed: boolean;
+      medianLatencyMs?: number;
+    }
+  >;
+  scenarios: Array<{
+    id: string;
+    cohort: 'ai' | 'human';
+    technique: string;
+    emissionStatus: 'sent' | 'error';
+    detected: boolean;
+    latencyMs?: number;
+  }>;
+}
+
 export interface RunDetail {
   run: RunListItem;
   progress: WorkflowProgress | null;
@@ -641,6 +733,7 @@ export interface RunDetail {
   reportAvailable: boolean;
   reportArtifacts: ReportArtifact[];
   evidenceFiles: string[];
+  detectionValidation?: DetectionValidationSummary;
 }
 
 export const REPORT_ARTIFACT_KINDS = ['markdown', 'pdf', 'sarif'] as const;

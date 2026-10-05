@@ -96,4 +96,33 @@ describe('assessment form scope validation', () => {
       expect.objectContaining({ path: ['elevatedLoadConfirmed'], message: expect.stringMatching(/elevated/i) }),
     );
   });
+
+  it('requires staging and safe Splunk settings for detection validation', () => {
+    const scopes = structuredClone(assessmentDefaults.testScopes);
+    scopes['alerting-effectiveness'] = true;
+    const base = values({
+      testScopes: scopes,
+      splunkManagementUrl: 'https://splunk.example.test:8089',
+      splunkTelemetryIndex: 'waf_events',
+      splunkAlertIndex: 'security_alerts',
+      splunkToken: 'token',
+    });
+
+    expect(assessmentFormSchema.safeParse(base).error?.issues).toContainEqual(
+      expect.objectContaining({ path: ['targetEnvironment'], message: expect.stringMatching(/staging/i) }),
+    );
+    expect(
+      assessmentFormSchema.safeParse({
+        ...base,
+        targetEnvironment: 'staging',
+        splunkManagementUrl: 'http://splunk.test',
+      }).error?.issues,
+    ).toContainEqual(
+      expect.objectContaining({ path: ['splunkManagementUrl'], message: expect.stringMatching(/HTTPS/i) }),
+    );
+    expect(assessmentFormSchema.parse({ ...base, targetEnvironment: 'staging' })).toMatchObject({
+      detectionCanaryPath: '/__shannon__/detection-simulation',
+      detectionMinimumRate: 1,
+    });
+  });
 });

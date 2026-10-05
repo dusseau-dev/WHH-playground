@@ -45,9 +45,13 @@ export class ConfigLoaderService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // parseConfig throws PentestErrors that already name the failure; anything
-      // else reaching here is a parse-time fault.
-      const errorCode = error instanceof PentestError && error.code ? error.code : ErrorCode.CONFIG_PARSE_ERROR;
+      // Determine appropriate error code based on error message
+      let errorCode = ErrorCode.CONFIG_PARSE_ERROR;
+      if (errorMessage.includes('not found') || errorMessage.includes('ENOENT')) {
+        errorCode = ErrorCode.CONFIG_NOT_FOUND;
+      } else if (errorMessage.includes('validation failed')) {
+        errorCode = ErrorCode.CONFIG_VALIDATION_FAILED;
+      }
 
       return err(
         new PentestError(

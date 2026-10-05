@@ -63,16 +63,19 @@ function extractEmbeddedSecrets(raw: Record<string, unknown>): TargetSecrets {
   }
 
   const config = record(raw.config) ?? raw;
+  const detectionValidation = record(config.detection_validation) ?? record(config.detectionValidation);
+  const splunk = record(detectionValidation?.splunk);
+  if (splunk) extracted.splunkToken ??= takeString(splunk, 'token');
   const authentication = record(config.authentication);
   const credentials = record(authentication?.credentials);
-  if (!credentials) return extracted;
-
-  extracted.password ??= takeString(credentials, 'password');
-  extracted.totpSecret ??= takeString(credentials, 'totp_secret') ?? takeString(credentials, 'totpSecret');
-  const emailLogin = record(credentials.email_login) ?? record(credentials.emailLogin);
-  if (emailLogin) {
-    extracted.emailPassword ??= takeString(emailLogin, 'password');
-    extracted.emailTotpSecret ??= takeString(emailLogin, 'totp_secret') ?? takeString(emailLogin, 'totpSecret');
+  if (credentials) {
+    extracted.password ??= takeString(credentials, 'password');
+    extracted.totpSecret ??= takeString(credentials, 'totp_secret') ?? takeString(credentials, 'totpSecret');
+    const emailLogin = record(credentials.email_login) ?? record(credentials.emailLogin);
+    if (emailLogin) {
+      extracted.emailPassword ??= takeString(emailLogin, 'password');
+      extracted.emailTotpSecret ??= takeString(emailLogin, 'totp_secret') ?? takeString(emailLogin, 'totpSecret');
+    }
   }
   return extracted;
 }

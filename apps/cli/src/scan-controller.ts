@@ -5,6 +5,7 @@ import { dump as dumpYaml } from 'js-yaml';
 import {
   type ActivityChunk,
   type AssessmentConfig,
+  type DetectionValidationSummary,
   type LegacyRunRecord,
   LegacyRunRecordSchema,
   type LegacySession,
@@ -34,6 +35,7 @@ import {
   type WorkflowProgress,
   WorkflowProgressSchema,
 } from './contracts.js';
+import type { DetectionValidationSettings } from './detection-validation.js';
 import { createDockerClient, type DockerContainerState, type WorkerOptions } from './docker.js';
 import { buildEnvFlags, loadEnv, resolveProviderCredentialFiles, validateCredentials } from './env.js';
 import { getWorkspacesDir, initHome } from './home.js';
@@ -65,6 +67,7 @@ const SESSION_FILE = 'session.json';
 const WORKFLOW_LOG = 'workflow.log';
 const REPORT_FILE = 'comprehensive_security_assessment_report.md';
 const REPORT_DATA_FILE = 'report.json';
+const DETECTION_VALIDATION_FILE = 'detection-validation.json';
 const PDF_REPORT_FILE = 'comprehensive_security_assessment_report.pdf';
 const FINAL_PDF_REPORT_FILENAME = 'Security-Assessment-Report.pdf';
 const SARIF_REPORT_FILE = 'report.sarif';
@@ -79,6 +82,77 @@ const QUEUE_FILES: Readonly<Record<VulnerabilityClass, string>> = {
   authz: 'authz_exploitation_queue.json',
   ssrf: 'ssrf_exploitation_queue.json',
 };
+
+function detectionValidationSummary(value: unknown): DetectionValidationSummary | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+  const raw = value as Record<string, unknown>;
+  if (
+    !['passed', 'failed', 'partial', 'unavailable'].includes(String(raw.status)) ||
+    typeof raw.detection_gap_percentage_points !== 'number' ||
+    !raw.cohorts ||
+    typeof raw.cohorts !== 'object' ||
+    Array.isArray(raw.cohorts) ||
+    !Array.isArray(raw.scenarios)
+  ) {
+    return;
+  }
+  const cohorts = raw.cohorts as Record<string, unknown>;
+  const parseCohort = (name: 'ai' | 'human') => {
+    const cohort = cohorts[name];
+    if (!cohort || typeof cohort !== 'object' || Array.isArray(cohort)) return;
+    const item = cohort as Record<string, unknown>;
+    if (
+      typeof item.total !== 'number' ||
+      typeof item.detected !== 'number' ||
+      typeof item.detection_rate !== 'number' ||
+      typeof item.threshold !== 'number' ||
+      typeof item.passed !== 'boolean'
+    ) {
+      return;
+    }
+    return {
+      total: item.total,
+      detected: item.detected,
+      detectionRate: item.detection_rate,
+      threshold: item.threshold,
+      passed: item.passed,
+      ...(typeof item.median_latency_ms === 'number' && { medianLatencyMs: item.median_latency_ms }),
+    };
+  };
+  const ai = parseCohort('ai');
+  const human = parseCohort('human');
+  if (!ai || !human) return;
+  const scenarios: DetectionValidationSummary['scenarios'][number][] = [];
+  for (const scenario of raw.scenarios) {
+    if (!scenario || typeof scenario !== 'object' || Array.isArray(scenario)) return;
+    const item = scenario as Record<string, unknown>;
+    if (
+      typeof item.id !== 'string' ||
+      (item.cohort !== 'ai' && item.cohort !== 'human') ||
+      typeof item.technique !== 'string' ||
+      (item.emission_status !== 'sent' && item.emission_status !== 'error') ||
+      typeof item.detected !== 'boolean'
+    ) {
+      return;
+    }
+    const cohort = item.cohort as 'ai' | 'human';
+    const emissionStatus = item.emission_status as 'sent' | 'error';
+    scenarios.push({
+      id: item.id,
+      cohort,
+      technique: item.technique,
+      emissionStatus,
+      detected: item.detected,
+      ...(typeof item.latency_ms === 'number' && { latencyMs: item.latency_ms }),
+    });
+  }
+  return {
+    status: raw.status as DetectionValidationSummary['status'],
+    detectionGapPercentagePoints: raw.detection_gap_percentage_points,
+    cohorts: { ai, human },
+    scenarios,
+  };
+}
 const URL_ONLY_NOTICE =
   'URL-only mode used browser and API observations; code-level coverage and source-location attribution were unavailable.';
 const URL_ONLY_REPORT_CONTEXT = [
@@ -158,6 +232,8 @@ export interface TemporalPipelineInput {
   testSurfaces?: AssessmentTestSurface[];
   httpLoad?: HttpLoadSettings;
   httpLoadAuthorizationConfirmed?: boolean;
+  detectionValidation?: DetectionValidationSettings;
+  detectionValidationAuthorizationConfirmed?: boolean;
   elevatedLoadConfirmed?: boolean;
   assessmentModules?: AssessmentModule[];
   moduleSafety?: ModuleSafetyInput;
@@ -376,6 +452,25 @@ function workerConfig(config: AssessmentConfig, secrets: TargetSecrets): Record<
         duration_seconds: config.httpLoad.durationSeconds,
       },
     }),
+    ...(config.detectionValidation && {
+      detection_validation: {
+        canary_path: config.detectionValidation.canaryPath,
+        minimum_detection_rate: config.detectionValidation.minimumDetectionRate,
+        max_wait_seconds: config.detectionValidation.maxWaitSeconds,
+        splunk: {
+          management_url: config.detectionValidation.splunk.managementUrl,
+          telemetry_index: config.detectionValidation.splunk.telemetryIndex,
+          alert_index: config.detectionValidation.splunk.alertIndex,
+          ...(config.detectionValidation.splunk.telemetrySourcetype && {
+            telemetry_sourcetype: config.detectionValidation.splunk.telemetrySourcetype,
+          }),
+          ...(config.detectionValidation.splunk.alertSourcetype && {
+            alert_sourcetype: config.detectionValidation.splunk.alertSourcetype,
+          }),
+          ...(secrets.splunkToken && { token: secrets.splunkToken }),
+        },
+      },
+    }),
     ...(config.assessmentModules && { assessment_modules: config.assessmentModules }),
     ...(config.moduleSafety && {
       module_safety: {
@@ -453,6 +548,7 @@ function workflowProgress(
     activeModules: [],
     moduleResults: [],
     httpLoadStatus: null,
+    detectionValidationStatus: null,
     completedAgents: [],
     failedAgent: null,
     error,
@@ -702,6 +798,9 @@ export class ScanController {
     if (missingReferences.length > 0) {
       throw new Error(`Target secrets must be supplied again: ${missingReferences.join(', ')}`);
     }
+    if (parsed.config.detectionValidation && !effectiveSecrets.splunkToken) {
+      throw new Error('Detection validation requires a Splunk token');
+    }
 
     this.requireProviderCredentials(parsed.providerConfig);
     const repoPath = parsed.repoPath ? await this.resolveRepository(parsed.repoPath) : undefined;
@@ -835,6 +934,9 @@ export class ScanController {
         loadAuthorization.authorizationConfirmed === true,
         loadAuthorization.elevatedLoadConfirmed === true,
       );
+      if (run.snapshot.config.detectionValidation && loadAuthorization.authorizationConfirmed !== true) {
+        throw new Error('Detection validation requires ownership or written authorization confirmation');
+      }
       this.requireProviderCredentials(providerConfig);
       await this.runtime.prepare(this.version);
       run = await this.updateRun(run, { status: 'pending' }, ['completedAt', 'lastError']);
@@ -906,6 +1008,14 @@ export class ScanController {
     );
     const session = await this.readSession(runId);
     const reportArtifacts = await this.getReportArtifacts(runId);
+    let detectionValidation: DetectionValidationSummary | undefined;
+    try {
+      detectionValidation = detectionValidationSummary(
+        await readJsonIfExists(path.join(deliverables, DETECTION_VALIDATION_FILE)),
+      );
+    } catch {
+      // Detection evidence is optional; a malformed artifact must not hide the rest of Run Detail.
+    }
     return {
       run,
       progress,
@@ -915,6 +1025,7 @@ export class ScanController {
       reportAvailable: reportArtifacts.some((artifact) => artifact.kind === 'markdown'),
       reportArtifacts,
       evidenceFiles,
+      ...(detectionValidation && { detectionValidation }),
     };
   }
 
@@ -1131,6 +1242,10 @@ export class ScanController {
         httpLoad: { ...run.snapshot.config.httpLoad },
         httpLoadAuthorizationConfirmed: loadAuthorization.authorizationConfirmed === true,
         elevatedLoadConfirmed: loadAuthorization.elevatedLoadConfirmed === true,
+      }),
+      ...(run.snapshot.config.detectionValidation && {
+        detectionValidation: { ...run.snapshot.config.detectionValidation },
+        detectionValidationAuthorizationConfirmed: loadAuthorization.authorizationConfirmed === true,
       }),
       ...(run.snapshot.config.assessmentModules && {
         assessmentModules: [...run.snapshot.config.assessmentModules],

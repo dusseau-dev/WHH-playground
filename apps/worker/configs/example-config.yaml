@@ -11,6 +11,25 @@ description: "Next.js e-commerce app on PostgreSQL. Local dev environment — .e
 # Select granular checks in OWASP registry order (optional, default: every available check).
 # test_scopes: [object-access, csrf, sql-nosql-injection, reflected-xss]
 
+# Staging-only A09 detection validation is opt-in and may be selected alone.
+# It sends one calibration request and ten fixed, inert simulations to a same-origin no-op endpoint.
+# The endpoint must use valid TLS, never redirect, and return HTTP 204. The Splunk token requires
+# search access only to the configured telemetry and alert indexes.
+# test_scopes: [alerting-effectiveness]
+# module_safety:
+#   target_environment: staging
+# detection_validation:
+#   canary_path: /__shannon__/detection-simulation
+#   minimum_detection_rate: 1
+#   max_wait_seconds: 180
+#   splunk:
+#     management_url: https://splunk.example.com:8089
+#     telemetry_index: waf_events
+#     alert_index: security_alerts
+#     telemetry_sourcetype: aws:waf      # optional
+#     alert_sourcetype: notable          # optional
+#     token: "replace-with-search-token" # secret; never exported in a profile
+
 # Select live interaction surfaces (optional, default: browser and api-graphql).
 # WebSocket assessment is visible in the UI but is not yet available.
 # test_surfaces: [browser, api-graphql]
@@ -121,12 +140,14 @@ rules:
 # Report filters applied by the report agent when assembling the final report (optional).
 # Example below is illustrative; edit, remove, or add sections as needed.
 # report:
-#   # SARIF 2.1.0 log (report.sarif) beside the report. On by default for exploit runs;
-#   # set "false" to opt out. Ignored when exploit is "false".
-#   sarif: "false"
 #   min_severity: low
 #   min_confidence: low
 #   sarif: false  # Only emitted for safe-demonstration runs with fully validated triage.
 #   guidance: |
 #     Drop findings about missing security headers and rate-limit gaps.
 #     ...
+
+# Pipeline execution settings (optional)
+# pipeline:
+#   retry_preset: subscription          # 'default' or 'subscription' (6h max retry for rate limit recovery)
+#   max_concurrent_pipelines: 2         # 1-5, default: 5 (reduce to lower API usage spikes)

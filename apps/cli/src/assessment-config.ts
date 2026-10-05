@@ -95,6 +95,35 @@ function httpLoadAliases(raw: unknown): Record<string, unknown> | undefined {
   };
 }
 
+function detectionValidationAliases(raw: unknown): Record<string, unknown> | undefined {
+  const settings = object(raw);
+  const splunk = object(settings?.splunk);
+  if (!settings || !splunk) return;
+  return {
+    ...(typeof settings.canaryPath === 'string' && { canaryPath: settings.canaryPath }),
+    ...(typeof settings.canary_path === 'string' && { canaryPath: settings.canary_path }),
+    ...(settings.minimumDetectionRate !== undefined && {
+      minimumDetectionRate: Number(settings.minimumDetectionRate),
+    }),
+    ...(settings.minimum_detection_rate !== undefined && {
+      minimumDetectionRate: Number(settings.minimum_detection_rate),
+    }),
+    ...(settings.maxWaitSeconds !== undefined && { maxWaitSeconds: Number(settings.maxWaitSeconds) }),
+    ...(settings.max_wait_seconds !== undefined && { maxWaitSeconds: Number(settings.max_wait_seconds) }),
+    splunk: {
+      managementUrl: splunk.managementUrl ?? splunk.management_url,
+      telemetryIndex: splunk.telemetryIndex ?? splunk.telemetry_index,
+      alertIndex: splunk.alertIndex ?? splunk.alert_index,
+      ...(typeof (splunk.telemetrySourcetype ?? splunk.telemetry_sourcetype) === 'string' && {
+        telemetrySourcetype: splunk.telemetrySourcetype ?? splunk.telemetry_sourcetype,
+      }),
+      ...(typeof (splunk.alertSourcetype ?? splunk.alert_sourcetype) === 'string' && {
+        alertSourcetype: splunk.alertSourcetype ?? splunk.alert_sourcetype,
+      }),
+    },
+  };
+}
+
 /** Normalize current UI config objects and legacy snake_case worker YAML into one contract. */
 export function normalizeAssessmentConfigObject(config: Record<string, unknown>): AssessmentConfig {
   if (
@@ -102,6 +131,7 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
     'testScopes' in config ||
     'testSurfaces' in config ||
     'httpLoad' in config ||
+    'detectionValidation' in config ||
     'assessmentModules' in config ||
     'moduleSafety' in config ||
     'safeDemonstration' in config ||
@@ -110,11 +140,13 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
   ) {
     const { safeDemonstration: _safeDemonstration, demonstrate: _demonstrate, exploit: _exploit, ...rest } = config;
     const httpLoad = httpLoadAliases(config.httpLoad);
+    const detectionValidation = detectionValidationAliases(config.detectionValidation);
     const moduleSafety = moduleSafetyAliases(config.moduleSafety);
     return AssessmentConfigSchema.parse({
       ...rest,
       ...safeDemonstrationAliases(config),
       ...(httpLoad && { httpLoad }),
+      ...(detectionValidation && { detectionValidation }),
       ...(moduleSafety && { moduleSafety }),
     });
   }
@@ -126,6 +158,7 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
   const pipeline = object(config.pipeline);
   const report = object(config.report);
   const httpLoad = httpLoadAliases(config.http_load);
+  const detectionValidation = detectionValidationAliases(config.detection_validation);
   const moduleSafety = moduleSafetyAliases(config.module_safety);
 
   return AssessmentConfigSchema.parse({
@@ -136,6 +169,7 @@ export function normalizeAssessmentConfigObject(config: Record<string, unknown>)
     ...(Array.isArray(config.test_scopes) && { testScopes: config.test_scopes }),
     ...(Array.isArray(config.test_surfaces) && { testSurfaces: config.test_surfaces }),
     ...(httpLoad && { httpLoad }),
+    ...(detectionValidation && { detectionValidation }),
     ...(Array.isArray(config.assessment_modules) && { assessmentModules: config.assessment_modules }),
     ...(moduleSafety && { moduleSafety }),
     ...safeDemonstrationAliases(config),
@@ -182,6 +216,8 @@ export function parseAssessmentConfigYaml(yaml: string): { config: AssessmentCon
   const credentials = object(authentication?.credentials);
   const emailLogin = object(credentials?.email_login);
   const suppliedSecrets = object(raw.secrets);
+  const detectionValidation = object(raw.detection_validation) ?? object(raw.detectionValidation);
+  const splunk = object(detectionValidation?.splunk);
 
   const embeddedSecrets: TargetSecrets = {};
   if (credentials) {
@@ -195,6 +231,10 @@ export function parseAssessmentConfigYaml(yaml: string): { config: AssessmentCon
     const emailTotpSecret = takeString(emailLogin, 'totp_secret');
     if (emailPassword) embeddedSecrets.emailPassword = emailPassword;
     if (emailTotpSecret) embeddedSecrets.emailTotpSecret = emailTotpSecret;
+  }
+  if (splunk) {
+    const splunkToken = takeString(splunk, 'token');
+    if (splunkToken) embeddedSecrets.splunkToken = splunkToken;
   }
   const secrets = TargetSecretsSchema.parse({ ...(suppliedSecrets ?? {}), ...embeddedSecrets });
 

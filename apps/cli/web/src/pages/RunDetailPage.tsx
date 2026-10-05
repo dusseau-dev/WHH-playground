@@ -61,6 +61,7 @@ const secretLabels: Record<TargetSecretField, string> = {
   totpSecret: "Target TOTP secret",
   emailPassword: "Email account password",
   emailTotpSecret: "Email account TOTP secret",
+  splunkToken: "Splunk search token",
 };
 
 function mergeActivity(current: ActivityEntry[], incoming: ActivityEntry[]): ActivityEntry[] {
@@ -132,6 +133,45 @@ function PipelineTimeline({ stages }: { stages: PipelineStage[] }) {
               ))}
             </div>
           </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DetectionValidationPanel({ result }: { result: NonNullable<RunDetail["detectionValidation"]> }) {
+  const percent = (value: number) => `${Math.round(value * 10_000) / 100}%`;
+  const latency = (value?: number) => value === undefined ? "Not observed" : formatDuration(value);
+  return (
+    <section className="pipeline-section" aria-labelledby="detection-validation-heading">
+      <div className="section-title-row">
+        <h2 id="detection-validation-heading">Detection validation</h2>
+        <span className="finding-meta">
+          <StageIcon status={result.status === "passed" ? "completed" : result.status} />
+          <span>{result.status}</span>
+        </span>
+      </div>
+      <div className="finding-counts" aria-label="Detection validation cohort scores">
+        <strong>AI-authored {result.cohorts.ai.detected}/{result.cohorts.ai.total} · {percent(result.cohorts.ai.detectionRate)}</strong>
+        <span>Human-authored {result.cohorts.human.detected}/{result.cohorts.human.total} · {percent(result.cohorts.human.detectionRate)}</span>
+        <span>Gap {result.detectionGapPercentagePoints} percentage points</span>
+      </div>
+      <div className="finding-list">
+        {result.scenarios.map((scenario) => (
+          <article className="finding-row" key={scenario.id}>
+            <div className="finding-heading">
+              <span className={`severity severity--${scenario.detected ? "low" : "high"}`}>
+                {scenario.emissionStatus === "error" ? "Emission error" : scenario.detected ? "Detected" : "Missed"}
+              </span>
+              <div>
+                <h3>{scenario.technique}</h3>
+                <div className="finding-meta">
+                  <span>{scenario.cohort === "ai" ? "AI-authored" : "Human-authored"}</span>
+                  <span>{latency(scenario.latencyMs)}</span>
+                </div>
+              </div>
+            </div>
+          </article>
         ))}
       </div>
     </section>
@@ -416,6 +456,8 @@ export function RunDetailPage() {
   const canCancel = run.canCancel ?? ["pending", "running"].includes(run.status);
   const canResume = run.canResume ?? ["failed", "cancelled"].includes(run.status);
   const loadSettings = run.scope.httpLoad;
+  const detectionSettings = run.scope.detectionValidation;
+  const requiresAttemptAuthorization = Boolean(loadSettings || detectionSettings);
   const elevatedLoad = loadSettings ? isElevatedHttpLoad(loadSettings) : false;
   const lifecycleError = cancelMutation.error ?? resumeMutation.error;
 
@@ -433,7 +475,7 @@ export function RunDetailPage() {
                 onClick={() => {
                   resumeMutation.reset();
                   if (resumeOpen) setResumeOpen(false);
-                  else if (loadSettings || run.requiredSecretFields.length > 0) setResumeOpen(true);
+                  else if (requiresAttemptAuthorization || run.requiredSecretFields.length > 0) setResumeOpen(true);
                   else resumeMutation.mutate(undefined);
                 }}
               >
@@ -484,16 +526,16 @@ export function RunDetailPage() {
           className="resume-secret-form"
           onSubmit={(event) => {
             event.preventDefault();
-            if (loadSettings && (!resumeLoadAuthorization || (elevatedLoad && !resumeElevatedLoad))) return;
+            if (requiresAttemptAuthorization && (!resumeLoadAuthorization || (elevatedLoad && !resumeElevatedLoad))) return;
             resumeMutation.mutate(resumeSecrets);
           }}
         >
           <div className="resume-secret-heading">
             <KeyRound size={18} aria-hidden="true" />
             <div>
-              <strong>{loadSettings ? "Reconfirm this assessment attempt" : "Re-enter session-only credentials"}</strong>
+              <strong>{requiresAttemptAuthorization ? "Reconfirm this assessment attempt" : "Re-enter session-only credentials"}</strong>
               <span>
-                {loadSettings
+                {requiresAttemptAuthorization
                   ? "Authorization is required again and is not written to the reusable run snapshot."
                   : "Secrets are passed to this attempt and are not written to the run snapshot."}
               </span>
@@ -515,7 +557,7 @@ export function RunDetailPage() {
               </label>
             ))}
           </div>
-          {loadSettings ? (
+          {requiresAttemptAuthorization ? (
             <div className="resume-load-confirmations">
               <label className="compact-check">
                 <input
@@ -524,7 +566,7 @@ export function RunDetailPage() {
                   checked={resumeLoadAuthorization}
                   onChange={(event) => setResumeLoadAuthorization(event.target.checked)}
                 />
-                I reconfirm ownership or written authorization for this load test.
+                I reconfirm ownership or written authorization for this assessment.
               </label>
               {elevatedLoad ? (
                 <label className="compact-check">
@@ -547,7 +589,7 @@ export function RunDetailPage() {
               type="submit"
               variant="primary"
               busy={resumeMutation.isPending}
-              disabled={Boolean(loadSettings && (!resumeLoadAuthorization || (elevatedLoad && !resumeElevatedLoad)))}
+              disabled={Boolean(requiresAttemptAuthorization && (!resumeLoadAuthorization || (elevatedLoad && !resumeElevatedLoad)))}
             >
               Resume attempt
             </Button>
@@ -565,6 +607,7 @@ export function RunDetailPage() {
 
       <RunMetrics run={run} />
       <PipelineTimeline stages={run.stages} />
+      {run.detectionValidation ? <DetectionValidationPanel result={run.detectionValidation} /> : null}
 
       <section className="run-results" aria-labelledby="results-heading">
         <h2 className="sr-only" id="results-heading">

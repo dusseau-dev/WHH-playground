@@ -56,7 +56,7 @@ export const assessmentScopeCatalog = [
   { id: 'A06:2025', title: 'Insecure Design', availability: 'partial' },
   { id: 'A07:2025', title: 'Authentication Failures', availability: 'available' },
   { id: 'A08:2025', title: 'Software or Data Integrity Failures', availability: 'partial' },
-  { id: 'A09:2025', title: 'Security Logging and Alerting Failures', availability: 'coming-soon' },
+  { id: 'A09:2025', title: 'Security Logging and Alerting Failures', availability: 'partial' },
   { id: 'A10:2025', title: 'Mishandling of Exceptional Conditions', availability: 'partial' },
 ] as const satisfies readonly { id: string; title: string; availability: ScopeAvailability }[];
 
@@ -64,13 +64,18 @@ export type OwaspCategory = (typeof assessmentScopeCatalog)[number]['id'];
 
 export const assessmentScopeDefinitions = scopeDefinitions.map(([id, label, owaspId, agent]) => {
   const isHttpLoad = id === 'http-load-capacity';
+  const isDetectionValidation = id === 'alerting-effectiveness';
   return {
     id,
     label,
     owaspId,
-    availability: agent || isHttpLoad ? ('available' as const) : ('coming-soon' as const),
+    availability: agent || isHttpLoad || isDetectionValidation ? ('available' as const) : ('coming-soon' as const),
     ...(agent && { agent }),
     ...(isHttpLoad && { executor: 'http-load' as const, bulkSelectable: false as const }),
+    ...(isDetectionValidation && {
+      executor: 'detection-validation' as const,
+      bulkSelectable: false as const,
+    }),
   };
 });
 

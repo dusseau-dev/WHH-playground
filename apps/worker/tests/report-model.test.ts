@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { type AddFindingInput, createFindingCollector } from '../src/collectors/finding-collector.js';
 import { attachQueueCodeLocations } from '../src/services/code-location-join.js';
+import type { DetectionValidationResult } from '../src/services/detection-validation-runner.js';
 import { reconcileReportFindings } from '../src/services/report-reconciliation.js';
 import { type ReportData, renderReport } from '../src/services/report-renderer.js';
 import type { HttpLoadResult } from '../src/types/http-load.js';
@@ -29,6 +30,58 @@ const completedHttpLoadResult: HttpLoadResult = {
   minimum_latency_ms: 12.5,
   maximum_latency_ms: 240.75,
   status_counts: { '200': 145, '503': 4 },
+};
+
+const failedDetectionValidationResult: DetectionValidationResult = {
+  schema_version: 1,
+  corpus_version: '1',
+  corpus_sha256: 'c'.repeat(64),
+  status: 'failed',
+  target: 'https://target.test',
+  started_at: '2026-09-29T12:00:00.000Z',
+  completed_at: '2026-09-29T12:00:30.000Z',
+  run_marker: 'shn-run-0123456789abcdef01234567',
+  minimum_detection_rate: 1,
+  calibration: {
+    sent_at: '2026-09-29T12:00:00.000Z',
+    http_status: 204,
+    telemetry_observed: true,
+    first_seen_at: '2026-09-29T12:00:01.000Z',
+    latency_ms: 1000,
+  },
+  cohorts: {
+    ai: { total: 5, detected: 4, detection_rate: 0.8, threshold: 1, passed: false, median_latency_ms: 2100 },
+    human: { total: 5, detected: 5, detection_rate: 1, threshold: 1, passed: true, median_latency_ms: 1800 },
+  },
+  detection_gap_percentage_points: 20,
+  scenarios: [
+    {
+      id: 'credential-submission-ai',
+      pair_id: 'credential-submission',
+      cohort: 'ai',
+      technique: 'Fake credential submission',
+      fixture_sha256: 'a'.repeat(64),
+      marker: 'shn-sim-0123456789abcdef01234567',
+      emission_status: 'sent',
+      sent_at: '2026-09-29T12:00:02.000Z',
+      http_status: 204,
+      detected: false,
+    },
+    {
+      id: 'credential-submission-human',
+      pair_id: 'credential-submission',
+      cohort: 'human',
+      technique: 'Fake credential submission',
+      fixture_sha256: 'b'.repeat(64),
+      marker: 'shn-sim-abcdef0123456789abcdef01',
+      emission_status: 'sent',
+      sent_at: '2026-09-29T12:00:03.000Z',
+      http_status: 204,
+      detected: true,
+      first_seen_at: '2026-09-29T12:00:05.000Z',
+      latency_ms: 2000,
+    },
+  ],
 };
 
 function finding(id: string, severity: AddFindingInput['severity'] = 'high'): AddFindingInput {
@@ -285,5 +338,32 @@ describe('deterministic markdown report', () => {
     expect(rendered).toContain('observations from this bounded run');
     expect(rendered).not.toContain('token');
     expect(rendered).not.toMatch(/proved capacity|proven capacity|resilien(?:t|ce)/i);
+  });
+
+  it('renders detection validation scores, gap, latency, and scenario outcomes without causal claims', () => {
+    const data: ReportData = {
+      report_meta: {
+        target: 'https://target.test',
+        assessment_date: '2026-09-29',
+        scope: 'Alerting effectiveness',
+        executive_summary: 'A fixed paired detection simulation was assessed.',
+        safe_demonstration: false,
+        source_mode: 'url-only',
+        validation_state: 'validated',
+      },
+      findings: [],
+      ruled_out: [],
+      not_assessed: [],
+      scope_coverage: buildScopeCoverage(['alerting-effectiveness'], [], ['alerting-effectiveness']),
+      detection_validation: failedDetectionValidationResult,
+      triage_status: 'validated',
+    };
+
+    const rendered = renderReport(data);
+    expect(rendered).toContain('## Detection Validation');
+    expect(rendered).toContain('| AI-authored | 4/5 | 80% | 100% | Failed | 2,100 ms |');
+    expect(rendered).toContain('| Detection gap | 20 percentage points |');
+    expect(rendered).toContain('| credential\\-submission\\-human | Human-authored | Detected | 2,000 ms |');
+    expect(rendered).not.toMatch(/causal|uplift|evasion score/i);
   });
 });

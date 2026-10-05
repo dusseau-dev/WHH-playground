@@ -11,7 +11,7 @@ export const OWASP_CATEGORY_REGISTRY = [
   { id: 'A06:2025', title: 'Insecure Design', availability: 'partial' },
   { id: 'A07:2025', title: 'Authentication Failures', availability: 'available' },
   { id: 'A08:2025', title: 'Software or Data Integrity Failures', availability: 'partial' },
-  { id: 'A09:2025', title: 'Security Logging and Alerting Failures', availability: 'coming-soon' },
+  { id: 'A09:2025', title: 'Security Logging and Alerting Failures', availability: 'partial' },
   { id: 'A10:2025', title: 'Mishandling of Exceptional Conditions', availability: 'partial' },
 ] as const satisfies readonly { id: string; title: string; availability: ScopeAvailability }[];
 
@@ -154,7 +154,14 @@ export const ASSESSMENT_SCOPE_REGISTRY = [
     agent: 'injection',
   },
   { id: 'security-event-logging', label: 'Security-event logging', owaspId: 'A09:2025', availability: 'coming-soon' },
-  { id: 'alerting-effectiveness', label: 'Alerting effectiveness', owaspId: 'A09:2025', availability: 'coming-soon' },
+  {
+    id: 'alerting-effectiveness',
+    label: 'Alerting effectiveness',
+    owaspId: 'A09:2025',
+    availability: 'available',
+    executor: 'detection-validation',
+    bulkSelectable: false,
+  },
   { id: 'audit-trail-integrity', label: 'Audit-trail integrity', owaspId: 'A09:2025', availability: 'coming-soon' },
   { id: 'verbose-errors', label: 'Verbose errors', owaspId: 'A10:2025', availability: 'available', agent: 'injection' },
   { id: 'fail-open', label: 'Fail-open behavior', owaspId: 'A10:2025', availability: 'available', agent: 'authz' },
@@ -164,7 +171,7 @@ export const ASSESSMENT_SCOPE_REGISTRY = [
   owaspId: OwaspCategoryId;
   availability: 'available' | 'coming-soon';
   agent?: VulnClass;
-  executor?: 'http-load';
+  executor?: 'http-load' | 'detection-validation';
   bulkSelectable?: boolean;
 }[];
 

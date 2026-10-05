@@ -3,6 +3,11 @@ import { defineQuery } from '@temporalio/workflow';
 export type { AgentMetrics } from '../types/metrics.js';
 
 import type { DistributedConfig, PipelineConfig, ProviderConfig, SourceMode, VulnClass } from '../types/config.js';
+import {
+  type DetectionValidationSettings,
+  type DetectionValidationStatus,
+  normalizeDetectionValidationSettings,
+} from '../types/detection-validation.js';
 import type { ErrorCode } from '../types/errors.js';
 import {
   assertExclusiveHttpLoadExecution,
@@ -67,6 +72,10 @@ export interface PipelineInput {
   httpLoad?: Partial<HttpLoadSettings>;
   /** Run-time ownership or written-authorization acknowledgement. */
   httpLoadAuthorizationConfirmed?: boolean;
+  /** Staging-only settings for the dedicated detection-validation executor. */
+  detectionValidation?: DetectionValidationSettings;
+  /** Ephemeral ownership or written-authorization acknowledgement. */
+  detectionValidationAuthorizationConfirmed?: boolean;
   /** Additional acknowledgement required above elevated-load thresholds. */
   elevatedLoadConfirmed?: boolean;
   safeDemonstration?: boolean; // false skips the safe-demonstration phase
@@ -117,6 +126,8 @@ export interface PipelineState {
   moduleResults: ModuleExecutionResult[];
   /** Evidence-backed outcome for the explicit HTTP load activity. */
   httpLoadStatus: HttpLoadStatus | null;
+  /** Evidence-backed outcome for the dedicated detection-validation executor. */
+  detectionValidationStatus: DetectionValidationStatus | null;
   summary: PipelineSummary | null;
 }
 
@@ -272,6 +283,36 @@ export function normalizeCliPipelineInput(input: PipelineInput): NormalizedPipel
   const httpLoadAuthorizationConfirmed = httpLoad ? input.httpLoadAuthorizationConfirmed === true : false;
   const elevatedLoadConfirmed = httpLoad ? input.elevatedLoadConfirmed === true : false;
   assertHttpLoadAuthorization(httpLoad, httpLoadAuthorizationConfirmed, elevatedLoadConfirmed);
+  const distributedDetectionValidation = input.configData?.detection_validation;
+  const detectionValidation = normalizeDetectionValidationSettings(
+    assessmentScope.testScopes,
+    input.detectionValidation ??
+      (distributedDetectionValidation
+        ? {
+            canaryPath: distributedDetectionValidation.canary_path,
+            minimumDetectionRate: distributedDetectionValidation.minimum_detection_rate,
+            maxWaitSeconds: distributedDetectionValidation.max_wait_seconds,
+            splunk: {
+              managementUrl: distributedDetectionValidation.splunk.management_url,
+              telemetryIndex: distributedDetectionValidation.splunk.telemetry_index,
+              alertIndex: distributedDetectionValidation.splunk.alert_index,
+              ...(distributedDetectionValidation.splunk.telemetry_sourcetype && {
+                telemetrySourcetype: distributedDetectionValidation.splunk.telemetry_sourcetype,
+              }),
+              ...(distributedDetectionValidation.splunk.alert_sourcetype && {
+                alertSourcetype: distributedDetectionValidation.splunk.alert_sourcetype,
+              }),
+            },
+          }
+        : undefined),
+    modules.moduleSafety.targetEnvironment,
+  );
+  if (detectionValidation && input.detectionValidationAuthorizationConfirmed !== true) {
+    throw new Error('Detection validation requires ownership or written authorization confirmation');
+  }
+  if (detectionValidation && new URL(input.webUrl).protocol !== 'https:') {
+    throw new Error('Detection validation requires an HTTPS target with valid TLS');
+  }
   const { exploit: _legacyExploit, ...inputWithoutLegacyFlag } = input;
 
   const normalized: PipelineInput = {
@@ -284,6 +325,8 @@ export function normalizeCliPipelineInput(input: PipelineInput): NormalizedPipel
     assessmentModules: modules.assessmentModules,
     moduleSafety: modules.moduleSafety,
     ...(httpLoad && { httpLoad }),
+    ...(detectionValidation && { detectionValidation }),
+    ...(detectionValidation && { detectionValidationAuthorizationConfirmed: true }),
     httpLoadAuthorizationConfirmed,
     elevatedLoadConfirmed,
     ...(workingDirectory !== undefined && { workingDirectory }),

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { normalizeDetectionValidationSettings } from '../src/detection-validation.js';
 import {
   assessmentModuleDefinitions,
   assessmentScopeCatalog,
@@ -30,7 +31,7 @@ describe('CLI security scope catalog', () => {
     ]);
     expect(
       assessmentScopeCatalog.filter(({ availability }) => availability === 'coming-soon').map(({ id }) => id),
-    ).toEqual(['A03:2025', 'A09:2025']);
+    ).toEqual(['A03:2025']);
   });
 
   it('defaults to available checks and surfaces only', () => {
@@ -49,6 +50,22 @@ describe('CLI security scope catalog', () => {
       bulkSelectable: false,
     });
     expect(availableTestScopes).not.toContain('http-load-capacity');
+  });
+
+  it('exposes alerting effectiveness as an opt-in activity-backed check', () => {
+    expect(assessmentScopeDefinitions.find(({ id }) => id === 'alerting-effectiveness')).toEqual({
+      id: 'alerting-effectiveness',
+      label: 'Alerting effectiveness',
+      owaspId: 'A09:2025',
+      availability: 'available',
+      executor: 'detection-validation',
+      bulkSelectable: false,
+    });
+    expect(availableTestScopes).not.toContain('alerting-effectiveness');
+    expect(normalizeTestScopeSelection({ testScopes: ['alerting-effectiveness'] })).toMatchObject({
+      testScopes: ['alerting-effectiveness'],
+      testCategories: [],
+    });
   });
 
   it('round-trips legacy category expansion through execution-lane derivation', () => {
@@ -101,6 +118,70 @@ describe('CLI security scope catalog', () => {
   it('rejects unknown granular and legacy identifiers from untyped callers', () => {
     expect(() => normalizeTestScopeSelection({ testScopes: ['unknown-scope' as never] })).toThrow(/unknown/i);
     expect(() => normalizeTestScopeSelection({ testCategories: ['unknown-lane' as never] })).toThrow(/unknown/i);
+  });
+});
+
+describe('CLI detection validation settings', () => {
+  const splunk = {
+    managementUrl: 'https://splunk.example.test:8089',
+    telemetryIndex: 'waf_events',
+    alertIndex: 'security_alerts',
+    telemetrySourcetype: 'aws:waf',
+  };
+
+  it('normalizes safe defaults only for the selected staging scope', () => {
+    expect(normalizeDetectionValidationSettings(['alerting-effectiveness'], { splunk }, 'staging')).toEqual({
+      canaryPath: '/__shannon__/detection-simulation',
+      minimumDetectionRate: 1,
+      maxWaitSeconds: 180,
+      splunk,
+    });
+    expect(normalizeDetectionValidationSettings(['csrf'], undefined, 'production')).toBeUndefined();
+  });
+
+  it('fails closed on missing, production, or unsafe settings', () => {
+    expect(() => normalizeDetectionValidationSettings(['alerting-effectiveness'], undefined, 'staging')).toThrow(
+      /requires detection validation configuration/i,
+    );
+    expect(() => normalizeDetectionValidationSettings(['alerting-effectiveness'], { splunk }, 'production')).toThrow(
+      /staging/i,
+    );
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { canaryPath: 'https://evil.test/path', splunk },
+        'staging',
+      ),
+    ).toThrow(/relative/i);
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { canaryPath: '/safe/%252e%252e/admin', splunk },
+        'staging',
+      ),
+    ).toThrow(/traversal/i);
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { canaryPath: '/safe/%5cadmin', splunk },
+        'staging',
+      ),
+    ).toThrow(/separator/i);
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { splunk: { ...splunk, managementUrl: 'http://splunk.example.test:8089' } },
+        'staging',
+      ),
+    ).toThrow(/https/i);
+    expect(() =>
+      normalizeDetectionValidationSettings(
+        ['alerting-effectiveness'],
+        { splunk: { ...splunk, alertIndex: 'alerts | delete' } },
+        'staging',
+      ),
+    ).toThrow(/index/i);
+    expect(() => normalizeDetectionValidationSettings(['csrf'], { splunk }, 'staging')).toThrow(/requires.*scope/i);
   });
 });
 

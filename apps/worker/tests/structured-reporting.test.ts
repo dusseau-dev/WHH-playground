@@ -5,6 +5,7 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AddFindingInput } from '../src/collectors/finding-collector.js';
 import { createReportMetaCollector } from '../src/collectors/report-meta-collector.js';
+import type { DetectionValidationResult } from '../src/services/detection-validation-runner.js';
 import { injectAssessmentModeSections, injectModelIntoReport } from '../src/services/reporting.js';
 import {
   createStructuredReportSession,
@@ -110,6 +111,78 @@ describe('report metadata collector', () => {
 });
 
 describe('structured report pipeline finalizer', () => {
+  const detectionResult: DetectionValidationResult = {
+    schema_version: 1,
+    corpus_version: '1',
+    corpus_sha256: 'c'.repeat(64),
+    status: 'failed',
+    target: 'https://target.test',
+    started_at: '2026-09-29T12:00:00.000Z',
+    completed_at: '2026-09-29T12:00:30.000Z',
+    run_marker: 'shn-run-0123456789abcdef01234567',
+    minimum_detection_rate: 1,
+    calibration: { sent_at: '2026-09-29T12:00:00.000Z', http_status: 204, telemetry_observed: true },
+    cohorts: {
+      ai: { total: 5, detected: 4, detection_rate: 0.8, threshold: 1, passed: false },
+      human: { total: 5, detected: 5, detection_rate: 1, threshold: 1, passed: true },
+    },
+    detection_gap_percentage_points: 20,
+    scenarios: [],
+  };
+
+  it('persists failed threshold evidence and counts A09 as completed', async () => {
+    const deliverablesPath = await makeDeliverables();
+    const session = await createStructuredReportSession({
+      deliverablesPath,
+      webUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      safeDemonstration: false,
+      triageRan: false,
+      selectedVulnClasses: [],
+      selectedTestScopes: ['alerting-effectiveness'],
+      detectionValidationResult: detectionResult,
+    });
+    await callTool(requiredTool(session.tools, 0), {
+      target: 'https://target.test',
+      assessment_date: '2026-09-29',
+      scope: 'Alerting effectiveness',
+      executive_summary: 'A paired simulation was assessed.',
+    });
+
+    const report = await session.finalize(logger);
+    expect(report.detection_validation).toEqual(detectionResult);
+    expect(report.scope_coverage?.find(({ owasp_id }) => owasp_id === 'A09:2025')).toMatchObject({
+      status: 'completed',
+      completed_scopes: ['alerting-effectiveness'],
+    });
+  });
+
+  it('keeps A09 incomplete for partial detection evidence', async () => {
+    const deliverablesPath = await makeDeliverables();
+    const session = await createStructuredReportSession({
+      deliverablesPath,
+      webUrl: 'https://target.test',
+      sourceMode: 'url-only',
+      safeDemonstration: false,
+      triageRan: false,
+      selectedVulnClasses: [],
+      selectedTestScopes: ['alerting-effectiveness'],
+      detectionValidationResult: { ...detectionResult, status: 'partial' },
+    });
+    await callTool(requiredTool(session.tools, 0), {
+      target: 'https://target.test',
+      assessment_date: '2026-09-29',
+      scope: 'Alerting effectiveness',
+      executive_summary: 'The paired simulation was incomplete.',
+    });
+
+    const report = await session.finalize(logger);
+    expect(report.scope_coverage?.find(({ owasp_id }) => owasp_id === 'A09:2025')).toMatchObject({
+      status: 'incomplete',
+      completed_scopes: [],
+    });
+  });
+
   it('rejects malformed optional HTTP load report data', () => {
     expect(
       isReportData({

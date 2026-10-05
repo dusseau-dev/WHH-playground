@@ -18,6 +18,18 @@ export { AgentExecutionService } from './agent-execution.js';
 export { ConfigLoaderService } from './config-loader.js';
 export type { ContainerDependencies } from './container.js';
 export { Container, getContainer, getOrCreateContainer, removeContainer, setContainerFactory } from './container.js';
+export {
+  DETECTION_CORPUS_VERSION,
+  DETECTION_VALIDATION_CORPUS,
+} from './detection-validation-corpus.js';
+export {
+  DETECTION_VALIDATION_RESULT_FILENAME,
+  detectionCorpusHash,
+  detectionFixtureHash,
+  isDetectionValidationResult,
+  loadDetectionValidationResult,
+  runDetectionValidation,
+} from './detection-validation-runner.js';
 export { ExploitationCheckerService } from './exploitation-checker.js';
 export {
   HTTP_LOAD_RESULT_PATH,

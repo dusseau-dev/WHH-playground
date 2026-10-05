@@ -65,7 +65,7 @@ export type StageStatus =
 export type ModuleExecutionStatus = 'completed' | 'partial' | 'failed' | 'skipped' | 'unavailable';
 export type FindingVerdict = 'confirmed' | 'unvalidated' | 'needs-review' | 'ruled-out';
 export type SecretPersistence = 'keychain' | 'session' | 'unavailable';
-export type TargetSecretField = 'password' | 'totpSecret' | 'emailPassword' | 'emailTotpSecret';
+export type TargetSecretField = 'password' | 'totpSecret' | 'emailPassword' | 'emailTotpSecret' | 'splunkToken';
 export type TargetSecrets = Partial<Record<TargetSecretField, string>>;
 export type OpenAIFormat = 'chat-completions' | 'responses';
 
@@ -108,8 +108,46 @@ export interface RunScope {
   safeDemonstration: boolean;
   concurrency: number;
   httpLoad?: import('../../../src/http-load').HttpLoadSettings;
+  detectionValidation?: DetectionValidationSettings;
   assessmentModules: AssessmentModule[];
   moduleSafety: ModuleSafetyConfig;
+}
+
+export interface DetectionValidationSettings {
+  canaryPath: string;
+  minimumDetectionRate: number;
+  maxWaitSeconds: number;
+  splunk: {
+    managementUrl: string;
+    telemetryIndex: string;
+    alertIndex: string;
+    telemetrySourcetype?: string;
+    alertSourcetype?: string;
+  };
+}
+
+export interface DetectionValidationSummary {
+  status: 'passed' | 'failed' | 'partial' | 'unavailable';
+  detectionGapPercentagePoints: number;
+  cohorts: Record<
+    'ai' | 'human',
+    {
+      total: number;
+      detected: number;
+      detectionRate: number;
+      threshold: number;
+      passed: boolean;
+      medianLatencyMs?: number;
+    }
+  >;
+  scenarios: Array<{
+    id: string;
+    cohort: 'ai' | 'human';
+    technique: string;
+    emissionStatus: 'sent' | 'error';
+    detected: boolean;
+    latencyMs?: number;
+  }>;
 }
 
 export interface RunProgress {
@@ -125,6 +163,7 @@ export interface RunProgress {
     evidencePath?: string;
   }>;
   httpLoadStatus: 'completed' | 'interrupted' | 'incomplete' | null;
+  detectionValidationStatus: DetectionValidationSummary['status'] | null;
 }
 
 export interface RunMetrics {
@@ -197,6 +236,7 @@ export interface RunDetail extends RunSummary {
   reportAvailable: boolean;
   reportArtifacts: ReportArtifact[];
   requiredSecretFields: TargetSecretField[];
+  detectionValidation?: DetectionValidationSummary;
   failure?: { code?: string; message: string };
 }
 
@@ -254,7 +294,7 @@ export interface AssessmentConfiguration {
   authentication?: AuthenticationConfig;
   rules: AssessmentRules;
   report: ReportFilters;
-  secrets?: { password?: string; totpSecret?: string };
+  secrets?: TargetSecrets;
 }
 
 export interface ProviderConfig {
@@ -286,7 +326,7 @@ export interface ProfileSummary {
   targetUrl: string;
   sourceMode: SourceMode;
   updatedAt: string;
-  secretState: { password: SecretState; totp: SecretState };
+  secretState: { password: SecretState; totp: SecretState; splunkToken: SecretState };
 }
 
 export interface Profile extends ProfileSummary {
@@ -300,7 +340,7 @@ export interface Profile extends ProfileSummary {
 
 export interface SaveProfileRequest extends AssessmentConfiguration {
   name: string;
-  clearSecrets?: Array<'password' | 'totpSecret'>;
+  clearSecrets?: TargetSecretField[];
 }
 
 export interface ApiErrorBody {

@@ -29,6 +29,11 @@ import type { CheckpointContext } from '../interfaces/checkpoint-provider.js';
 import { DEFAULT_DELIVERABLES_SUBDIR, deliverablesDir, resolveSessionJsonPath } from '../paths.js';
 import { loadAssessmentModuleResults, runAssessmentModules } from '../services/assessment-module-runner.js';
 import { getContainer, getOrCreateContainer, removeContainer } from '../services/container.js';
+import {
+  type DetectionValidationResult,
+  loadDetectionValidationResult,
+  runDetectionValidation,
+} from '../services/detection-validation-runner.js';
 import { classifyErrorForTemporal, PentestError } from '../services/error-handling.js';
 import { ExploitationCheckerService } from '../services/exploitation-checker.js';
 import { renderFindingsFromQueues } from '../services/findings-renderer.js';
@@ -42,7 +47,11 @@ import {
   createExactValueRedactor,
 } from '../services/redaction.js';
 import { assembleFinalReport, injectAssessmentModeSections, injectModelIntoReport } from '../services/reporting.js';
-import { createStructuredReportSession, synchronizeHttpLoadReportFiles } from '../services/structured-report.js';
+import {
+  createStructuredReportSession,
+  synchronizeDetectionValidationReportFiles,
+  synchronizeHttpLoadReportFiles,
+} from '../services/structured-report.js';
 import { validateAuthentication } from '../services/validate-authentication.js';
 import { AGENTS } from '../session-manager.js';
 import type { AgentName } from '../types/agents.js';
@@ -56,6 +65,7 @@ import {
   type SourceMode,
   type VulnClass,
 } from '../types/config.js';
+import type { DetectionValidationSettings } from '../types/detection-validation.js';
 import { ErrorCode } from '../types/errors.js';
 import { HTTP_LOAD_SCOPE, type HttpLoadResult, type HttpLoadSettings } from '../types/http-load.js';
 import { isErr } from '../types/result.js';
@@ -133,6 +143,10 @@ export interface ActivityInput {
   httpLoadAuthorizationConfirmed?: boolean;
   /** Ephemeral acknowledgement for settings above elevated thresholds. */
   elevatedLoadConfirmed?: boolean;
+  /** Normalized staging-only detection validation parameters. */
+  detectionValidation?: DetectionValidationSettings;
+  /** Ephemeral ownership or written-authorization acknowledgement. */
+  detectionValidationAuthorizationConfirmed?: boolean;
 }
 
 interface AgentActivityExtensions {
@@ -399,6 +413,9 @@ export async function runReportAgent(
   triageRan: boolean,
 ): Promise<AgentMetrics> {
   const httpLoadResult = input.httpLoad ? await readHttpLoadResult(input.workingDirectory) : undefined;
+  const detectionValidationResult = input.detectionValidation
+    ? await loadDetectionValidationResult(deliverablesDir(input.workingDirectory, input.deliverablesSubdir))
+    : undefined;
   const reportSession = await createStructuredReportSession({
     deliverablesPath: deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
     webUrl: input.webUrl,
@@ -409,6 +426,7 @@ export async function runReportAgent(
     ...(input.testScopes && { selectedTestScopes: input.testScopes }),
     ...(input.assessmentModules && { selectedAssessmentModules: input.assessmentModules }),
     ...(httpLoadResult && { httpLoadResult }),
+    ...(detectionValidationResult && { detectionValidationResult }),
   });
   return runAgentActivity('report', input, {
     callerTools: reportSession.tools,
@@ -487,6 +505,58 @@ export async function runAssessmentModulesActivity(rawInput: ActivityInput): Pro
 /** Read prior module evidence without executing scanners or generating target traffic. */
 export async function loadAssessmentModuleResultsActivity(input: ActivityInput): Promise<ModuleExecutionResult[]> {
   return loadAssessmentModuleResults(deliverablesDir(input.workingDirectory, input.deliverablesSubdir));
+}
+
+/** Execute the fixed, inert detection-validation corpus without failing the workflow on a threshold miss. */
+export async function runDetectionValidationActivity(rawInput: ActivityInput): Promise<DetectionValidationResult> {
+  if (!rawInput.detectionValidation || rawInput.detectionValidationAuthorizationConfirmed !== true) {
+    throw ApplicationFailure.nonRetryable(
+      'Detection validation requires normalized settings and authorization confirmation',
+      'DetectionValidationConfigurationError',
+    );
+  }
+  const input = await hydratePipelineCredentials(rawInput);
+  const container = getOrCreateContainer(input.workflowId, buildSessionMetadata(input), buildContainerConfig(input));
+  const configResult = await container.configLoader.loadOptional(
+    input.configPath,
+    input.configData,
+    input.configYAML,
+    input.sourceMode,
+  );
+  if (isErr(configResult)) {
+    throw ApplicationFailure.nonRetryable(configResult.error.message, 'DetectionValidationConfigurationError');
+  }
+  const splunkToken = configResult.value?.detection_validation?.splunk.token;
+  if (!splunkToken) {
+    throw ApplicationFailure.nonRetryable(
+      'Detection validation requires a Splunk token in the protected run configuration',
+      'DetectionValidationConfigurationError',
+    );
+  }
+
+  const startedAt = Date.now();
+  const heartbeatInterval = setInterval(() => {
+    heartbeat({ phase: 'detection-validation', elapsedSeconds: Math.floor((Date.now() - startedAt) / 1_000) });
+  }, HEARTBEAT_INTERVAL_MS);
+  try {
+    return await runDetectionValidation({
+      webUrl: input.webUrl,
+      workflowId: input.workflowId,
+      deliverablesPath: deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
+      settings: rawInput.detectionValidation,
+      splunkToken,
+      signal: Context.current().cancellationSignal,
+    });
+  } finally {
+    clearInterval(heartbeatInterval);
+  }
+}
+
+/** Read prior evidence without re-emitting calibration or scenario traffic. */
+export async function loadDetectionValidationResultActivity(
+  input: ActivityInput,
+): Promise<DetectionValidationResult | null> {
+  return loadDetectionValidationResult(deliverablesDir(input.workingDirectory, input.deliverablesSubdir));
 }
 
 /** Execute the explicitly authorized, single-host HTTP load assessment once. */
@@ -896,6 +966,19 @@ export async function injectReportModeSectionsActivity(input: ActivityInput): Pr
         if (synchronized) logger.info('Synchronized HTTP load evidence into the canonical report');
       }
     }
+    if (input.detectionValidation) {
+      const result = await loadDetectionValidationResult(
+        deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
+      );
+      if (result) {
+        const synchronized = await synchronizeDetectionValidationReportFiles(
+          deliverablesDir(input.workingDirectory, input.deliverablesSubdir),
+          input.testScopes ?? ['alerting-effectiveness'],
+          result,
+        );
+        if (synchronized) logger.info('Synchronized detection-validation evidence into the canonical report');
+      }
+    }
     await injectAssessmentModeSections(input.workingDirectory, input.deliverablesSubdir, input.sourceMode, logger);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -1108,8 +1191,24 @@ function stableStringify(value: unknown): string {
 }
 
 function nonSecretRunConfig(config: DistributedConfig | null): unknown {
-  const authentication = config?.authentication;
-  if (!config || !authentication) return config;
+  if (!config) return config;
+  const authentication = config.authentication;
+  const detectionValidation = config.detection_validation;
+  const safeDetectionValidation = detectionValidation
+    ? {
+        ...detectionValidation,
+        splunk: {
+          ...detectionValidation.splunk,
+          token: undefined,
+        },
+      }
+    : undefined;
+  if (!authentication) {
+    return {
+      ...config,
+      ...(safeDetectionValidation && { detection_validation: safeDetectionValidation }),
+    };
+  }
   const {
     email_login: emailLogin,
     password: _password,
@@ -1118,6 +1217,7 @@ function nonSecretRunConfig(config: DistributedConfig | null): unknown {
   } = authentication.credentials;
   return {
     ...config,
+    ...(safeDetectionValidation && { detection_validation: safeDetectionValidation }),
     authentication: {
       ...authentication,
       credentials: {

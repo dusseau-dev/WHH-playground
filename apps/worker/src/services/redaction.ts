@@ -26,6 +26,7 @@ export function collectConfiguredSecrets(
     auth?.totp_secret,
     auth?.email_login?.password,
     auth?.email_login?.totp_secret,
+    config?.detection_validation?.splunk.token,
     apiKey,
     providerConfig?.apiKey,
     providerConfig?.awsAccessKeyId,
