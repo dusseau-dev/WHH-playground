@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "test": "vitest run --exclude 'tests/integration/**'",
+    "test": "vitest run --exclude \"tests/integration/**\"",
     "test:integration": "vitest run tests/integration",
     "clean": "rm -rf dist"
   },
