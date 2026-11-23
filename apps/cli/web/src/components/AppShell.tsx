@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, FlaskConical, Menu, Settings2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import bannerUrl from "../../../../../assets/shannon-banner.png";
+import bannerUrl from "../../../../../assets/dora-banner.png";
 import { api } from "../lib/api";
 
 const navigation = [
@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <header className="mobile-header">
-        <img src={bannerUrl} alt="Shannon" className="mobile-brand" />
+        <img src={bannerUrl} alt="Dora" className="mobile-brand" />
         <button
           className="icon-button"
           type="button"
@@ -38,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <aside className={`sidebar${mobileOpen ? " sidebar--open" : ""}`} aria-label="Primary navigation">
         <div className="brand-block">
-          <img src={bannerUrl} alt="Shannon" className="brand-image" />
+          <img src={bannerUrl} alt="Dora" className="brand-image" />
           <span className="brand-edition">Operator</span>
         </div>
         <nav className="primary-nav">

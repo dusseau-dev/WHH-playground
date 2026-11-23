@@ -7,7 +7,7 @@ import { DynamicTemporalGateway, type TemporalWorkflowStart } from '../src/scan-
 function request(): TemporalWorkflowStart {
   return {
     workflowId: 'run-attempt-1',
-    taskQueue: 'shannon-queue',
+    taskQueue: 'dora-queue',
     input: {
       webUrl: 'https://target.test',
       sourceMode: 'url-only',
@@ -41,7 +41,7 @@ describe('DynamicTemporalGateway', () => {
     });
     expect(harness.connect).toHaveBeenCalledWith({ address: 'temporal.test:7233', connectTimeout: 250 });
     expect(harness.start).toHaveBeenCalledWith('pentestPipelineWorkflow', {
-      taskQueue: 'shannon-queue',
+      taskQueue: 'dora-queue',
       workflowId: 'run-attempt-1',
       args: [request().input],
     });
@@ -49,7 +49,7 @@ describe('DynamicTemporalGateway', () => {
   });
 
   it('replaces legacy inline provider credentials with a local opaque reference', async () => {
-    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-temporal-secrets-'));
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-temporal-secrets-'));
     const harness = moduleFor({ firstExecutionRunId: 'temporal-run-1' });
     const gateway = new DynamicTemporalGateway(
       'temporal.test:7233',
@@ -85,7 +85,7 @@ describe('DynamicTemporalGateway', () => {
       expect(submittedInput).not.toHaveProperty('apiKey');
       expect(submittedInput).not.toHaveProperty('configYAML');
 
-      const secretDirectory = path.join(workspacePath, '.shannon', 'runtime', 'workflow-secrets');
+      const secretDirectory = path.join(workspacePath, '.dora', 'runtime', 'workflow-secrets');
       const [secretFilename] = await fs.readdir(secretDirectory);
       if (!secretFilename) throw new Error('Expected staged workflow secret');
       const secretPath = path.join(secretDirectory, secretFilename);

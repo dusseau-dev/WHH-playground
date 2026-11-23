@@ -1,5 +1,5 @@
 /**
- * `shannon status` command — show running workers and Temporal health.
+ * `dora status` command — show running workers and Temporal health.
  */
 
 import { isTemporalReady, listRunningWorkers } from '../docker.js';

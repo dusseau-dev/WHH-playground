@@ -217,7 +217,7 @@ describe('Pi credential preflight', () => {
 
   it('describes every supported Bedrock credential route when credentials are missing', async () => {
     const names = [
-      'SHANNON_AI_MODEL',
+      'DORA_AI_MODEL',
       'AWS_BEARER_TOKEN_BEDROCK',
       'AWS_ACCESS_KEY_ID',
       'AWS_SECRET_ACCESS_KEY',
@@ -228,7 +228,7 @@ describe('Pi credential preflight', () => {
     ] as const;
     const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
     for (const name of names) delete process.env[name];
-    process.env.SHANNON_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
+    process.env.DORA_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
 
     try {
       const result = await validatePiCredentials('/tmp', {

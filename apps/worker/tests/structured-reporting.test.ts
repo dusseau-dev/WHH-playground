@@ -48,9 +48,9 @@ afterEach(async () => {
 });
 
 async function makeDeliverables(): Promise<string> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-structured-report-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-structured-report-'));
   roots.push(root);
-  const deliverables = path.join(root, '.shannon', 'deliverables');
+  const deliverables = path.join(root, '.dora', 'deliverables');
   await fs.mkdir(deliverables, { recursive: true });
   return deliverables;
 }
@@ -452,7 +452,7 @@ describe('structured report pipeline finalizer', () => {
   it('updates report.json model metadata and rerenders without duplicating Mode/Coverage', async () => {
     const deliverablesPath = await makeDeliverables();
     const workingDirectory = path.dirname(path.dirname(deliverablesPath));
-    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-report-model-'));
+    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-report-model-'));
     roots.push(outputPath);
     await fs.writeFile(
       path.join(deliverablesPath, 'injection_exploitation_queue.json'),
@@ -478,8 +478,8 @@ describe('structured report pipeline finalizer', () => {
       JSON.stringify({ metrics: { agents: { report: { model: 'pi/test-model' } } } }),
     );
 
-    await injectModelIntoReport(workingDirectory, '.shannon/deliverables', outputPath, logger);
-    await injectAssessmentModeSections(workingDirectory, '.shannon/deliverables', 'url-only', logger);
+    await injectModelIntoReport(workingDirectory, '.dora/deliverables', outputPath, logger);
+    await injectAssessmentModeSections(workingDirectory, '.dora/deliverables', 'url-only', logger);
 
     const raw = JSON.parse(await fs.readFile(path.join(deliverablesPath, 'report.json'), 'utf8'));
     const markdown = await fs.readFile(path.join(deliverablesPath, REPORT_MARKDOWN_FILENAME), 'utf8');

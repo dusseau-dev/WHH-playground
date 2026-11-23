@@ -5,7 +5,7 @@ export interface ModelSpec {
 }
 
 export type CliProviderMode = 'anthropic' | 'openai' | 'xai' | 'amazon-bedrock' | 'generic';
-export type CliSelectionSource = 'shannon-ai-model' | 'legacy';
+export type CliSelectionSource = 'dora-ai-model' | 'legacy';
 
 export interface CliModelSelection extends ModelSpec {
   readonly providerMode: CliProviderMode;
@@ -47,7 +47,7 @@ function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
 export function parseModelSpec(spec: string): ModelSpec {
   const trimmed = spec.trim();
   const separator = trimmed.indexOf(':');
-  const malformed = `SHANNON_AI_MODEL must be "<provider>:<model-id>", got "${trimmed}". Example: ${DEFAULT_MODEL_SPEC}`;
+  const malformed = `DORA_AI_MODEL must be "<provider>:<model-id>", got "${trimmed}". Example: ${DEFAULT_MODEL_SPEC}`;
   if (separator < 1) throw new Error(malformed);
   const providerId = trimmed.slice(0, separator).trim();
   const modelId = trimmed.slice(separator + 1).trim();
@@ -109,14 +109,14 @@ function credentialCandidates(providerId: string, baseUrl: string | undefined): 
         ...(baseUrl ? ['ANTHROPIC_AUTH_TOKEN'] : []),
         'ANTHROPIC_API_KEY',
         'CLAUDE_CODE_OAUTH_TOKEN',
-        'SHANNON_AI_API_KEY',
+        'DORA_AI_API_KEY',
       ];
     case 'openai':
-      return ['OPENAI_API_KEY', 'SHANNON_AI_API_KEY'];
+      return ['OPENAI_API_KEY', 'DORA_AI_API_KEY'];
     case 'xai':
-      return ['XAI_API_KEY', 'SHANNON_AI_API_KEY'];
+      return ['XAI_API_KEY', 'DORA_AI_API_KEY'];
     default:
-      return ['SHANNON_AI_API_KEY'];
+      return ['DORA_AI_API_KEY'];
   }
 }
 
@@ -140,10 +140,10 @@ function newEnvironmentNames(
   providerId: string,
   credential: CliCredentialSelection | undefined,
 ): string[] {
-  const names = ['SHANNON_AI_MODEL'];
-  if (envValue(env, 'SHANNON_AI_BASE_URL')) names.push('SHANNON_AI_BASE_URL');
+  const names = ['DORA_AI_MODEL'];
+  if (envValue(env, 'DORA_AI_BASE_URL')) names.push('DORA_AI_BASE_URL');
   else if (providerId === 'anthropic' && envValue(env, 'ANTHROPIC_BASE_URL')) names.push('ANTHROPIC_BASE_URL');
-  if (envValue(env, 'SHANNON_AI_OPENAI_FORMAT')) names.push('SHANNON_AI_OPENAI_FORMAT');
+  if (envValue(env, 'DORA_AI_OPENAI_FORMAT')) names.push('DORA_AI_OPENAI_FORMAT');
   if (credential) names.push(...credential.environmentNames);
   const regionName = providerId === 'amazon-bedrock' ? selectedBedrockRegionName(env) : undefined;
   if (regionName) names.push(regionName);
@@ -170,26 +170,26 @@ function legacyEnvironmentNames(
 
 function vertexMigrationError(): Error {
   return new Error(
-    'Vertex AI is no longer supported by this model runtime. Migrate to SHANNON_AI_MODEL=<provider>:<model-id> with SHANNON_AI_API_KEY, or use SHANNON_AI_BASE_URL.',
+    'Vertex AI is no longer supported by this model runtime. Migrate to DORA_AI_MODEL=<provider>:<model-id> with DORA_AI_API_KEY, or use DORA_AI_BASE_URL.',
   );
 }
 
 /** Resolve only the information needed for host-side validation and Docker forwarding. */
 export function resolveCliModelSelection(env: NodeJS.ProcessEnv = process.env): CliModelSelection {
-  const shannonModel = envValue(env, 'SHANNON_AI_MODEL');
-  if (shannonModel) {
-    const spec = parseModelSpec(shannonModel);
+  const doraModel = envValue(env, 'DORA_AI_MODEL');
+  if (doraModel) {
+    const spec = parseModelSpec(doraModel);
     const baseUrl =
-      envValue(env, 'SHANNON_AI_BASE_URL') ??
+      envValue(env, 'DORA_AI_BASE_URL') ??
       (spec.providerId === 'anthropic' ? envValue(env, 'ANTHROPIC_BASE_URL') : undefined);
-    const configuredFormat = envValue(env, 'SHANNON_AI_OPENAI_FORMAT');
+    const configuredFormat = envValue(env, 'DORA_AI_OPENAI_FORMAT');
     const openAIFormat =
       configuredFormat === 'chat-completions' || configuredFormat === 'responses' ? configuredFormat : undefined;
     const credential = selectedCliProviderCredential(env, spec.providerId, baseUrl);
     return {
       ...spec,
       providerMode: providerMode(spec.providerId),
-      source: 'shannon-ai-model',
+      source: 'dora-ai-model',
       ...(baseUrl && { baseUrl }),
       ...(openAIFormat && { openAIFormat }),
       ...(credential && { credentialName: credential.name }),

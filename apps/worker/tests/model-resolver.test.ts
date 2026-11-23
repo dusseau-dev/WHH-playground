@@ -31,7 +31,7 @@ describe('provider-compatible model resolution', () => {
         modelOverrides: { medium: 'gpt-5.2' },
       },
       env: {
-        SHANNON_AI_MODEL: 'anthropic:claude-env',
+        DORA_AI_MODEL: 'anthropic:claude-env',
         ANTHROPIC_MEDIUM_MODEL: 'claude-legacy',
       },
     });
@@ -57,10 +57,10 @@ describe('provider-compatible model resolution', () => {
         openAIFormat: 'chat-completions',
       },
       env: {
-        SHANNON_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
-        SHANNON_AI_BASE_URL: 'https://openrouter.ai/api/v1',
-        SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
-        SHANNON_AI_API_KEY: 'environment-openrouter-secret',
+        DORA_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
+        DORA_AI_BASE_URL: 'https://openrouter.ai/api/v1',
+        DORA_AI_OPENAI_FORMAT: 'chat-completions',
+        DORA_AI_API_KEY: 'environment-openrouter-secret',
       },
     });
 
@@ -68,16 +68,16 @@ describe('provider-compatible model resolution', () => {
       providerId: 'openai',
       modelId: 'anthropic/claude-opus-4.6',
       source: 'provider-config',
-      credential: { configured: true, source: 'environment', name: 'SHANNON_AI_API_KEY' },
+      credential: { configured: true, source: 'environment', name: 'DORA_AI_API_KEY' },
     });
     expect(JSON.stringify(selection)).not.toContain('environment-openrouter-secret');
   });
 
-  it('uses SHANNON_AI_MODEL before tier variables and warns once about the mixed configuration', () => {
+  it('uses DORA_AI_MODEL before tier variables and warns once about the mixed configuration', () => {
     const warn = vi.fn();
     const env = {
-      SHANNON_AI_MODEL: 'xai:grok-4:fast',
-      SHANNON_AI_API_KEY: 'generic-secret',
+      DORA_AI_MODEL: 'xai:grok-4:fast',
+      DORA_AI_API_KEY: 'generic-secret',
       ANTHROPIC_MEDIUM_MODEL: 'claude-legacy',
     };
 
@@ -87,10 +87,10 @@ describe('provider-compatible model resolution', () => {
     expect(first).toMatchObject({
       providerId: 'xai',
       modelId: 'grok-4:fast',
-      source: 'shannon-ai-model',
-      credential: { configured: true, source: 'environment', name: 'SHANNON_AI_API_KEY' },
+      source: 'dora-ai-model',
+      credential: { configured: true, source: 'environment', name: 'DORA_AI_API_KEY' },
     });
-    expect(first.environmentNames).toEqual(['SHANNON_AI_MODEL', 'SHANNON_AI_API_KEY']);
+    expect(first.environmentNames).toEqual(['DORA_AI_MODEL', 'DORA_AI_API_KEY']);
     expect(second.modelId).toBe('grok-4:fast');
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).not.toContain('generic-secret');
@@ -148,7 +148,7 @@ describe('provider-compatible model resolution', () => {
   it('selects and scopes a Bedrock access-key pair with its optional session token', () => {
     const selection = resolveModelSelection({
       env: {
-        SHANNON_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
+        DORA_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
         AWS_DEFAULT_REGION: 'us-west-2',
         AWS_ACCESS_KEY_ID: 'access-key',
         AWS_SECRET_ACCESS_KEY: 'secret-key',
@@ -164,7 +164,7 @@ describe('provider-compatible model resolution', () => {
       names: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'],
     });
     expect(selection.environmentNames).toEqual([
-      'SHANNON_AI_MODEL',
+      'DORA_AI_MODEL',
       'AWS_ACCESS_KEY_ID',
       'AWS_SECRET_ACCESS_KEY',
       'AWS_SESSION_TOKEN',
@@ -186,9 +186,9 @@ describe('provider-compatible model resolution', () => {
     {
       source: 'web identity',
       env: {
-        AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/shannon-aws-web-identity-token',
+        AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/dora-aws-web-identity-token',
         AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/audit',
-        AWS_ROLE_SESSION_NAME: 'shannon',
+        AWS_ROLE_SESSION_NAME: 'dora',
       },
       credentialName: 'AWS_WEB_IDENTITY_TOKEN_FILE',
       credentialNames: ['AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_ROLE_ARN', 'AWS_ROLE_SESSION_NAME'],
@@ -205,7 +205,7 @@ describe('provider-compatible model resolution', () => {
   ])('selects and scopes the Bedrock $source environment', ({ env, credentialName, credentialNames }) => {
     const selection = resolveModelSelection({
       env: {
-        SHANNON_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
+        DORA_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
         ...env,
       },
     });
@@ -216,13 +216,13 @@ describe('provider-compatible model resolution', () => {
       name: credentialName,
       names: credentialNames,
     });
-    expect(selection.environmentNames).toEqual(['SHANNON_AI_MODEL', ...credentialNames]);
+    expect(selection.environmentNames).toEqual(['DORA_AI_MODEL', ...credentialNames]);
   });
 
   it('selects only the highest-priority Bedrock credential mechanism', () => {
     const selection = resolveModelSelection({
       env: {
-        SHANNON_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
+        DORA_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
         AWS_BEARER_TOKEN_BEDROCK: 'bearer-token',
         AWS_PROFILE: 'unused-profile',
         AWS_ACCESS_KEY_ID: 'unused-access-key',
@@ -234,16 +234,16 @@ describe('provider-compatible model resolution', () => {
       name: 'AWS_BEARER_TOKEN_BEDROCK',
       names: ['AWS_BEARER_TOKEN_BEDROCK'],
     });
-    expect(selection.environmentNames).toEqual(['SHANNON_AI_MODEL', 'AWS_BEARER_TOKEN_BEDROCK']);
+    expect(selection.environmentNames).toEqual(['DORA_AI_MODEL', 'AWS_BEARER_TOKEN_BEDROCK']);
   });
 
   it('supports OpenAI-compatible and generic provider settings', () => {
     const openai = resolveModelSelection({
       env: {
-        SHANNON_AI_MODEL: 'openai:gateway-model',
-        SHANNON_AI_API_KEY: 'gateway-secret',
-        SHANNON_AI_BASE_URL: 'https://gateway.test/v1',
-        SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
+        DORA_AI_MODEL: 'openai:gateway-model',
+        DORA_AI_API_KEY: 'gateway-secret',
+        DORA_AI_BASE_URL: 'https://gateway.test/v1',
+        DORA_AI_OPENAI_FORMAT: 'chat-completions',
       },
     });
     expect(openai).toMatchObject({
@@ -251,15 +251,15 @@ describe('provider-compatible model resolution', () => {
       modelId: 'gateway-model',
       baseUrl: 'https://gateway.test/v1',
       openAIFormat: 'chat-completions',
-      credential: { name: 'SHANNON_AI_API_KEY' },
+      credential: { name: 'DORA_AI_API_KEY' },
     });
 
     const generic = resolveModelSelection({
       env: {
-        SHANNON_AI_MODEL: 'private-router:team/security-model',
-        SHANNON_AI_API_KEY: 'generic-secret',
-        SHANNON_AI_BASE_URL: 'https://router.test/v1',
-        SHANNON_AI_OPENAI_FORMAT: 'responses',
+        DORA_AI_MODEL: 'private-router:team/security-model',
+        DORA_AI_API_KEY: 'generic-secret',
+        DORA_AI_BASE_URL: 'https://router.test/v1',
+        DORA_AI_OPENAI_FORMAT: 'responses',
       },
     });
     expect(generic).toMatchObject({
@@ -267,17 +267,17 @@ describe('provider-compatible model resolution', () => {
       modelId: 'team/security-model',
       baseUrl: 'https://router.test/v1',
       openAIFormat: 'responses',
-      credential: { configured: true, name: 'SHANNON_AI_API_KEY' },
+      credential: { configured: true, name: 'DORA_AI_API_KEY' },
     });
 
     expect(
       resolveModelSelection({
-        env: { SHANNON_AI_MODEL: 'google:gemini-2.5-pro', SHANNON_AI_API_KEY: 'generic-secret' },
+        env: { DORA_AI_MODEL: 'google:gemini-2.5-pro', DORA_AI_API_KEY: 'generic-secret' },
       }),
     ).toMatchObject({
       providerId: 'google',
       modelId: 'gemini-2.5-pro',
-      credential: { configured: true, name: 'SHANNON_AI_API_KEY' },
+      credential: { configured: true, name: 'DORA_AI_API_KEY' },
     });
   });
 
@@ -286,6 +286,6 @@ describe('provider-compatible model resolution', () => {
       resolveModelSelection({
         env: { CLAUDE_CODE_USE_VERTEX: '1', ANTHROPIC_VERTEX_PROJECT_ID: 'legacy-project' },
       }),
-    ).toThrow(/Vertex AI.*no longer supported.*SHANNON_AI_MODEL/i);
+    ).toThrow(/Vertex AI.*no longer supported.*DORA_AI_MODEL/i);
   });
 });

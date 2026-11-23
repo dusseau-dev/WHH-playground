@@ -6,12 +6,12 @@ Assess observable login, logout, registration, recovery, MFA, session, and accou
 </objective>
 
 <method>
-Read .shannon/deliverables/recon_deliverable.md. Test only supplied or self-created assessment identities. Compare valid and invalid flows for enumeration, rate controls, session rotation, logout invalidation, password reset boundaries, MFA state transitions, remember-me behavior, and cross-session isolation. If Clerk is observed, explicitly exercise Clerk signup, recovery, logout/session revocation, and organization or role transitions through authorized test identities; verify application behavior rather than assuming the provider protects every route. Do not lock accounts, brute force credentials, intercept third-party identities, or retain tokens. A missing header alone is not a vulnerability; require a realistic attack path and repeatable behavior.
+Read .dora/deliverables/recon_deliverable.md. Test only supplied or self-created assessment identities. Compare valid and invalid flows for enumeration, rate controls, session rotation, logout invalidation, password reset boundaries, MFA state transitions, remember-me behavior, and cross-session isolation. If Clerk is observed, explicitly exercise Clerk signup, recovery, logout/session revocation, and organization or role transitions through authorized test identities; verify application behavior rather than assuming the provider protects every route. Do not lock accounts, brute force credentials, intercept third-party identities, or retain tokens. A missing header alone is not a vulnerability; require a realistic attack path and repeatable behavior.
 </method>
 
 <output>
-Write .shannon/deliverables/auth_analysis_deliverable.md with tested workflows, sanitized evidence, confirmed candidates, controls, ruled-out hypotheses, and limits. Save with:
-save-deliverable --type AUTH_ANALYSIS --file-path ".shannon/deliverables/auth_analysis_deliverable.md"
+Write .dora/deliverables/auth_analysis_deliverable.md with tested workflows, sanitized evidence, confirmed candidates, controls, ruled-out hypotheses, and limits. Save with:
+save-deliverable --type AUTH_ANALYSIS --file-path ".dora/deliverables/auth_analysis_deliverable.md"
 
 Then return { "vulnerabilities": [...] } matching the requested schema. Use "Unavailable in URL-only mode" for fields that cannot be supported by browser/API evidence, include only externally reproducible candidates, and return an empty array when none qualify.
 </output>

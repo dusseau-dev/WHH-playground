@@ -67,9 +67,9 @@ afterAll(async () => {
 describe('published CLI package', () => {
   it('installs in an unrelated project and serves the bundled UI cwd-independently', async () => {
     const packageRoot = path.resolve(import.meta.dirname, '../..');
-    const packDirectory = await temporaryDirectory('shannon-pack-');
-    const projectDirectory = await temporaryDirectory('shannon-install-');
-    const homeDirectory = await temporaryDirectory('shannon-home-');
+    const packDirectory = await temporaryDirectory('dora-pack-');
+    const projectDirectory = await temporaryDirectory('dora-install-');
+    const homeDirectory = await temporaryDirectory('dora-home-');
     const packOutput = await command('pnpm', ['pack', '--pack-destination', packDirectory], packageRoot);
     const tarballName = packOutput
       .split('\n')
@@ -85,7 +85,7 @@ describe('published CLI package', () => {
 
     await fs.writeFile(path.join(projectDirectory, 'package.json'), '{"private":true,"type":"module"}\n');
     await command('npm', ['install', '--ignore-scripts', tarball], projectDirectory);
-    const executable = path.join(projectDirectory, 'node_modules', '.bin', 'shannon');
+    const executable = path.join(projectDirectory, 'node_modules', '.bin', 'dora');
     const help = await command(executable, ['help'], projectDirectory);
     expect(help).toContain('start --url <url> [--repo <path>]');
     expect(help).toContain('ui [--port <number>] [--no-open]');

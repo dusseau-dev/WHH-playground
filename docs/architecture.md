@@ -8,7 +8,7 @@ Both modes run target preflight, configured authentication validation, live reco
 
 ## Run Controller
 
-The CLI and Hono API call the same `ScanController`. It creates a versioned `.shannon/run.json` in the workspace before launching Docker. The record contains:
+The CLI and Hono API call the same `ScanController`. It creates a versioned `.dora/run.json` in the workspace before launching Docker. The record contains:
 
 - Lifecycle status and timestamps
 - Immutable target, source mode, repository, and normalized configuration
@@ -22,15 +22,15 @@ For URL-only runs, `/app/target` is backed by the workspace runtime directory. S
 
 ## Profiles and Secrets
 
-Profiles are versioned YAML under `~/.shannon/profiles`. Files contain non-secret configuration and secret references. On macOS, the optional `@napi-rs/keyring` adapter stores target credentials in Keychain. If Keychain is unavailable, and on other platforms, credentials are session-only and must be re-entered after the UI restarts.
+Profiles are versioned YAML under `~/.dora/profiles`. Files contain non-secret configuration and secret references. On macOS, the optional `@napi-rs/keyring` adapter stores target credentials in Keychain. If Keychain is unavailable, and on other platforms, credentials are session-only and must be re-entered after the UI restarts.
 
-Provider credentials are not edited by the UI. They continue to use environment variables, `.env` in clone mode, or `~/.shannon/config.toml` created by `shannon setup` in package mode.
+Provider credentials are not edited by the UI. They continue to use environment variables, `.env` in clone mode, or `~/.dora/config.toml` created by `dora setup` in package mode.
 
 Resolved target credentials are written only to a mode-`0600` runtime worker configuration. Runtime configurations are deleted when runs reach a terminal state and stale files are collected at controller startup.
 
 ## Local API
 
-`shannon ui` serves the packaged React application and `/api/v1` from a Hono server bound to `127.0.0.1`. The server enforces:
+`dora ui` serves the packaged React application and `/api/v1` from a Hono server bound to `127.0.0.1`. The server enforces:
 
 - Random HttpOnly, `SameSite=Strict` session cookie
 - Same-origin Host and Origin checks with no CORS

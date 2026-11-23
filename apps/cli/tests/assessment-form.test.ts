@@ -121,7 +121,7 @@ describe('assessment form scope validation', () => {
       expect.objectContaining({ path: ['splunkManagementUrl'], message: expect.stringMatching(/HTTPS/i) }),
     );
     expect(assessmentFormSchema.parse({ ...base, targetEnvironment: 'staging' })).toMatchObject({
-      detectionCanaryPath: '/__shannon__/detection-simulation',
+      detectionCanaryPath: '/__dora__/detection-simulation',
       detectionMinimumRate: 1,
     });
   });

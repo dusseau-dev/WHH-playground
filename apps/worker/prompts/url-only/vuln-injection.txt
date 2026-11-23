@@ -6,12 +6,12 @@ Assess observed inputs for SQL/NoSQL injection, command injection, template inje
 </objective>
 
 <method>
-Read .shannon/deliverables/recon_deliverable.md. Test each observed parameter with low-impact differential techniques: type changes, delimiter handling, harmless boolean contrasts, bounded timing probes, encoding variants, and path normalization checks. Do not extract records, execute system commands, modify data, access unrelated files, or exceed a five-second timing delay. A generic error alone is not proof. Record baseline/control comparisons and stop escalating once minimal evidence is obtained.
+Read .dora/deliverables/recon_deliverable.md. Test each observed parameter with low-impact differential techniques: type changes, delimiter handling, harmless boolean contrasts, bounded timing probes, encoding variants, and path normalization checks. Do not extract records, execute system commands, modify data, access unrelated files, or exceed a five-second timing delay. A generic error alone is not proof. Record baseline/control comparisons and stop escalating once minimal evidence is obtained.
 </method>
 
 <output>
-Write .shannon/deliverables/injection_analysis_deliverable.md with coverage, sanitized request/response comparisons, confirmed candidates, ruled-out hypotheses, and limitations. Save with:
-save-deliverable --type INJECTION_ANALYSIS --file-path ".shannon/deliverables/injection_analysis_deliverable.md"
+Write .dora/deliverables/injection_analysis_deliverable.md with coverage, sanitized request/response comparisons, confirmed candidates, ruled-out hypotheses, and limitations. Save with:
+save-deliverable --type INJECTION_ANALYSIS --file-path ".dora/deliverables/injection_analysis_deliverable.md"
 
 Then return structured JSON matching the requested schema: { "vulnerabilities": [...] }. Include only externally testable candidates supported by repeatable dynamic evidence. Use "Unavailable in URL-only mode" for any field that cannot be supported by browser/API evidence and never invent internal details. Return an empty array when no candidate meets the evidence threshold.
 </output>

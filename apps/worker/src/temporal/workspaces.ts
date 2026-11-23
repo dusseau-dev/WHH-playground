@@ -6,7 +6,7 @@
 // as published by the Free Software Foundation.
 
 /**
- * Workspace listing tool for Shannon.
+ * Workspace listing tool for Dora.
  *
  * Reads workspaces/ directories, parses session.json files, and displays
  * a formatted table of all workspaces with status, duration, and cost.
@@ -102,14 +102,14 @@ async function listWorkspaces(): Promise<void> {
 
   if (workspaces.length === 0) {
     console.log('\nNo workspaces found.');
-    console.log('Run a pipeline first: ./shannon start -u <url> -r <repo>');
+    console.log('Run a pipeline first: ./dora start -u <url> -r <repo>');
     return;
   }
 
   // Sort by creation date (most recent first)
   workspaces.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-  console.log('\n=== Shannon Workspaces ===\n');
+  console.log('\n=== Dora Workspaces ===\n');
 
   // Column widths
   const nameWidth = 30;
@@ -162,7 +162,7 @@ async function listWorkspaces(): Promise<void> {
   console.log(`${summary}${resumeSummary}`);
 
   if (resumableCount > 0) {
-    console.log('\nResume with: ./shannon start -u <url> -r <repo> -w <name>');
+    console.log('\nResume with: ./dora start -u <url> -r <repo> -w <name>');
   }
 
   console.log();

@@ -42,7 +42,7 @@ const completedResult: HttpLoadResult = {
 };
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-load-script-'));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-load-script-'));
   temporaryDirectories.push(directory);
   return directory;
 }

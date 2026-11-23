@@ -3,27 +3,27 @@ import { describe, expect, it } from 'vitest';
 import { buildWorkerArgs, type WorkerOptions } from '../src/docker.js';
 
 function options(sourceMode: 'source-assisted' | 'url-only'): WorkerOptions {
-  const workspacesDir = path.resolve('/tmp/shannon-workspaces');
+  const workspacesDir = path.resolve('/tmp/dora-workspaces');
   return {
     version: 'test',
     repo: {
-      hostPath: path.join(workspacesDir, 'assessment', '.shannon', 'runtime', 'target'),
+      hostPath: path.join(workspacesDir, 'assessment', '.dora', 'runtime', 'target'),
       containerPath: sourceMode === 'url-only' ? '/app/target' : '/repos/target',
     },
     workspacesDir,
-    taskQueue: 'shannon-test',
+    taskQueue: 'dora-test',
     workflowId: 'assessment-attempt-1',
-    containerName: 'shannon-worker-test',
+    containerName: 'dora-worker-test',
     envFlags: [],
     workspace: 'assessment',
     workingDirectory: sourceMode === 'url-only' ? '/app/target' : '/repos/target',
     sourceMode,
     labels: {
-      'shannon.managed': 'true',
-      'shannon.run': 'assessment',
-      'shannon.workspace': 'assessment',
-      'shannon.attempt': '1',
-      'shannon.workflow': 'assessment-attempt-1',
+      'dora.managed': 'true',
+      'dora.run': 'assessment',
+      'dora.workspace': 'assessment',
+      'dora.attempt': '1',
+      'dora.workflow': 'assessment-attempt-1',
     },
   };
 }
@@ -43,8 +43,8 @@ describe('worker Docker arguments', () => {
 
     expect(volumeMounts(args)).toContain(`${worker.repo.hostPath}:/app/target`);
     expect(volumeMounts(args)).not.toContain(`${worker.repo.hostPath}:/app/target:ro`);
-    expect(args).toContain('shannon.managed=true');
-    expect(args).toContain('shannon.workspace=assessment');
+    expect(args).toContain('dora.managed=true');
+    expect(args).toContain('dora.workspace=assessment');
     expect(args).toContain('--workflow-id');
     expect(args).toContain('assessment-attempt-1');
     expect(args).toContain('--working-directory');
@@ -54,7 +54,7 @@ describe('worker Docker arguments', () => {
     expect(args).not.toContain('--workspace');
     expect(args).not.toContain('--pipeline-testing');
     expect(volumeMounts(args)).toContain(
-      `${path.join(worker.workspacesDir, worker.workspace, '.shannon', 'deliverables')}:/app/target/.shannon/deliverables`,
+      `${path.join(worker.workspacesDir, worker.workspace, '.dora', 'deliverables')}:/app/target/.dora/deliverables`,
     );
   });
 
@@ -67,7 +67,7 @@ describe('worker Docker arguments', () => {
     const worker = options('source-assisted');
     worker.envFlags = [
       '-e',
-      'SHANNON_AI_MODEL',
+      'DORA_AI_MODEL',
       '-e',
       'AWS_PROFILE',
       '-e',
@@ -100,18 +100,18 @@ describe('worker Docker arguments', () => {
 
   it('mounts and remaps a selected web-identity token without putting its value in arguments', () => {
     const worker = options('url-only');
-    worker.envFlags = ['-e', 'SHANNON_AI_MODEL', '-e', 'AWS_WEB_IDENTITY_TOKEN_FILE', '-e', 'AWS_ROLE_ARN'];
+    worker.envFlags = ['-e', 'DORA_AI_MODEL', '-e', 'AWS_WEB_IDENTITY_TOKEN_FILE', '-e', 'AWS_ROLE_ARN'];
     worker.providerCredentialFiles = [
       {
         environmentName: 'AWS_WEB_IDENTITY_TOKEN_FILE',
         hostPath: '/host/service-account/token',
-        containerPath: '/tmp/shannon-aws-web-identity-token',
+        containerPath: '/tmp/dora-aws-web-identity-token',
       },
     ];
 
     const args = buildWorkerArgs(worker);
-    expect(volumeMounts(args)).toContain('/host/service-account/token:/tmp/shannon-aws-web-identity-token:ro');
-    expect(environmentFlags(args)).toContain('AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/shannon-aws-web-identity-token');
+    expect(volumeMounts(args)).toContain('/host/service-account/token:/tmp/dora-aws-web-identity-token:ro');
+    expect(environmentFlags(args)).toContain('AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/dora-aws-web-identity-token');
     expect(environmentFlags(args)).toContain('AWS_ROLE_ARN');
     expect(environmentFlags(args)).not.toContain('AWS_WEB_IDENTITY_TOKEN_FILE');
     expect(args.join(' ')).not.toContain('token-value');

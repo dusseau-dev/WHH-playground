@@ -43,9 +43,9 @@ describe('usage accounting', () => {
   });
 
   it('persists per-attempt usage and includes terminal failure spend in session totals', async () => {
-    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-usage-'));
+    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-usage-'));
     tempRoots.push(outputPath);
-    await fs.mkdir(path.join(outputPath, 'usage-session', '.shannon'), { recursive: true });
+    await fs.mkdir(path.join(outputPath, 'usage-session', '.dora'), { recursive: true });
     const tracker = new MetricsTracker({ id: 'usage-session', webUrl: 'https://target.test', outputPath });
     await tracker.initialize('workflow-id');
 

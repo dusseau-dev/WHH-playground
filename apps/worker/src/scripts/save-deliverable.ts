@@ -24,7 +24,7 @@ import { DELIVERABLE_FILENAMES, type DeliverableType } from '../types/deliverabl
 function printHelp(): void {
   const types = Object.keys(DELIVERABLE_FILENAMES).join(', ');
   console.log(
-    `save-deliverable - save a Shannon pentest deliverable under its canonical filename.
+    `save-deliverable - save a Dora pentest deliverable under its canonical filename.
 
 Usage:
   save-deliverable --type <TYPE> --file-path <path>
@@ -77,7 +77,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 // === File Operations ===
 
 function saveDeliverableFile(targetDir: string, filename: string, content: string): string {
-  const subdir = process.env.SHANNON_DELIVERABLES_SUBDIR || '.shannon/deliverables';
+  const subdir = process.env.DORA_DELIVERABLES_SUBDIR || '.dora/deliverables';
   const deliverablesDir = join(targetDir, ...subdir.split('/'));
   const filepath = join(deliverablesDir, filename);
 

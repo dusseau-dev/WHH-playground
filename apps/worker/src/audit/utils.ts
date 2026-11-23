@@ -122,7 +122,7 @@ export function generateWorkflowLogPath(sessionMetadata: SessionMetadata): strin
 
 /**
  * Initialize audit directory structure for a session
- * Creates: workspaces/{sessionId}/.shannon/{agents,prompts}/
+ * Creates: workspaces/{sessionId}/.dora/{agents,prompts}/
  */
 export async function initializeAuditStructure(sessionMetadata: SessionMetadata): Promise<void> {
   const auditPath = generateInternalPath(sessionMetadata);

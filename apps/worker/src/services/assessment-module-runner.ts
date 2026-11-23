@@ -30,7 +30,7 @@ export const CURATED_NUCLEI_TEMPLATES = [
   'http/technologies/tech-detect.yaml',
 ] as const;
 
-const NUCLEI_TEMPLATE_ROOT = process.env.SHANNON_NUCLEI_TEMPLATE_DIR ?? '/opt/nuclei-templates';
+const NUCLEI_TEMPLATE_ROOT = process.env.DORA_NUCLEI_TEMPLATE_DIR ?? '/opt/nuclei-templates';
 
 const MODULE_ENV_ALLOWLIST = [
   'PATH',
@@ -299,7 +299,7 @@ async function fetchText(fetchImpl: typeof fetch, url: string): Promise<{ respon
   const response = await fetchImpl(url, {
     redirect: 'manual',
     signal: AbortSignal.timeout(10_000),
-    headers: { 'user-agent': 'Shannon-Passive-Exposure/1.0' },
+    headers: { 'user-agent': 'Dora-Passive-Exposure/1.0' },
   });
   return { response, body: await readLimited(response) };
 }
@@ -475,7 +475,7 @@ async function runPassiveExposure(
 }
 
 function scannerEnvironment(cookie: string | undefined): Record<string, string> | undefined {
-  return cookie ? { SHANNON_AUTH_COOKIE: cookie } : undefined;
+  return cookie ? { DORA_AUTH_COOKIE: cookie } : undefined;
 }
 
 async function writeNucleiAuthConfig(modulesDir: string, cookie: string | undefined): Promise<string | undefined> {
@@ -508,12 +508,12 @@ async function writeZapAutomationPlan(
       parameters: { deleteAllRules: true },
       rules: [
         {
-          description: 'shannon-auth-cookie',
+          description: 'dora-auth-cookie',
           url: `^${targetUrl.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`,
           matchType: 'req_header',
           matchString: 'Cookie',
           matchRegex: false,
-          replacementString: `\${SHANNON_AUTH_COOKIE}`,
+          replacementString: `\${DORA_AUTH_COOKIE}`,
         },
       ],
     });
@@ -522,7 +522,7 @@ async function writeZapAutomationPlan(
     {
       type: 'spider',
       parameters: {
-        context: 'shannon-target',
+        context: 'dora-target',
         url: target,
         maxDuration: 1,
         maxDepth: 5,
@@ -536,7 +536,7 @@ async function writeZapAutomationPlan(
     jobs.push({
       type: 'activeScan',
       parameters: {
-        context: 'shannon-target',
+        context: 'dora-target',
         url: target,
         defaultStrength: 'Low',
         defaultThreshold: 'Medium',
@@ -554,14 +554,14 @@ async function writeZapAutomationPlan(
       template: 'traditional-json',
       reportDir: assetsDir,
       reportFile: `${reportName}.json`,
-      reportTitle: active ? 'Shannon bounded active ZAP scan' : 'Shannon passive ZAP scan',
+      reportTitle: active ? 'Dora bounded active ZAP scan' : 'Dora passive ZAP scan',
     },
   });
   const plan = {
     env: {
       contexts: [
         {
-          name: 'shannon-target',
+          name: 'dora-target',
           urls: [target],
           includePaths: [`${targetUrl.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*`],
         },
@@ -869,11 +869,11 @@ async function runLoad(
         args: ['run', '--quiet', '--summary-export', path.join(assetsDir, 'summary.json'), scriptPath],
         cwd: options.workingDirectory,
         env: {
-          SHANNON_TARGET_URL: new URL(options.webUrl).href,
-          SHANNON_K6_STAGES: JSON.stringify(stages),
-          SHANNON_K6_THRESHOLDS: JSON.stringify(thresholds),
-          SHANNON_MAX_REQUESTS_PER_SECOND: String(options.moduleSafety.maxRequestsPerSecond),
-          ...(options.authenticationCookie && { SHANNON_AUTH_COOKIE: options.authenticationCookie }),
+          DORA_TARGET_URL: new URL(options.webUrl).href,
+          DORA_K6_STAGES: JSON.stringify(stages),
+          DORA_K6_THRESHOLDS: JSON.stringify(thresholds),
+          DORA_MAX_REQUESTS_PER_SECOND: String(options.moduleSafety.maxRequestsPerSecond),
+          ...(options.authenticationCookie && { DORA_AUTH_COOKIE: options.authenticationCookie }),
         },
         timeoutMs: stages.length * options.moduleSafety.loadStageDurationSeconds * 1_000 + 60_000,
       },

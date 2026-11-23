@@ -9,7 +9,7 @@ export const DEFAULT_MODEL_SPEC = 'anthropic:claude-sonnet-4-6';
 /**
  * Parse `<provider>:<model-id>`. Provider ids are intentionally open-ended so
  * callers can use providers supplied by the model runtime rather than only the
- * providers with first-class Shannon configuration.
+ * providers with first-class Dora configuration.
  */
 export function parseModelSpec(spec: string): ModelSpec {
   const trimmed = spec.trim();

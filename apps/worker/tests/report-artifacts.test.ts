@@ -110,13 +110,13 @@ describe('SARIF rendering and eligibility', () => {
     const parsed = JSON.parse(first) as ParsedSarif;
     const run = parsed.runs[0];
     if (!run) throw new Error('Expected one SARIF run');
-    expect(run.automationDetails.id).toBe('shannon/safe-demonstration/my_workspace');
+    expect(run.automationDetails.id).toBe('dora/safe-demonstration/my_workspace');
     expect(run.invocations[0].executionSuccessful).toBe(false);
     expect(run.results).toHaveLength(5);
     expect(run.results.map((result) => result.level)).toEqual(['error', 'note', 'warning', 'error', 'note']);
     expect(run.results[0].locations[0].physicalLocation.artifactLocation.uri).toBe('src/sink.ts');
     expect(run.results[0].relatedLocations[0].physicalLocation.artifactLocation.uri).toBe('src/source.ts');
-    expect(run.results[0].partialFingerprints['shannon/finding-id/v1']).toMatch(/^[a-f0-9]{64}$/);
+    expect(run.results[0].partialFingerprints['dora/finding-id/v1']).toMatch(/^[a-f0-9]{64}$/);
     expect(run.results[1].locations[0].physicalLocation.artifactLocation.uri).toBe('https://example.test/F-2');
   });
 
@@ -148,7 +148,7 @@ describe('SARIF rendering and eligibility', () => {
 
 describe('Typst PDF rendering', () => {
   it('uses direct exec-file arguments, copies a complete PDF, and cleans the temp directory', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'shannon-pdf-test-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'dora-pdf-test-'));
     roots.push(root);
     const template = path.join(root, 'report.typ');
     const output = path.join(root, 'out', REPORT_PDF_FILENAME);
@@ -174,7 +174,7 @@ describe('Typst PDF rendering', () => {
   });
 
   it('cleans its isolated directory and publishes no partial PDF on compiler failure', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'shannon-pdf-fail-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'dora-pdf-fail-'));
     roots.push(root);
     const template = path.join(root, 'report.typ');
     const output = path.join(root, REPORT_PDF_FILENAME);
@@ -199,9 +199,9 @@ describe('Typst PDF rendering', () => {
 
 describe('default report output orchestration', () => {
   async function setup(data: ReportData, sarif: boolean): Promise<{ root: string; input: ActivityInput }> {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'shannon-artifacts-'));
+    const root = await mkdtemp(path.join(os.tmpdir(), 'dora-artifacts-'));
     roots.push(root);
-    const deliverables = path.join(root, '.shannon', 'deliverables');
+    const deliverables = path.join(root, '.dora', 'deliverables');
     await import('node:fs/promises').then(({ mkdir }) => mkdir(deliverables, { recursive: true }));
     await writeFile(path.join(deliverables, 'report.json'), JSON.stringify(data), 'utf8');
     return {
@@ -236,8 +236,8 @@ describe('default report output orchestration', () => {
     const result = await provider.generate(input, log);
 
     expect(result.artifacts?.map((artifact) => artifact.kind)).toEqual(['sarif']);
-    expect(existsSync(path.join(root, '.shannon', 'deliverables', REPORT_PDF_FILENAME))).toBe(false);
-    expect(existsSync(path.join(root, '.shannon', 'deliverables', REPORT_SARIF_FILENAME))).toBe(true);
+    expect(existsSync(path.join(root, '.dora', 'deliverables', REPORT_PDF_FILENAME))).toBe(false);
+    expect(existsSync(path.join(root, '.dora', 'deliverables', REPORT_SARIF_FILENAME))).toBe(true);
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('PDF report generation failed'));
   });
 
@@ -248,7 +248,7 @@ describe('default report output orchestration', () => {
       report_meta: { ...baseline.report_meta, validation_state: 'unvalidated' },
     });
     const { root, input } = await setup(data, true);
-    const sarifPath = path.join(root, '.shannon', 'deliverables', REPORT_SARIF_FILENAME);
+    const sarifPath = path.join(root, '.dora', 'deliverables', REPORT_SARIF_FILENAME);
     await writeFile(sarifPath, 'stale', 'utf8');
     const provider = new DefaultReportOutputProvider({
       pdfRenderer: async ({ outputPath }) => writeFile(outputPath, '%PDF', 'utf8'),
@@ -273,8 +273,8 @@ describe('default report output orchestration', () => {
     const result = await provider.generate(input, log);
 
     expect(result.artifacts?.map((artifact) => artifact.kind)).toEqual(['pdf']);
-    expect(existsSync(path.join(root, '.shannon', 'deliverables', REPORT_PDF_FILENAME))).toBe(true);
-    expect(existsSync(path.join(root, '.shannon', 'deliverables', REPORT_SARIF_FILENAME))).toBe(false);
+    expect(existsSync(path.join(root, '.dora', 'deliverables', REPORT_PDF_FILENAME))).toBe(true);
+    expect(existsSync(path.join(root, '.dora', 'deliverables', REPORT_SARIF_FILENAME))).toBe(false);
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('SARIF report generation failed'));
   });
 

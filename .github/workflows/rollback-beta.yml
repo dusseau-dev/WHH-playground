@@ -44,22 +44,22 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Verify npm package version exists
-        run: npm view "@keygraph/shannon@${{ steps.target.outputs.version }}" version
+        run: npm view "@keygraph/dora@${{ steps.target.outputs.version }}" version
 
       - name: Show current npm dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm dist-tag ls @keygraph/shannon
+        run: npm dist-tag ls @keygraph/dora
 
       - name: Move npm beta tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm dist-tag add "@keygraph/shannon@${{ steps.target.outputs.version }}" beta
+        run: npm dist-tag add "@keygraph/dora@${{ steps.target.outputs.version }}" beta
 
       - name: Show final npm dist-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm dist-tag ls @keygraph/shannon
+        run: npm dist-tag ls @keygraph/dora
 
       - name: Write summary
         run: |
@@ -67,5 +67,5 @@ jobs:
             echo "## Rollback beta"
             echo ""
             echo "- Target version: \`${{ steps.target.outputs.version }}\`"
-            echo "- npm package: \`@keygraph/shannon\` (beta tag moved)"
+            echo "- npm package: \`@keygraph/dora\` (beta tag moved)"
           } >> "$GITHUB_STEP_SUMMARY"

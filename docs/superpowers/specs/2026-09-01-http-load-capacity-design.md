@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Add an explicitly authorized, single-host HTTP load and capacity assessment to Shannon. Operators can select the check from the existing OWASP scope UI, configure the traffic envelope, and receive deterministic metrics in artifacts and reports. The test must not be enabled by defaults, parent bulk selection, profiles created from legacy configurations, or ordinary vulnerability-agent execution.
+Add an explicitly authorized, single-host HTTP load and capacity assessment to Dora. Operators can select the check from the existing OWASP scope UI, configure the traffic envelope, and receive deterministic metrics in artifacts and reports. The test must not be enabled by defaults, parent bulk selection, profiles created from legacy configurations, or ordinary vulnerability-agent execution.
 
 This feature is for systems the operator owns or has written permission to test. It does not support distributed traffic, proxy rotation, source-address spoofing, or traffic amplification.
 
@@ -84,7 +84,7 @@ The activity heartbeats progress, forwards cancellation to the child process, an
 
 ## Artifacts And Reporting
 
-The completed activity atomically writes `.shannon/http-load-capacity.json` beneath the run working directory. The artifact contains:
+The completed activity atomically writes `.dora/http-load-capacity.json` beneath the run working directory. The artifact contains:
 
 - Target origin and path without embedded credentials, with sensitive query values redacted.
 - Start and completion timestamps.

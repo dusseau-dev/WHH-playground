@@ -218,7 +218,7 @@ export interface ProviderConfig {
  * can override OSS defaults without modifying source files.
  */
 export interface ContainerConfig {
-  /** Subdirectory for deliverables relative to the working directory. Default: '.shannon/deliverables' */
+  /** Subdirectory for deliverables relative to the working directory. Default: '.dora/deliverables' */
   readonly deliverablesSubdir: string;
   /** Directory for audit logs. Default: './workspaces' */
   readonly auditDir: string;

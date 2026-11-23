@@ -1,9 +1,9 @@
 /**
- * Shannon CLI — AI Penetration Testing Framework
+ * Dora CLI — AI Penetration Testing Framework
  *
  * Unified CLI supporting two modes:
  *   Local mode: Run from cloned repo — builds locally, mounts prompts, uses ./workspaces/
- *   NPX mode:   Run via npx — pulls from Docker Hub, uses ~/.shannon/
+ *   NPX mode:   Run via npx — pulls from Docker Hub, uses ~/.dora/
  *
  * Mode is auto-detected based on presence of Dockerfile + docker-compose.yml + prompts/
  * in the current working directory.
@@ -34,10 +34,10 @@ function blockSudo(): void {
   if (!isSudo && !isRoot) return;
 
   if (isSudo) {
-    console.error('ERROR: Shannon must not be run with sudo.');
+    console.error('ERROR: Dora must not be run with sudo.');
     console.error('Re-run this command as your normal user.');
   } else {
-    console.error('ERROR: Shannon must not be run as the root user.');
+    console.error('ERROR: Dora must not be run as the root user.');
     console.error('Switch to a regular user account and re-run this command.');
   }
   if (process.platform === 'linux') {
@@ -59,10 +59,10 @@ function getVersion(): string {
 
 function showHelp(): void {
   const mode = getMode();
-  const prefix = mode === 'local' ? './shannon' : 'npx @keygraph/shannon';
+  const prefix = mode === 'local' ? './dora' : 'npx @keygraph/dora';
 
   console.log(`
-Shannon - AI Security Assessment Framework
+Dora - AI Security Assessment Framework
 
 Usage:${
     mode === 'local'
@@ -82,7 +82,7 @@ Usage:${
       ? `
   ${prefix} build [--no-cache]                           Build worker image`
       : `
-  ${prefix} uninstall                                    Remove ~/.shannon/ and all data`
+  ${prefix} uninstall                                    Remove ~/.dora/ and all data`
   }
   ${prefix} info                                         Show splash screen
   ${prefix} help                                         Show this help
@@ -109,7 +109,7 @@ ${
     ? `
 State directory: ./workspaces/`
     : `
-State directory: ~/.shannon/`
+State directory: ~/.dora/`
 }
 Monitor workflows at http://localhost:8233
 `);
@@ -192,14 +192,14 @@ function parseStartArgs(argv: string[]): ParsedStartArgs {
         break;
       default:
         console.error(`Unknown option: ${arg}`);
-        console.error(`Run "${getMode() === 'local' ? './shannon' : 'npx @keygraph/shannon'} help" for usage`);
+        console.error(`Run "${getMode() === 'local' ? './dora' : 'npx @keygraph/dora'} help" for usage`);
         process.exit(1);
     }
   }
 
   if (!url) {
     console.error('ERROR: --url is required');
-    console.error(`Usage: ${getMode() === 'local' ? './shannon' : 'npx @keygraph/shannon'} start -u <url> [-r <path>]`);
+    console.error(`Usage: ${getMode() === 'local' ? './dora' : 'npx @keygraph/dora'} start -u <url> [-r <path>]`);
     process.exit(1);
   }
 
@@ -274,7 +274,7 @@ switch (command) {
     const workspaceId = args[1];
     if (!workspaceId) {
       console.error('ERROR: Workspace ID is required');
-      console.error(`Usage: ${getMode() === 'local' ? './shannon' : 'npx @keygraph/shannon'} logs <workspace>`);
+      console.error(`Usage: ${getMode() === 'local' ? './dora' : 'npx @keygraph/dora'} logs <workspace>`);
       process.exit(1);
     }
     logs(workspaceId);

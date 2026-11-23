@@ -24,7 +24,7 @@ export interface DetectionValidationSettings {
 
 export const DETECTION_VALIDATION_SCOPE = 'alerting-effectiveness' as const;
 export const DETECTION_VALIDATION_DEFAULTS = {
-  canaryPath: '/__shannon__/detection-simulation',
+  canaryPath: '/__dora__/detection-simulation',
   minimumDetectionRate: 1,
   maxWaitSeconds: 180,
 } as const;

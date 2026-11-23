@@ -10,7 +10,7 @@ import {
 import { fileExists, readJson } from '../utils/file-io.js';
 import { redactLogText } from '../utils/redactSecrets.js';
 
-export const HTTP_LOAD_RESULT_PATH = path.join('.shannon', 'http-load-capacity.json');
+export const HTTP_LOAD_RESULT_PATH = path.join('.dora', 'http-load-capacity.json');
 const MAX_DIAGNOSTIC_LENGTH = 4_000;
 const FORCE_KILL_DELAY_MS = 5_000;
 

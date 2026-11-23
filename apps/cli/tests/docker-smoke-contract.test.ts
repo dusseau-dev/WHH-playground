@@ -7,9 +7,9 @@ describe('Docker pipeline smoke harness', () => {
     const scriptPath = path.resolve(import.meta.dirname, '../../../scripts/docker-pipeline-smoke.sh');
     const script = await fs.readFile(scriptPath, 'utf8');
 
-    expect(script).toContain(`workspaces/\${workspace}/.shannon/session.json`);
-    expect(script).toContain(`workspaces/\${url_workspace}/.shannon/run.json`);
-    expect(script).toContain(`workspaces/\${source_workspace}/.shannon/run.json`);
+    expect(script).toContain(`workspaces/\${workspace}/.dora/session.json`);
+    expect(script).toContain(`workspaces/\${url_workspace}/.dora/run.json`);
+    expect(script).toContain(`workspaces/\${source_workspace}/.dora/run.json`);
     expect(script).toContain('r.snapshot.sourceMode');
     expect(script).not.toContain('r.spec');
   });

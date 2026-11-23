@@ -113,7 +113,7 @@ export class ProfileStore {
   private readonly idGenerator: () => string;
 
   constructor(options: ProfileStoreOptions) {
-    this.profilesDir = options.profilesDir ?? path.join(os.homedir(), '.shannon', 'profiles');
+    this.profilesDir = options.profilesDir ?? path.join(os.homedir(), '.dora', 'profiles');
     this.secretStore = options.secretStore;
     this.now = options.now ?? (() => new Date());
     this.idGenerator = options.idGenerator ?? (() => `profile-${crypto.randomUUID()}`);

@@ -228,7 +228,7 @@ describe('triage reconciliation', () => {
 
 describe('exact queue code-location join', () => {
   it('joins exact IDs only and never adds queue code locations in URL-only mode', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-locations-'));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-locations-'));
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     await fs.writeFile(
       path.join(dir, 'injection_exploitation_queue.json'),

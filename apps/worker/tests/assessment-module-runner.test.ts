@@ -18,9 +18,9 @@ afterEach(async () => {
 });
 
 async function workspace(): Promise<{ root: string; deliverables: string }> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-module-runner-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-module-runner-'));
   roots.push(root);
-  const deliverables = path.join(root, '.shannon', 'deliverables');
+  const deliverables = path.join(root, '.dora', 'deliverables');
   await fs.mkdir(deliverables, { recursive: true });
   return { root, deliverables };
 }
@@ -41,9 +41,9 @@ describe('assessment module command safety', () => {
     const previous = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = 'worker-secret';
     try {
-      const env = buildModuleCommandEnvironment({ SHANNON_AUTH_COOKIE: 'session=target-secret' });
+      const env = buildModuleCommandEnvironment({ DORA_AUTH_COOKIE: 'session=target-secret' });
       expect(env.OPENAI_API_KEY).toBeUndefined();
-      expect(env.SHANNON_AUTH_COOKIE).toBe('session=target-secret');
+      expect(env.DORA_AUTH_COOKIE).toBe('session=target-secret');
       expect(env.PATH).toBe(process.env.PATH);
     } finally {
       if (previous === undefined) delete process.env.OPENAI_API_KEY;
@@ -189,9 +189,9 @@ describe('assessment module execution evidence', () => {
     const { root, deliverables } = await workspace();
     const commandRunner: ModuleCommandRunner = vi.fn(async (spec) => {
       expect(spec.command).toBe('k6');
-      expect(spec.env?.SHANNON_AUTH_COOKIE).toBe('session=secret');
+      expect(spec.env?.DORA_AUTH_COOKIE).toBe('session=secret');
       expect(spec.args.join(' ')).not.toContain('session=secret');
-      expect(spec.env?.SHANNON_K6_THRESHOLDS).toContain('abortOnFail');
+      expect(spec.env?.DORA_K6_THRESHOLDS).toContain('abortOnFail');
       return { exitCode: 0, stdout: 'load complete', stderr: '' };
     });
 

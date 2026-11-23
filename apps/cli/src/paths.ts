@@ -15,14 +15,25 @@ export interface MountPair {
 }
 
 /** Hidden internal state directory inside each workspace. */
-export const INTERNAL_DIR = '.shannon';
+export const INTERNAL_DIR = '.dora';
+
+/** Pre-rename internal directory, kept readable for existing workspaces. */
+export const LEGACY_INTERNAL_DIR = '.shannon';
 
 /** Human-facing report name used by newer workspace layouts. */
 export const FINAL_REPORT_FILENAME = 'Security-Assessment-Report.md';
 
+/** Resolve an internal directory, preferring .dora and falling back to .shannon. */
+export function resolveInternalDir(workspacePath: string): string {
+  const current = path.join(workspacePath, INTERNAL_DIR);
+  if (fs.existsSync(current)) return current;
+  const legacy = path.join(workspacePath, LEGACY_INTERNAL_DIR);
+  return fs.existsSync(legacy) ? legacy : current;
+}
+
 /** Resolve an internal file while retaining read compatibility with flat legacy workspaces. */
 export function resolveRunFile(workspacePath: string, filename: string): string {
-  const current = path.join(workspacePath, INTERNAL_DIR, filename);
+  const current = path.join(resolveInternalDir(workspacePath), filename);
   if (fs.existsSync(current)) return current;
   const legacy = path.join(workspacePath, filename);
   return fs.existsSync(legacy) ? legacy : current;

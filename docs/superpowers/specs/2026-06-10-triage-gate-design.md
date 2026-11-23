@@ -6,19 +6,19 @@
 
 ## Context / Why
 
-Shannon runs `vuln-analysis → exploitation → report`, but every finding the exploitation
+Dora runs `vuln-analysis → exploitation → report`, but every finding the exploitation
 agents produce flows **straight into the report with no validation pass**. False positives,
 theoretical-only issues, and low-value noise reach the company-facing report — the single
 biggest thing that erodes trust in automated security tooling (a noisy scanner dump is
 indistinguishable from a rigorous assessment).
 
 The Claude-BugHunter project's most-praised feature is its **validation gate** ("the phase that
-saves you from yourself"). This spec adapts that idea to Shannon's defensive/company context as a
+saves you from yourself"). This spec adapts that idea to Dora's defensive/company context as a
 **triage gate**: an independent, adversarial validation pass between exploitation and reporting
 that forces every candidate finding through an exploitability rubric before it can appear as a
 confirmed finding.
 
-**Goal: biggest trust win, smallest surface.** One new agent, following Shannon's existing
+**Goal: biggest trust win, smallest surface.** One new agent, following Dora's existing
 "everything is an agent" pattern, producing a structured verdict artifact that the report honors —
 and which P4 (attack chaining) and P5 (CVSS/dedup/ticketing) can reuse.
 
@@ -140,7 +140,7 @@ exploit evidence + queues → triage agent (LLM applies rubric)
 
 ## Error handling
 
-- Triage agent uses Shannon's standard 3× per-agent retry.
+- Triage agent uses Dora's standard 3× per-agent retry.
 - Persistent failure or invalid output → fail-open: `triageRan = false`, workflow proceeds, report
   shows the UNVALIDATED banner with all findings. The run is never failed by triage.
 

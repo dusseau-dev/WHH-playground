@@ -52,7 +52,7 @@ function isLoopbackAddress(address: string): boolean {
 }
 
 // 169.254.0.0/16 hosts the cloud metadata service. RFC1918 and loopback are
-// intentionally allowed — scanning local targets is a supported Shannon use case.
+// intentionally allowed — scanning local targets is a supported Dora use case.
 const metadataBlockList = new net.BlockList();
 metadataBlockList.addSubnet('169.254.0.0', 16, 'ipv4');
 
@@ -220,7 +220,7 @@ async function validateConfig(configPath: string, logger: ActivityLogger): Promi
 
 // === code_path Existence Validation ===
 
-const CODE_PATH_IGNORE = ['.git/**', '.shannon/**'];
+const CODE_PATH_IGNORE = ['.git/**', '.dora/**'];
 
 async function patternMatchesAny(repoPath: string, pattern: string): Promise<boolean> {
   const stream = glob.globbyStream(pattern, {
@@ -309,15 +309,15 @@ async function validateCodePathsExist(
 function credentialHint(providerId: string): string {
   switch (providerId) {
     case 'anthropic':
-      return 'ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or SHANNON_AI_API_KEY';
+      return 'ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, or DORA_AI_API_KEY';
     case 'openai':
-      return 'OPENAI_API_KEY or SHANNON_AI_API_KEY';
+      return 'OPENAI_API_KEY or DORA_AI_API_KEY';
     case 'xai':
-      return 'XAI_API_KEY or SHANNON_AI_API_KEY';
+      return 'XAI_API_KEY or DORA_AI_API_KEY';
     case 'amazon-bedrock':
       return 'AWS_BEARER_TOKEN_BEDROCK, AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_PROFILE, AWS_WEB_IDENTITY_TOKEN_FILE, or AWS_CONTAINER_CREDENTIALS_RELATIVE_URI/FULL_URI';
     default:
-      return 'SHANNON_AI_API_KEY';
+      return 'DORA_AI_API_KEY';
   }
 }
 

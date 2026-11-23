@@ -19,7 +19,7 @@ const tempRoots: string[] = [];
 const workflowIds: string[] = [];
 
 async function makeTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'shannon-scope-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dora-scope-'));
   tempRoots.push(root);
   return root;
 }
@@ -53,7 +53,7 @@ async function readSession(outputPath: string): Promise<{
     };
   };
 }> {
-  return JSON.parse(await readFile(path.join(outputPath, 'workspace-a', '.shannon', 'session.json'), 'utf8')) as {
+  return JSON.parse(await readFile(path.join(outputPath, 'workspace-a', '.dora', 'session.json'), 'utf8')) as {
     session: {
       scope?: {
         sourceMode?: string;
@@ -106,9 +106,9 @@ describe('persistOrValidateRunScope', () => {
     const outputPath = await makeTempRoot();
     const workspacePath = path.join(outputPath, 'workspace-a');
     const legacySessionPath = path.join(workspacePath, 'session.json');
-    const currentSessionPath = path.join(workspacePath, '.shannon', 'session.json');
+    const currentSessionPath = path.join(workspacePath, '.dora', 'session.json');
     const workingDirectory = path.join(outputPath, 'target');
-    const deliverablesPath = path.join(workingDirectory, '.shannon', 'deliverables');
+    const deliverablesPath = path.join(workingDirectory, '.dora', 'deliverables');
     await mkdir(workspacePath, { recursive: true });
     await mkdir(deliverablesPath, { recursive: true });
     await writeFile(path.join(deliverablesPath, 'pre_recon_deliverable.md'), '# Existing pre-recon');
@@ -265,7 +265,7 @@ detection_validation:
     const outputPath = await makeTempRoot();
     await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-original' }), ['xss'], true);
 
-    const sessionPath = path.join(outputPath, 'workspace-a', '.shannon', 'session.json');
+    const sessionPath = path.join(outputPath, 'workspace-a', '.dora', 'session.json');
     const session = await readSession(outputPath);
     if (!session.session.scope) throw new Error('Missing scope');
     const { testScopes: _testScopes, testSurfaces: _testSurfaces, ...legacyScope } = session.session.scope;
@@ -325,7 +325,7 @@ detection_validation:
     const outputPath = await makeTempRoot();
     await persistOrValidateRunScope(inputFor(outputPath, { workflowId: 'workflow-original' }), ['xss'], true);
 
-    const sessionPath = path.join(outputPath, 'workspace-a', '.shannon', 'session.json');
+    const sessionPath = path.join(outputPath, 'workspace-a', '.dora', 'session.json');
     const session = await readSession(outputPath);
     if (!session.session.scope) throw new Error('Missing scope');
     const { safeDemonstration: _safeDemonstration, ...legacyScope } = session.session.scope;

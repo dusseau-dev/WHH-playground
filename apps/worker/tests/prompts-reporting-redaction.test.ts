@@ -248,7 +248,7 @@ describe('coverage reporting', () => {
   });
 
   it('redacts secrets and PII before persisted Markdown report artifacts are written', async () => {
-    const deliverablesPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-report-redaction-'));
+    const deliverablesPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-report-redaction-'));
     tempRoots.push(deliverablesPath);
     await writeReportMarkdownFiles(
       deliverablesPath,
@@ -268,9 +268,9 @@ describe('coverage reporting', () => {
   });
 
   it('redacts existing legacy Markdown reports even when mode sections are already present', async () => {
-    const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-report-injection-redaction-'));
+    const workingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-report-injection-redaction-'));
     tempRoots.push(workingDirectory);
-    const deliverablesPath = path.join(workingDirectory, '.shannon', 'deliverables');
+    const deliverablesPath = path.join(workingDirectory, '.dora', 'deliverables');
     await fs.mkdir(deliverablesPath, { recursive: true });
     await fs.writeFile(
       path.join(deliverablesPath, REPORT_MARKDOWN_FILENAME),
@@ -326,7 +326,7 @@ describe('secret redaction', () => {
   });
 
   it('redacts prompt snapshots before persistence', async () => {
-    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-prompt-redaction-'));
+    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-prompt-redaction-'));
     tempRoots.push(outputPath);
     const sessionMetadata = {
       id: 'redaction-session',

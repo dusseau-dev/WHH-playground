@@ -29,7 +29,7 @@ import { createSecretStore } from '../secret-store.js';
 import { pathExists, resolveExistingContainedPath } from '../storage.js';
 
 const API_PREFIX = '/api/v1';
-const SESSION_COOKIE = 'shannon_session';
+const SESSION_COOKIE = 'dora_session';
 const MAX_IMPORT_BYTES = 512 * 1024;
 const DEFAULT_PORT = 8787;
 
@@ -198,7 +198,7 @@ export function createApp(options: CreateAppOptions): Hono {
       if (!validOrigin(origin, host)) {
         return context.json({ error: { code: 'invalid_origin', message: 'Same-origin request required' } }, 403);
       }
-      if (context.req.header('x-shannon-csrf') !== csrfToken) {
+      if (context.req.header('x-dora-csrf') !== csrfToken) {
         return context.json({ error: { code: 'invalid_csrf', message: 'CSRF token is missing or invalid' } }, 403);
       }
     }
@@ -444,7 +444,7 @@ export function createApp(options: CreateAppOptions): Hono {
       const indexPath = path.join(assetsDir, 'index.html');
       if (!(await pathExists(indexPath))) {
         throw new ApiError(
-          'Shannon UI assets are not installed. Build the CLI web client first.',
+          'Dora UI assets are not installed. Build the CLI web client first.',
           503,
           'ui_unavailable',
         );

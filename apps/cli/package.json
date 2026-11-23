@@ -1,10 +1,11 @@
 {
-  "name": "@keygraph/shannon",
+  "name": "@keygraph/dora",
   "version": "0.0.0",
-  "description": "Shannon - Autonomous source-assisted and URL-only security assessment for web applications and APIs",
+  "description": "Dora - Autonomous source-assisted and URL-only security assessment for web applications and APIs",
   "type": "module",
   "main": "dist/index.mjs",
   "bin": {
+    "dora": "dist/index.mjs",
     "shannon": "dist/index.mjs"
   },
   "files": [
@@ -59,7 +60,7 @@
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/KeygraphHQ/shannon.git",
+    "url": "git+https://github.com/KeygraphHQ/dora.git",
     "directory": "apps/cli"
   },
   "engines": {

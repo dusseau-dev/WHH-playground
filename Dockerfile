@@ -86,7 +86,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build worker. CLI not needed in Docker
-RUN pnpm --filter @shannon/worker run build
+RUN pnpm --filter @dora/worker run build
 RUN test -f apps/worker/dist/ai/extensions/bash-timeout/index.js
 
 # Production-only deps (pnpm recommends install --prod over prune in monorepos)
@@ -196,7 +196,7 @@ RUN chmod +x /app/entrypoint.sh
 ENV NODE_ENV=production
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 ENV PATH="${JAVA_HOME}/bin:/usr/local/bin:$PATH"
-ENV SHANNON_DOCKER=true
+ENV DORA_DOCKER=true
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_MCP_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV PLAYWRIGHT_CLI_SKILL_PATH=/tmp/.pi/agent/skills/playwright-cli/SKILL.md

@@ -3,7 +3,7 @@ import { DEFAULT_MODEL_SPEC, parseModelSpec } from './model-spec.js';
 
 export type ModelTier = 'small' | 'medium' | 'large';
 export type OpenAIFormat = 'chat-completions' | 'responses';
-export type ModelSelectionSource = 'provider-config' | 'shannon-ai-model' | 'legacy';
+export type ModelSelectionSource = 'provider-config' | 'dora-ai-model' | 'legacy';
 export type ModelEnvironment = Readonly<Record<string, string | undefined>>;
 
 export const CURATED_PROVIDER_IDS = ['anthropic', 'openai', 'xai', 'amazon-bedrock'] as const;
@@ -155,7 +155,7 @@ function providerIdFromConfig(config: ProviderConfig): string {
 
 function vertexMigrationError(): Error {
   return new Error(
-    'Vertex AI is no longer supported by this model runtime. Migrate to SHANNON_AI_MODEL=<provider>:<model-id> with SHANNON_AI_API_KEY, or use a supported gateway via SHANNON_AI_BASE_URL.',
+    'Vertex AI is no longer supported by this model runtime. Migrate to DORA_AI_MODEL=<provider>:<model-id> with DORA_AI_API_KEY, or use a supported gateway via DORA_AI_BASE_URL.',
   );
 }
 
@@ -195,17 +195,17 @@ function environmentCredential(
         ...(baseUrl ? ['ANTHROPIC_AUTH_TOKEN'] : []),
         'ANTHROPIC_API_KEY',
         'CLAUDE_CODE_OAUTH_TOKEN',
-        'SHANNON_AI_API_KEY',
+        'DORA_AI_API_KEY',
       ];
       break;
     case 'openai':
-      candidates = ['OPENAI_API_KEY', 'SHANNON_AI_API_KEY'];
+      candidates = ['OPENAI_API_KEY', 'DORA_AI_API_KEY'];
       break;
     case 'xai':
-      candidates = ['XAI_API_KEY', 'SHANNON_AI_API_KEY'];
+      candidates = ['XAI_API_KEY', 'DORA_AI_API_KEY'];
       break;
     default:
-      candidates = ['SHANNON_AI_API_KEY'];
+      candidates = ['DORA_AI_API_KEY'];
   }
 
   const name = candidates.find((candidate) => value(env, candidate));
@@ -223,10 +223,10 @@ function resolveOpenAIFormat(
 ): OpenAIFormat | undefined {
   if (!configured) return providerId === 'openai' && baseUrl ? 'chat-completions' : undefined;
   if (!(OPENAI_FORMATS as readonly string[]).includes(configured)) {
-    throw new Error(`SHANNON_AI_OPENAI_FORMAT must be one of: ${OPENAI_FORMATS.join(', ')}.`);
+    throw new Error(`DORA_AI_OPENAI_FORMAT must be one of: ${OPENAI_FORMATS.join(', ')}.`);
   }
   if (!baseUrl) {
-    throw new Error('SHANNON_AI_OPENAI_FORMAT requires SHANNON_AI_BASE_URL or ProviderConfig.baseUrl.');
+    throw new Error('DORA_AI_OPENAI_FORMAT requires DORA_AI_BASE_URL or ProviderConfig.baseUrl.');
   }
   return configured as OpenAIFormat;
 }
@@ -237,7 +237,7 @@ function warnForMixedConfiguration(env: ModelEnvironment, warn: WarningSink): vo
   if (legacyNames.length === 0) return;
   warnedSinks.add(warn);
   warn(
-    `SHANNON_AI_MODEL takes precedence over legacy provider/model variables (${legacyNames.join(', ')}); remove the legacy settings after migration.`,
+    `DORA_AI_MODEL takes precedence over legacy provider/model variables (${legacyNames.join(', ')}); remove the legacy settings after migration.`,
   );
 }
 
@@ -245,7 +245,7 @@ function configuredModel(config: ProviderConfig, providerId: string, tier: Model
   const candidate = config.model?.trim() || config.modelOverrides?.[tier]?.trim();
   if (!candidate) return legacyModel(tier, env);
 
-  // Accept a redundant provider prefix for callers migrating from SHANNON_AI_MODEL,
+  // Accept a redundant provider prefix for callers migrating from DORA_AI_MODEL,
   // while leaving model ids containing colons (notably Bedrock ids) untouched.
   if (candidate.startsWith(`${providerId}:`)) return parseModelSpec(candidate).modelId;
   return candidate;
@@ -256,10 +256,10 @@ function environmentNamesForNewSelection(
   credential: CredentialMetadata,
   providerId: string,
 ): string[] {
-  const names = ['SHANNON_AI_MODEL'];
-  if (value(env, 'SHANNON_AI_BASE_URL')) names.push('SHANNON_AI_BASE_URL');
+  const names = ['DORA_AI_MODEL'];
+  if (value(env, 'DORA_AI_BASE_URL')) names.push('DORA_AI_BASE_URL');
   else if (providerId === 'anthropic' && value(env, 'ANTHROPIC_BASE_URL')) names.push('ANTHROPIC_BASE_URL');
-  if (value(env, 'SHANNON_AI_OPENAI_FORMAT')) names.push('SHANNON_AI_OPENAI_FORMAT');
+  if (value(env, 'DORA_AI_OPENAI_FORMAT')) names.push('DORA_AI_OPENAI_FORMAT');
   if (credential.names) names.push(...credential.names);
   else if (credential.name) names.push(credential.name);
   if (providerId === 'amazon-bedrock') {
@@ -317,18 +317,18 @@ export function resolveModelSelection(options: ResolveModelSelectionOptions = {}
     };
   }
 
-  const shannonModel = value(env, 'SHANNON_AI_MODEL');
-  if (shannonModel) {
+  const doraModel = value(env, 'DORA_AI_MODEL');
+  if (doraModel) {
     warnForMixedConfiguration(env, warn);
-    const { providerId, modelId } = parseModelSpec(shannonModel);
+    const { providerId, modelId } = parseModelSpec(doraModel);
     const baseUrl =
-      value(env, 'SHANNON_AI_BASE_URL') ?? (providerId === 'anthropic' ? value(env, 'ANTHROPIC_BASE_URL') : undefined);
+      value(env, 'DORA_AI_BASE_URL') ?? (providerId === 'anthropic' ? value(env, 'ANTHROPIC_BASE_URL') : undefined);
     const credential = environmentCredential(providerId, env, baseUrl);
-    const openAIFormat = resolveOpenAIFormat(providerId, baseUrl, value(env, 'SHANNON_AI_OPENAI_FORMAT'));
+    const openAIFormat = resolveOpenAIFormat(providerId, baseUrl, value(env, 'DORA_AI_OPENAI_FORMAT'));
     return {
       providerId,
       modelId,
-      source: 'shannon-ai-model',
+      source: 'dora-ai-model',
       credential,
       ...(baseUrl && { baseUrl }),
       ...(openAIFormat && { openAIFormat }),

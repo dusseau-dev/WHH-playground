@@ -44,7 +44,7 @@ export async function start(args: StartArgs): Promise<void> {
     ...(args.allowElevatedLoad && { elevatedLoadConfirmed: true }),
   });
 
-  const prefix = isLocal() ? './shannon' : 'npx @keygraph/shannon';
+  const prefix = isLocal() ? './dora' : 'npx @keygraph/dora';
   console.log(`  Target:     ${run.snapshot.targetUrl}`);
   console.log(`  Mode:       ${run.snapshot.sourceMode === 'url-only' ? 'URL-only dynamic' : 'Source-assisted'}`);
   if (run.snapshot.repoPath) console.log(`  Repository: ${run.snapshot.repoPath}`);

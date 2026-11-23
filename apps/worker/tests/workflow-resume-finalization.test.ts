@@ -157,7 +157,7 @@ describe('all-complete resume finalization', () => {
       vulnClasses: [],
       moduleSafety: { targetEnvironment: 'staging' },
       detectionValidation: {
-        canaryPath: '/__shannon__/detection-simulation',
+        canaryPath: '/__dora__/detection-simulation',
         minimumDetectionRate: 1,
         maxWaitSeconds: 30,
         splunk: {
@@ -186,7 +186,7 @@ describe('all-complete resume finalization', () => {
         vulnClasses: [],
         moduleSafety: { targetEnvironment: 'staging' },
         detectionValidation: {
-          canaryPath: '/__shannon__/detection-simulation',
+          canaryPath: '/__dora__/detection-simulation',
           minimumDetectionRate: 1,
           maxWaitSeconds: 30,
           splunk: {
@@ -211,7 +211,7 @@ describe('all-complete resume finalization', () => {
       testScopes: ['alerting-effectiveness'],
       moduleSafety: { targetEnvironment: 'staging' },
       detectionValidation: {
-        canaryPath: '/__shannon__/detection-simulation',
+        canaryPath: '/__dora__/detection-simulation',
         minimumDetectionRate: 1,
         maxWaitSeconds: 30,
         splunk: {

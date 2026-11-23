@@ -13,7 +13,7 @@ Build a live, evidence-backed map of the target using browser and API observatio
 </method>
 
 <deliverable>
-Create .shannon/deliverables/recon_deliverable.md with:
+Create .dora/deliverables/recon_deliverable.md with:
 - Assessment mode and observable coverage limits
 - Tested identities and observable role boundaries, without secrets
 - Page and endpoint inventory with method, authentication state, inputs, and observed response behavior
@@ -22,6 +22,6 @@ Create .shannon/deliverables/recon_deliverable.md with:
 - Coverage limits, unreachable areas, and errors
 
 Save it with:
-save-deliverable --type RECON --file-path ".shannon/deliverables/recon_deliverable.md"
+save-deliverable --type RECON --file-path ".dora/deliverables/recon_deliverable.md"
 Do not finish until the file is saved successfully.
 </deliverable>

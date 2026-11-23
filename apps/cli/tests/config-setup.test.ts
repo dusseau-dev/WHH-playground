@@ -29,10 +29,10 @@ import { saveConfig } from '../src/config/writer.js';
 import { setMode } from '../src/mode.js';
 
 const CONFIG_ENV = [
-  'SHANNON_AI_MODEL',
-  'SHANNON_AI_BASE_URL',
-  'SHANNON_AI_OPENAI_FORMAT',
-  'SHANNON_AI_API_KEY',
+  'DORA_AI_MODEL',
+  'DORA_AI_BASE_URL',
+  'DORA_AI_OPENAI_FORMAT',
+  'DORA_AI_API_KEY',
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'OPENAI_API_KEY',
@@ -80,7 +80,7 @@ function writeConfig(content: string): void {
 }
 
 beforeEach(() => {
-  temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'shannon-config-'));
+  temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'dora-config-'));
   state.configPath = path.join(temporaryDirectory, 'config.toml');
   cleanConfigEnv();
   setMode('npx');
@@ -121,13 +121,13 @@ api_key = "unused-generic"
 
     resolveConfig();
 
-    expect(process.env.SHANNON_AI_MODEL).toBe('openai:gpt-5.6-sol');
-    expect(process.env.SHANNON_AI_BASE_URL).toBe('https://gateway.test/v1');
-    expect(process.env.SHANNON_AI_OPENAI_FORMAT).toBe('responses');
+    expect(process.env.DORA_AI_MODEL).toBe('openai:gpt-5.6-sol');
+    expect(process.env.DORA_AI_BASE_URL).toBe('https://gateway.test/v1');
+    expect(process.env.DORA_AI_OPENAI_FORMAT).toBe('responses');
     expect(process.env.OPENAI_API_KEY).toBe('environment-openai');
     expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(process.env.XAI_API_KEY).toBeUndefined();
-    expect(process.env.SHANNON_AI_API_KEY).toBeUndefined();
+    expect(process.env.DORA_AI_API_KEY).toBeUndefined();
   });
 
   it.each(['anthropic', 'openai', 'xai'])('accepts provider.api_key for curated %s models', (provider) => {
@@ -141,7 +141,7 @@ api_key = "generic-key"
 
     resolveConfig();
 
-    expect(process.env.SHANNON_AI_API_KEY).toBe('generic-key');
+    expect(process.env.DORA_AI_API_KEY).toBe('generic-key');
     expect(process.env.ANTHROPIC_API_KEY).toBeUndefined();
     expect(process.env.OPENAI_API_KEY).toBeUndefined();
     expect(process.env.XAI_API_KEY).toBeUndefined();
@@ -151,19 +151,19 @@ api_key = "generic-key"
     'anthropic',
     'openai',
     'xai',
-  ])('accepts an exported SHANNON_AI_API_KEY for curated %s models', (provider) => {
+  ])('accepts an exported DORA_AI_API_KEY for curated %s models', (provider) => {
     writeConfig(`
 [core]
 model = "${provider}:test-model"
 `);
-    process.env.SHANNON_AI_API_KEY = 'exported-generic';
+    process.env.DORA_AI_API_KEY = 'exported-generic';
 
     resolveConfig();
 
-    expect(process.env.SHANNON_AI_API_KEY).toBe('exported-generic');
+    expect(process.env.DORA_AI_API_KEY).toBe('exported-generic');
   });
 
-  it('preserves an exported SHANNON_AI_API_KEY over a provider-specific TOML key', () => {
+  it('preserves an exported DORA_AI_API_KEY over a provider-specific TOML key', () => {
     writeConfig(`
 [core]
 model = "openai:test-model"
@@ -171,11 +171,11 @@ model = "openai:test-model"
 [openai]
 api_key = "toml-openai"
 `);
-    process.env.SHANNON_AI_API_KEY = 'exported-generic';
+    process.env.DORA_AI_API_KEY = 'exported-generic';
 
     resolveConfig();
 
-    expect(process.env.SHANNON_AI_API_KEY).toBe('exported-generic');
+    expect(process.env.DORA_AI_API_KEY).toBe('exported-generic');
     expect(process.env.OPENAI_API_KEY).toBeUndefined();
   });
 
@@ -238,7 +238,7 @@ large = "legacy-large"
 
     resolveConfig();
 
-    expect(process.env.SHANNON_AI_MODEL).toBeUndefined();
+    expect(process.env.DORA_AI_MODEL).toBeUndefined();
     expect(process.env.CLAUDE_CODE_USE_BEDROCK).toBe('1');
     expect(process.env.AWS_REGION).toBe('us-east-1');
     expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBe('legacy-bedrock');
@@ -268,7 +268,7 @@ large = "legacy-large"
 
     resolveConfig();
 
-    expect(process.env.SHANNON_AI_MODEL).toBe('openai:gpt-5.6-sol');
+    expect(process.env.DORA_AI_MODEL).toBe('openai:gpt-5.6-sol');
     expect(process.env.OPENAI_API_KEY).toBe('selected-openai');
     expect(process.env.CLAUDE_CODE_USE_BEDROCK).toBeUndefined();
     expect(process.env.AWS_BEARER_TOKEN_BEDROCK).toBeUndefined();
@@ -295,7 +295,7 @@ large = "large"
     }) as never);
 
     expect(() => resolveConfig()).toThrow('process.exit(1)');
-    expect(errors.join('\n')).toMatch(/Vertex AI.*no longer supported.*SHANNON_AI_MODEL/i);
+    expect(errors.join('\n')).toMatch(/Vertex AI.*no longer supported.*DORA_AI_MODEL/i);
   });
 });
 

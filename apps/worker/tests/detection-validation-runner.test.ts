@@ -16,7 +16,7 @@ import type { DetectionValidationSettings } from '../src/types/detection-validat
 const temporaryDirectories: string[] = [];
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-detection-validation-'));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-detection-validation-'));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 const settings: DetectionValidationSettings = {
-  canaryPath: '/__shannon__/detection-simulation',
+  canaryPath: '/__dora__/detection-simulation',
   minimumDetectionRate: 1,
   maxWaitSeconds: 30,
   splunk: {
@@ -48,7 +48,7 @@ function splunkResponse(rawEvents: string[], time = '2026-09-29T12:00:01.000Z'):
 }
 
 describe('Splunk search construction', () => {
-  it('builds a bounded search from validated identifiers and a Shannon marker', () => {
+  it('builds a bounded search from validated identifiers and a Dora marker', () => {
     expect(buildSplunkSearch('security_alerts', 'notable', 'shn-run-abc123')).toBe(
       'search index="security_alerts" sourcetype="notable" "shn-run-abc123" | fields _time _raw | head 1000',
     );
@@ -104,8 +104,8 @@ describe('detection validation runner', () => {
     for (const [index, marker] of scenarioMarkers.entries()) {
       const request = targetRequests[index + 1];
       expect(request).toBeDefined();
-      expect(new URL(request?.url ?? '').searchParams.get('shannon_simulation_id')).toBe(marker);
-      expect(request?.init?.headers).toMatchObject({ 'X-Shannon-Simulation-Id': marker });
+      expect(new URL(request?.url ?? '').searchParams.get('dora_simulation_id')).toBe(marker);
+      expect(request?.init?.headers).toMatchObject({ 'X-Dora-Simulation-Id': marker });
     }
     const searches = requests.filter(({ url }) => url.startsWith(settings.splunk.managementUrl));
     expect(searches.every(({ url }) => url.endsWith('/services/search/v2/jobs/export'))).toBe(true);
@@ -116,7 +116,7 @@ describe('detection validation runner', () => {
 
     const evidence = await fs.readFile(path.join(deliverablesPath, DETECTION_VALIDATION_RESULT_FILENAME), 'utf8');
     expect(evidence).not.toContain('splunk-secret');
-    expect(evidence).not.toContain('SHANNON_FAKE_PASSWORD_DO_NOT_USE');
+    expect(evidence).not.toContain('DORA_FAKE_PASSWORD_DO_NOT_USE');
     await expect(loadDetectionValidationResult(deliverablesPath)).resolves.toEqual(result);
 
     const callCount = fetchMock.mock.calls.length;

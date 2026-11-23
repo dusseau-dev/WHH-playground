@@ -17,8 +17,8 @@ describe('detection validation corpus', () => {
     const pairs = new Map<string, string[]>();
     for (const fixture of DETECTION_VALIDATION_CORPUS) {
       pairs.set(fixture.pairId, [...(pairs.get(fixture.pairId) ?? []), fixture.cohort]);
-      expect(fixture.body.simulation).toBe('shannon-inert');
-      expect(JSON.stringify(fixture.body)).toMatch(/\.invalid|SHANNON_FAKE|shannon-inert/);
+      expect(fixture.body.simulation).toBe('dora-inert');
+      expect(JSON.stringify(fixture.body)).toMatch(/\.invalid|DORA_FAKE|dora-inert/);
     }
     expect([...pairs.values()]).toHaveLength(5);
     expect([...pairs.values()].every((cohorts) => cohorts.sort().join(',') === 'ai,human')).toBe(true);

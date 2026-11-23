@@ -1,4 +1,4 @@
-/** TOML config writer for ~/.shannon/config.toml. */
+/** TOML config writer for ~/.dora/config.toml. */
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,7 @@ import { getConfigFile } from '../home.js';
 
 // === Types ===
 
-export interface ShannonConfig {
+export interface DoraConfig {
   core?: { model?: string; base_url?: string };
   anthropic?: { api_key?: string; oauth_token?: string };
   openai?: { api_key?: string; format?: 'chat-completions' | 'responses' };
@@ -18,8 +18,8 @@ export interface ShannonConfig {
 
 // === File Operations ===
 
-/** Write the config to ~/.shannon/config.toml with 0o600 permissions. */
-export function saveConfig(config: ShannonConfig): void {
+/** Write the config to ~/.dora/config.toml with 0o600 permissions. */
+export function saveConfig(config: DoraConfig): void {
   const configPath = getConfigFile();
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });

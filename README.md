@@ -1,15 +1,15 @@
 >[!NOTE]
-> **[📢 Sunsetting Router Mode (claude-code-router)`. →](https://github.com/KeygraphHQ/shannon/discussions/301)**
+> **[📢 Sunsetting Router Mode (claude-code-router)`. →](https://github.com/KeygraphHQ/dora/discussions/301)**
 
 <div align="center">
 
-<img src="./assets/github-banner.png" alt="Shannon — AI Pentester for Web Applications and APIs" width="100%">
+<img src="./assets/github-banner.png" alt="Dora — AI Pentester for Web Applications and APIs" width="100%">
 
-# Shannon — AI Pentester by Keygraph
+# Dora — AI Pentester by Keygraph
 
-<a href="https://trendshift.io/repositories/15604" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15604" alt="KeygraphHQ%2Fshannon | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/15604" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15604" alt="KeygraphHQ%2Fdora | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-Shannon is an autonomous security assessment system for web applications and APIs. <br />
+Dora is an autonomous security assessment system for web applications and APIs. <br />
 Run URL-only dynamic testing, or add a repository for source-assisted coverage and code-location context.
 
 ---
@@ -20,29 +20,29 @@ Run URL-only dynamic testing, or add a repository for source-assisted coverage a
 ---
 </div>
 
-## What is Shannon?
+## What is Dora?
 
-Shannon is an AI security testing system developed by [Keygraph](https://keygraph.io). It combines live browser and API testing with an evidence triage gate. A repository is optional: source-assisted assessments use code to guide the live test, while URL-only assessments operate exclusively through behavior observable at the authorized target.
+Dora is an AI security testing system developed by [Keygraph](https://keygraph.io). It combines live browser and API testing with an evidence triage gate. A repository is optional: source-assisted assessments use code to guide the live test, while URL-only assessments operate exclusively through behavior observable at the authorized target.
 
 Both modes run preflight, authentication validation, live reconnaissance, selected security test categories, optional safe demonstrations, triage, and reporting. URL-only reports explicitly disclose that implementation analysis and code-location coverage were unavailable.
 
-**Why Shannon Exists**
+**Why Dora Exists**
 
 Thanks to tools like Claude Code and Cursor, your team ships code non-stop. But your penetration test? That happens once a year. This creates a *massive* security gap. For the other 364 days, you could be unknowingly shipping vulnerabilities to production.
 
-Shannon closes that gap by providing on-demand, automated penetration testing that can run against every build or release.
+Dora closes that gap by providing on-demand, automated penetration testing that can run against every build or release.
 
-## Shannon in Action
+## Dora in Action
 
-Shannon identified 20+ vulnerabilities in OWASP Juice Shop, including authentication bypass and database exfiltration. [Full report →](sample-reports/shannon-report-juice-shop.md)
+Dora identified 20+ vulnerabilities in OWASP Juice Shop, including authentication bypass and database exfiltration. [Full report →](sample-reports/dora-report-juice-shop.md)
 
-![Demo](assets/shannon-action.gif)
+![Demo](assets/dora-action.gif)
 
 ## Features
 
 - **Two Assessment Modes**: Run against a URL alone, or provide a repository for source-assisted analysis and code-location context.
 - **Local Operator UI**: Create reusable profiles, select security test categories, start/cancel/resume runs, follow live activity, triage findings, and download reports or evidence from a localhost-only interface.
-- **Fully Autonomous Operation**: A single command launches the full assessment. Shannon handles 2FA/TOTP logins (including SSO), browser navigation, safe demonstrations, triage, and report generation without manual intervention.
+- **Fully Autonomous Operation**: A single command launches the full assessment. Dora handles 2FA/TOTP logins (including SSO), browser navigation, safe demonstrations, triage, and report generation without manual intervention.
 - **Evidence-First Results**: Triage distinguishes confirmed, downgraded, ruled-out, chain-dependent, and unvalidated candidates before reporting.
 - **OWASP Vulnerability Coverage**: Identifies and validates Injection, XSS, SSRF, and Broken Authentication/Authorization, with additional categories in development.
 - **Code-Aware Dynamic Testing**: In source-assisted mode, source analysis guides live browser and API validation against the running application.
@@ -50,25 +50,25 @@ Shannon identified 20+ vulnerabilities in OWASP Juice Shop, including authentica
 
 ## Product Line
 
-Shannon is developed by [Keygraph](https://keygraph.io) and available in two editions:
+Dora is developed by [Keygraph](https://keygraph.io) and available in two editions:
 
 | Edition | License | Best For |
 |---------|---------|----------|
-| **Shannon Lite** | AGPL-3.0 | Local testing of your own applications. |
-| **Shannon Pro** | Commercial | Organizations needing a single AppSec platform (SAST, SCA, secrets, business logic testing, autonomous pentesting) with CI/CD integration and self-hosted deployment. |
+| **Dora Lite** | AGPL-3.0 | Local testing of your own applications. |
+| **Dora Pro** | Commercial | Organizations needing a single AppSec platform (SAST, SCA, secrets, business logic testing, autonomous pentesting) with CI/CD integration and self-hosted deployment. |
 
-> **This repository contains Shannon Lite,** the core autonomous AI pentesting framework. **Shannon Pro** is Keygraph's all-in-one AppSec platform, combining SAST, SCA, secrets scanning, business logic security testing, and autonomous AI pentesting in a single correlated workflow. Every finding is validated with a working proof-of-concept exploit.
+> **This repository contains Dora Lite,** the core autonomous AI pentesting framework. **Dora Pro** is Keygraph's all-in-one AppSec platform, combining SAST, SCA, secrets scanning, business logic security testing, and autonomous AI pentesting in a single correlated workflow. Every finding is validated with a working proof-of-concept exploit.
 
 > [!IMPORTANT]
-> **URL-only mode has lower coverage than source-assisted mode.** It cannot inspect implementation-only attack surfaces, attribute findings to code locations, or prove that unobserved routes are absent. Shannon discloses these limits in the UI and every URL-only report.
+> **URL-only mode has lower coverage than source-assisted mode.** It cannot inspect implementation-only attack surfaces, attribute findings to code locations, or prove that unobserved routes are absent. Dora discloses these limits in the UI and every URL-only report.
 
-### Shannon Pro: Architecture Overview
+### Dora Pro: Architecture Overview
 
-Shannon Pro is an all-in-one application security platform that replaces the need to stitch together separate SAST, SCA, secrets scanning, and pentesting tools. It operates as a two-stage pipeline: agentic static analysis of the codebase, followed by autonomous AI penetration testing. Findings from both stages are cross-referenced and correlated, so every reported vulnerability has a working proof-of-concept exploit and a precise source code location.
+Dora Pro is an all-in-one application security platform that replaces the need to stitch together separate SAST, SCA, secrets scanning, and pentesting tools. It operates as a two-stage pipeline: agentic static analysis of the codebase, followed by autonomous AI penetration testing. Findings from both stages are cross-referenced and correlated, so every reported vulnerability has a working proof-of-concept exploit and a precise source code location.
 
 **Stage 1: Agentic Static Analysis**
 
-Shannon Pro transforms the codebase into a Code Property Graph (CPG) combining the AST, control flow graph, and program dependence graph. It then runs five analysis capabilities:
+Dora Pro transforms the codebase into a Code Property Graph (CPG) combining the AST, control flow graph, and program dependence graph. It then runs five analysis capabilities:
 
 - **Data Flow Analysis (SAST)**: Identifies sources (user input, API requests) and sinks (SQL queries, command execution), then traces paths between them. At each node, an LLM evaluates whether the specific sanitization applied is sufficient for the specific vulnerability in context, rather than relying on a hard-coded allowlist of safe functions.
 - **Point Issue Detection (SAST)**: LLM-based detection of single-location vulnerabilities: weak cryptography, hardcoded credentials, insecure configuration, missing security headers, weak RNG, disabled certificate validation, and overly permissive CORS.
@@ -78,7 +78,7 @@ Shannon Pro transforms the codebase into a Code Property Graph (CPG) combining t
 
 **Stage 2: Autonomous Dynamic Penetration Testing**
 
-The same multi-agent pentest pipeline as Shannon Lite (reconnaissance, parallel vulnerability analysis, parallel exploitation, reporting), enhanced with static findings injected into the exploitation queue. Static findings are mapped to Shannon's five attack domains (Injection, XSS, SSRF, Auth, Authz), and exploit agents attempt real proof-of-concept attacks against the running application for each finding.
+The same multi-agent pentest pipeline as Dora Lite (reconnaissance, parallel vulnerability analysis, parallel exploitation, reporting), enhanced with static findings injected into the exploitation queue. Static findings are mapped to Dora's five attack domains (Injection, XSS, SSRF, Auth, Authz), and exploit agents attempt real proof-of-concept attacks against the running application for each finding.
 
 **Static-Dynamic Correlation**
 
@@ -86,9 +86,9 @@ This is the core differentiator. A data flow vulnerability identified in static 
 
 **Deployment Model**
 
-Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-hosted runners). The data plane, which handles code access and all LLM API calls, runs entirely within the customer's infrastructure using the customer's own API keys. Source code never leaves the customer's network. The Keygraph control plane handles job orchestration, scan scheduling, and the reporting UI, receiving only aggregate findings.
+Dora Pro supports a self-hosted runner model (similar to GitHub Actions self-hosted runners). The data plane, which handles code access and all LLM API calls, runs entirely within the customer's infrastructure using the customer's own API keys. Source code never leaves the customer's network. The Keygraph control plane handles job orchestration, scan scheduling, and the reporting UI, receiving only aggregate findings.
 
-| Capability | Shannon Lite | Shannon Pro (All-in-One AppSec) |
+| Capability | Dora Lite | Dora Pro (All-in-One AppSec) |
 | --- | --- | --- |
 | **Licensing** | AGPL-3.0 | Commercial |
 | **Static Analysis** | Code review prompting | Full agentic SAST, SCA, secrets, business logic testing |
@@ -99,12 +99,12 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
 | **Deployment** | CLI | Managed cloud or self-hosted runner |
 | **Boundary Analysis** | None | Automatic service boundary detection with team routing |
 
-[Full technical details →](./SHANNON-PRO.md)
+[Full technical details →](./DORA-PRO.md)
 
 ## Table of Contents
 
-- [What is Shannon?](#what-is-shannon)
-- [Shannon in Action](#shannon-in-action)
+- [What is Dora?](#what-is-dora)
+- [Dora in Action](#dora-in-action)
 - [Features](#features)
 - [Product Line](#product-line)
 - [Setup & Usage Instructions](#setup--usage-instructions)
@@ -147,53 +147,53 @@ Shannon Pro supports a self-hosted runner model (similar to GitHub Actions self-
   - **Custom or catalog provider** - Use a provider supported by the model runtime, optionally through a compatible gateway
 
 > [!NOTE]
-> Docker is still required to run assessments through `npx`. The CLI pulls a prebuilt Shannon worker image. In source-assisted mode the repository is mounted read-only with workspace-backed writable overlays; URL-only mode instead mounts an isolated writable target workspace. The local UI itself binds only to `127.0.0.1`.
+> Docker is still required to run assessments through `npx`. The CLI pulls a prebuilt Dora worker image. In source-assisted mode the repository is mounted read-only with workspace-backed writable overlays; URL-only mode instead mounts an isolated writable target workspace. The local UI itself binds only to `127.0.0.1`.
 
 ### Quick Start (Recommended: npx)
 
 > [!WARNING]
-> **Please read the [Disclaimers](#disclaimers) before running Shannon.** Shannon is **not** a passive scanner — it actively executes exploits against the target. You must have **explicit, written authorization** from the system owner.
+> **Please read the [Disclaimers](#disclaimers) before running Dora.** Dora is **not** a passive scanner — it actively executes exploits against the target. You must have **explicit, written authorization** from the system owner.
 
 ```bash
 # 1. Configure credentials (interactive wizard — one-time setup)
-npx @keygraph/shannon setup
+npx @keygraph/dora setup
 
 # Or export env vars directly
-export SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+export DORA_AI_MODEL=anthropic:claude-sonnet-4-6
 # Load ANTHROPIC_API_KEY from your shell or secret manager.
 
 # 2a. Run a URL-only assessment
-npx @keygraph/shannon start -u https://your-app.com
+npx @keygraph/dora start -u https://your-app.com
 
 # 2b. Or add a repository for source-assisted coverage
-npx @keygraph/shannon start -u https://your-app.com -r /path/to/your-repo
+npx @keygraph/dora start -u https://your-app.com -r /path/to/your-repo
 
 # Open the local operator UI
-npx @keygraph/shannon ui
+npx @keygraph/dora ui
 ```
 
-Shannon will pull the worker image from Docker Hub, start the infrastructure, and launch an ephemeral worker container for the scan.
+Dora will pull the worker image from Docker Hub, start the infrastructure, and launch an ephemeral worker container for the scan.
 
 ### Clone and Build
 
-Use this if you want to run Shannon from a local clone, modify Shannon itself, or keep the worker image built locally.
+Use this if you want to run Dora from a local clone, modify Dora itself, or keep the worker image built locally.
 
 ```bash
-# 1. Clone Shannon
-git clone https://github.com/KeygraphHQ/shannon.git
-cd shannon
+# 1. Clone Dora
+git clone https://github.com/KeygraphHQ/dora.git
+cd dora
 
 # 2. Configure credentials (choose one method)
 
 # Option A: Create a .env file
 cat > .env << 'EOF'
-SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
+DORA_AI_MODEL=anthropic:claude-sonnet-4-6
 ANTHROPIC_API_KEY=your-api-key
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
 EOF
 
 # Option B: Export environment variables
-export SHANNON_AI_MODEL="anthropic:claude-sonnet-4-6"
+export DORA_AI_MODEL="anthropic:claude-sonnet-4-6"
 export ANTHROPIC_API_KEY="your-api-key"              # or CLAUDE_CODE_OAUTH_TOKEN
 export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000           # recommended
 
@@ -202,14 +202,14 @@ pnpm install
 pnpm build
 
 # 4. Run an assessment, with or without a repository
-./shannon start -u https://your-app.com
-./shannon start -u https://your-app.com -r /path/to/your-repo
+./dora start -u https://your-app.com
+./dora start -u https://your-app.com -r /path/to/your-repo
 
 # Open the local operator UI
-./shannon ui
+./dora ui
 ```
 
-Shannon will build the worker image locally, start the infrastructure, and launch an ephemeral worker container for the scan.
+Dora will build the worker image locally, start the infrastructure, and launch an ephemeral worker container for the scan.
 
 ### Choose an Assessment Mode
 
@@ -218,16 +218,16 @@ Omit `-r` for URL-only dynamic testing. Pass an absolute or relative repository 
 Examples:
 
 ```bash
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo
-npx @keygraph/shannon start -u https://example.com
+npx @keygraph/dora start -u https://example.com -r /path/to/repo
+npx @keygraph/dora start -u https://example.com
 ```
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-./shannon start -u https://example.com -r ./relative/path
-./shannon start -u https://example.com
+./dora start -u https://example.com -r ./relative/path
+./dora start -u https://example.com
 ```
 
 </details>
@@ -237,9 +237,9 @@ npx @keygraph/shannon start -u https://example.com
 #### Monitoring Progress
 
 ```bash
-npx @keygraph/shannon logs <workspace>
-npx @keygraph/shannon status
-npx @keygraph/shannon ui
+npx @keygraph/dora logs <workspace>
+npx @keygraph/dora status
+npx @keygraph/dora ui
 ```
 
 Open the Temporal Web UI for detailed monitoring:
@@ -252,27 +252,27 @@ open http://localhost:8233
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-./shannon logs <workspace>
-./shannon status
-./shannon ui
+./dora logs <workspace>
+./dora status
+./dora ui
 ```
 
 </details>
 
-#### Stopping Shannon
+#### Stopping Dora
 
 ```bash
-npx @keygraph/shannon stop
-npx @keygraph/shannon stop --clean
-npx @keygraph/shannon uninstall
+npx @keygraph/dora stop
+npx @keygraph/dora stop --clean
+npx @keygraph/dora uninstall
 ```
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-./shannon stop
-./shannon stop --clean
+./dora stop
+./dora stop --clean
 ```
 
 </details>
@@ -281,26 +281,26 @@ npx @keygraph/shannon uninstall
 
 ```bash
 # Basic pentest
-npx @keygraph/shannon start -u https://example.com
+npx @keygraph/dora start -u https://example.com
 
 # Source-assisted assessment
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo
+npx @keygraph/dora start -u https://example.com -r /path/to/repo
 
 # With a configuration file
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -c /path/to/my-config.yaml
+npx @keygraph/dora start -u https://example.com -r /path/to/repo -c /path/to/my-config.yaml
 
 # Custom output directory
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -o ./my-reports
+npx @keygraph/dora start -u https://example.com -r /path/to/repo -o ./my-reports
 
 # Named workspace
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w q1-audit
+npx @keygraph/dora start -u https://example.com -r /path/to/repo -w q1-audit
 
 # List all workspaces
-npx @keygraph/shannon workspaces
+npx @keygraph/dora workspaces
 
 # Cancel or resume by immutable workspace snapshot
-npx @keygraph/shannon cancel q1-audit
-npx @keygraph/shannon resume q1-audit
+npx @keygraph/dora cancel q1-audit
+npx @keygraph/dora resume q1-audit
 ```
 
 <details>
@@ -308,64 +308,64 @@ npx @keygraph/shannon resume q1-audit
 
 ```bash
 # URL-only assessment
-./shannon start -u https://example.com
+./dora start -u https://example.com
 
 # Source-assisted assessment
-./shannon start -u https://example.com -r /path/to/repo
+./dora start -u https://example.com -r /path/to/repo
 
 # With a configuration file
-./shannon start -u https://example.com -r /path/to/repo -c /path/to/my-config.yaml
+./dora start -u https://example.com -r /path/to/repo -c /path/to/my-config.yaml
 
 # Custom output directory
-./shannon start -u https://example.com -r /path/to/repo -o ./my-reports
+./dora start -u https://example.com -r /path/to/repo -o ./my-reports
 
 # Named workspace
-./shannon start -u https://example.com -r /path/to/repo -w q1-audit
+./dora start -u https://example.com -r /path/to/repo -w q1-audit
 
 # List all workspaces
-./shannon workspaces
+./dora workspaces
 
 # Rebuild worker image
-./shannon build --no-cache
+./dora build --no-cache
 ```
 
 </details>
 
 ### Workspaces and Resuming
 
-Shannon supports **workspaces** that allow failed or cancelled runs to resume without changing their original target, source mode, repository, or normalized configuration.
+Dora supports **workspaces** that allow failed or cancelled runs to resume without changing their original target, source mode, repository, or normalized configuration.
 
 **How it works:**
 
-- Every run creates a workspace (auto-named by default, for example `example-com_shannon-1771007534808`)
-- Workspaces are stored in `./workspaces/` (local mode) or `~/.shannon/workspaces/` (npx mode)
+- Every run creates a workspace (auto-named by default, for example `example-com_dora-1771007534808`)
+- Workspaces are stored in `./workspaces/` (local mode) or `~/.dora/workspaces/` (npx mode)
 - Use `-w <name>` to give your run a custom name for easier reference
-- Resume with `shannon resume <workspace>`; completed agents and checkpoint artifacts are reused
-- Target secrets are never stored in `.shannon/run.json` and must be resolved from stored references or supplied again on resume
+- Resume with `dora resume <workspace>`; completed agents and checkpoint artifacts are reused
+- Target secrets are never stored in `.dora/run.json` and must be resolved from stored references or supplied again on resume
 - Each agent's progress is checkpointed via git commits, so resumed runs start from a clean, validated state
 
 ```bash
 # Start with a named workspace
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -w my-audit
+npx @keygraph/dora start -u https://example.com -r /path/to/repo -w my-audit
 
 # Resume the same workspace (skips completed agents)
-npx @keygraph/shannon resume my-audit
+npx @keygraph/dora resume my-audit
 
 # Cancel an active workspace
-npx @keygraph/shannon cancel my-audit
+npx @keygraph/dora cancel my-audit
 
 # List all workspaces and their status
-npx @keygraph/shannon workspaces
+npx @keygraph/dora workspaces
 ```
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-./shannon start -u https://example.com -r /path/to/repo -w my-audit
-./shannon start -u https://example.com -r /path/to/repo -w my-audit
-./shannon start -u https://example.com -r /path/to/repo -w example-com_shannon-1771007534808
-./shannon workspaces
+./dora start -u https://example.com -r /path/to/repo -w my-audit
+./dora start -u https://example.com -r /path/to/repo -w my-audit
+./dora start -u https://example.com -r /path/to/repo -w example-com_dora-1771007534808
+./dora workspaces
 ```
 
 </details>
@@ -379,33 +379,33 @@ npx @keygraph/shannon workspaces
 
 **Local mode** resolves credentials from:
 
-1. **Environment variables** - `SHANNON_AI_MODEL` and the selected provider's credential variable
+1. **Environment variables** - `DORA_AI_MODEL` and the selected provider's credential variable
 2. **`.env` file** - `./.env`
 
 **npx mode** uses TOML instead of `.env`:
 
-1. **Environment variables** - `SHANNON_AI_MODEL` and the selected provider's credential variable
-2. **`~/.shannon/config.toml`** - created by `npx @keygraph/shannon setup`
+1. **Environment variables** - `DORA_AI_MODEL` and the selected provider's credential variable
+2. **`~/.dora/config.toml`** - created by `npx @keygraph/dora setup`
 
 Environment variables always win, so you can override saved config for a single session without editing files.
 
 #### Model and Provider Selection
 
-`SHANNON_AI_MODEL` selects one model using the format `<provider>:<model-id>`. The provider is separated on the first colon, so model IDs may contain additional colons. The setup wizard writes this selection to `~/.shannon/config.toml` using a masked credential prompt and mode `0600` permissions.
+`DORA_AI_MODEL` selects one model using the format `<provider>:<model-id>`. The provider is separated on the first colon, so model IDs may contain additional colons. The setup wizard writes this selection to `~/.dora/config.toml` using a masked credential prompt and mode `0600` permissions.
 
-| Setup option | `SHANNON_AI_MODEL` example | Accepted credential source |
+| Setup option | `DORA_AI_MODEL` example | Accepted credential source |
 | --- | --- | --- |
-| Anthropic | `anthropic:claude-sonnet-4-6` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `SHANNON_AI_API_KEY` |
-| OpenAI | `openai:gpt-5.6-sol` | `OPENAI_API_KEY` or `SHANNON_AI_API_KEY` |
-| xAI | `xai:grok-4.5` | `XAI_API_KEY` or `SHANNON_AI_API_KEY` |
+| Anthropic | `anthropic:claude-sonnet-4-6` | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, or `DORA_AI_API_KEY` |
+| OpenAI | `openai:gpt-5.6-sol` | `OPENAI_API_KEY` or `DORA_AI_API_KEY` |
+| xAI | `xai:grok-4.5` | `XAI_API_KEY` or `DORA_AI_API_KEY` |
 | Amazon Bedrock | `amazon-bedrock:us.anthropic.claude-sonnet-4-6` | The standard AWS credential chain or `AWS_BEARER_TOKEN_BEDROCK` |
-| Other catalog provider | `<provider>:<model-id>` | `SHANNON_AI_API_KEY` |
+| Other catalog provider | `<provider>:<model-id>` | `DORA_AI_API_KEY` |
 
-Run `npx @keygraph/shannon setup` for the recommended configuration flow. If you configure the environment directly, load the credential variable through your shell, CI, or secret manager; never put a credential in `SHANNON_AI_MODEL` or commit it to the repository.
+Run `npx @keygraph/dora setup` for the recommended configuration flow. If you configure the environment directly, load the credential variable through your shell, CI, or secret manager; never put a credential in `DORA_AI_MODEL` or commit it to the repository.
 
 ```bash
-export SHANNON_AI_MODEL=anthropic:claude-sonnet-4-6
-# Inject ANTHROPIC_API_KEY through your secret manager before starting Shannon.
+export DORA_AI_MODEL=anthropic:claude-sonnet-4-6
+# Inject ANTHROPIC_API_KEY through your secret manager before starting Dora.
 ```
 
 #### Configuration (Optional)
@@ -491,13 +491,13 @@ rules:
 Run with:
 
 ```bash
-npx @keygraph/shannon start -u https://example.com -c ./my-app-config.yaml
-npx @keygraph/shannon start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
+npx @keygraph/dora start -u https://example.com -c ./my-app-config.yaml
+npx @keygraph/dora start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
 ```
 
 ##### Staging-only detection validation
 
-Select `alerting-effectiveness` to run Shannon's dedicated A09 detection-validation executor. It sends a frozen,
+Select `alerting-effectiveness` to run Dora's dedicated A09 detection-validation executor. It sends a frozen,
 non-executable corpus of five matched AI-authored and five human-authored simulations to a same-origin canary endpoint,
 then checks Splunk telemetry and alert indexes for the stable scenario markers. The canary and Splunk origins must use
 valid TLS; the canary must return `204` and must not redirect.
@@ -507,7 +507,7 @@ test_scopes: [alerting-effectiveness]
 module_safety:
   target_environment: staging
 detection_validation:
-  canary_path: /__shannon__/detection-simulation
+  canary_path: /__dora__/detection-simulation
   minimum_detection_rate: 1
   max_wait_seconds: 180
   splunk:
@@ -517,17 +517,17 @@ detection_validation:
     token: "least-privilege-search-token"
 ```
 
-Both cohorts default to a 100% threshold. A scored miss is recorded as a failed assessment while the Shannon workflow
+Both cohorts default to a 100% threshold. A scored miss is recorded as a failed assessment while the Dora workflow
 still completes so its evidence remains available. Connectivity, authorization, or calibration failures are reported as
 unavailable; emission or scoring gaps are partial. Splunk Cloud operators must enable REST API access and supply a token
-with search access to only the configured indexes. Profile import extracts the token into Shannon's existing Keychain or
+with search access to only the configured indexes. Profile import extracts the token into Dora's existing Keychain or
 session secret store, and exported profiles never contain it.
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-./shannon start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
+./dora start -u https://example.com -r /path/to/repo -c ./my-app-config.yaml
 ```
 
 </details>
@@ -547,7 +547,7 @@ Supported placeholders:
 - `$email_password`
 - `$email_totp`
 
-At runtime, Shannon replaces these placeholders with the credentials passed in the config.
+At runtime, Dora replaces these placeholders with the credentials passed in the config.
 
 ```yaml
 login_flow:
@@ -563,7 +563,7 @@ login_flow:
 
 Claude decides when and how deeply to reason on Opus 4.6 and 4.7. Enabled by default whenever a tier resolves to one of these models.
 
-- **npx mode** — `npx @keygraph/shannon setup` prompts you during the wizard.
+- **npx mode** — `npx @keygraph/dora setup` prompts you during the wizard.
 - **Local mode** — set `CLAUDE_ADAPTIVE_THINKING=false` in `.env` (or as an exported env var) to disable.
 
 #### Subscription Plan Rate Limits
@@ -580,16 +580,16 @@ pipeline:
 
 ### AWS Bedrock
 
-Shannon also supports [Amazon Bedrock](https://aws.amazon.com/bedrock/) instead of using an Anthropic API key.
+Dora also supports [Amazon Bedrock](https://aws.amazon.com/bedrock/) instead of using an Anthropic API key.
 
 #### Quick Setup
 
-Run `npx @keygraph/shannon setup` and select **AWS Bedrock**. The wizard will prompt for your region, bearer token, and one model ID.
+Run `npx @keygraph/dora setup` and select **AWS Bedrock**. The wizard will prompt for your region, bearer token, and one model ID.
 
 Or export env vars directly:
 
 ```bash
-export SHANNON_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
+export DORA_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
 export AWS_REGION=us-east-1
 # Load one supported AWS credential mechanism, such as AWS_PROFILE,
 # workload identity, or AWS_BEARER_TOKEN_BEDROCK.
@@ -599,9 +599,9 @@ export AWS_REGION=us-east-1
 <summary>Clone and Build: add to .env instead</summary>
 
 ```bash
-SHANNON_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
+DORA_AI_MODEL=amazon-bedrock:us.anthropic.claude-sonnet-4-6
 AWS_REGION=us-east-1
-# Load credentials from outside the repository before starting Shannon.
+# Load credentials from outside the repository before starting Dora.
 ```
 
 </details>
@@ -610,42 +610,42 @@ The model ID must be available in the selected AWS region. Standard AWS profiles
 
 ### Vertex AI Migration
 
-Google Vertex AI is not supported by Shannon's current model compatibility layer. It is no longer offered by `npx @keygraph/shannon setup`.
+Google Vertex AI is not supported by Dora's current model compatibility layer. It is no longer offered by `npx @keygraph/dora setup`.
 
 Legacy Vertex settings are rejected. The CLI and worker return migration guidance instead of forwarding Vertex credentials. Migrate to one of the supported provider setups above:
 
 1. Remove the legacy Vertex variables or `[vertex]` section.
-2. Run `npx @keygraph/shannon setup` and choose Anthropic, OpenAI, xAI, AWS Bedrock, or a compatible gateway.
-3. For environment-based configuration, set `SHANNON_AI_MODEL=<provider>:<model-id>` and load the matching credential variable from a secret manager. For a gateway, also set `SHANNON_AI_BASE_URL`.
+2. Run `npx @keygraph/dora setup` and choose Anthropic, OpenAI, xAI, AWS Bedrock, or a compatible gateway.
+3. For environment-based configuration, set `DORA_AI_MODEL=<provider>:<model-id>` and load the matching credential variable from a secret manager. For a gateway, also set `DORA_AI_BASE_URL`.
 
 ### Custom Base URL
 
-Shannon supports custom gateways through `SHANNON_AI_BASE_URL`. Gateways may expose Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses. For proxy-based routing, one option is an LLM proxy such as [LiteLLM](https://github.com/BerriAI/litellm) configured for the matching API format.
+Dora supports custom gateways through `DORA_AI_BASE_URL`. Gateways may expose Anthropic Messages, OpenAI Chat Completions, or OpenAI Responses. For proxy-based routing, one option is an LLM proxy such as [LiteLLM](https://github.com/BerriAI/litellm) configured for the matching API format.
 
 > [!IMPORTANT]
-> **Only Claude models are officially supported.** Shannon's evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Shannon's instructions or tool-use constraints, and are not officially supported. Use them at your own risk; results may be incomplete, inaccurate, or unstable.
+> **Only Claude models are officially supported.** Dora's evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Dora's instructions or tool-use constraints, and are not officially supported. Use them at your own risk; results may be incomplete, inaccurate, or unstable.
 >
 > The previously experimental `claude-code-router` integration is being removed in an upcoming release. If you currently rely on it, migrate to an Anthropic-compatible proxy such as LiteLLM before upgrading.
 
-Run `npx @keygraph/shannon setup` and select **Custom Base URL**. The wizard will prompt for the API format, endpoint URL, API key, and one model ID. It supports Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses gateways.
+Run `npx @keygraph/dora setup` and select **Custom Base URL**. The wizard will prompt for the API format, endpoint URL, API key, and one model ID. It supports Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses gateways.
 
 Or export env vars directly:
 
 ```bash
-export SHANNON_AI_MODEL=openai:gateway-model-id
-export SHANNON_AI_BASE_URL=https://your-proxy.example.com
-export SHANNON_AI_OPENAI_FORMAT=chat-completions  # or responses
-# Inject SHANNON_AI_API_KEY through your secret manager.
+export DORA_AI_MODEL=openai:gateway-model-id
+export DORA_AI_BASE_URL=https://your-proxy.example.com
+export DORA_AI_OPENAI_FORMAT=chat-completions  # or responses
+# Inject DORA_AI_API_KEY through your secret manager.
 ```
 
 <details>
 <summary>Clone and Build: add to .env instead</summary>
 
 ```bash
-SHANNON_AI_MODEL=openai:gateway-model-id
-SHANNON_AI_BASE_URL=https://your-proxy.example.com
-SHANNON_AI_OPENAI_FORMAT=chat-completions
-# Load SHANNON_AI_API_KEY from outside the repository before starting Shannon.
+DORA_AI_MODEL=openai:gateway-model-id
+DORA_AI_BASE_URL=https://your-proxy.example.com
+DORA_AI_OPENAI_FORMAT=chat-completions
+# Load DORA_AI_API_KEY from outside the repository before starting Dora.
 ```
 
 </details>
@@ -655,21 +655,21 @@ SHANNON_AI_OPENAI_FORMAT=chat-completions
 [Cheaper Inference](https://api.cheaperinference.com/docs) exposes an OpenAI-compatible API and model catalog. Configure it as the runner's environment-backed source:
 
 ```bash
-export SHANNON_AI_MODEL=openai:claude-sonnet-4.6
-export SHANNON_AI_BASE_URL=https://api.cheaperinference.com/v1
-export SHANNON_AI_OPENAI_FORMAT=chat-completions
-# Inject SHANNON_AI_API_KEY through your shell or secret manager.
+export DORA_AI_MODEL=openai:claude-sonnet-4.6
+export DORA_AI_BASE_URL=https://api.cheaperinference.com/v1
+export DORA_AI_OPENAI_FORMAT=chat-completions
+# Inject DORA_AI_API_KEY through your shell or secret manager.
 ```
 
 The local operator UI labels this source **Cheaper Inference (configured)**, uses the environment model by default, and loads optional model choices without sending the credential to the browser. Use an exact model ID returned by the provider's `/v1/models` endpoint.
 
-For an Anthropic Messages gateway, use an `anthropic:<model-id>` selection and omit `SHANNON_AI_OPENAI_FORMAT`.
+For an Anthropic Messages gateway, use an `anthropic:<model-id>` selection and omit `DORA_AI_OPENAI_FORMAT`.
 
 ### Platform-Specific Instructions
 
 **For Windows:**
 
-Shannon on Windows is only supported via **WSL2**. Native Windows (including Git Bash) is not supported.
+Dora on Windows is only supported via **WSL2**. Native Windows (including Git Bash) is not supported.
 
 **Step 1: Ensure WSL 2**
 
@@ -692,23 +692,23 @@ See [WSL basic commands](https://learn.microsoft.com/en-us/windows/wsl/basic-com
 
 **Step 2: Install Docker Desktop on Windows** and enable **WSL2 backend** under *Settings > General > Use the WSL 2 based engine*.
 
-**Step 3: Run Shannon inside WSL** using either flow.
+**Step 3: Run Dora inside WSL** using either flow.
 
 **npx inside WSL:**
 
 ```bash
-npx @keygraph/shannon setup
-npx @keygraph/shannon start -u https://your-app.com -r /path/to/your-repo
+npx @keygraph/dora setup
+npx @keygraph/dora start -u https://your-app.com -r /path/to/your-repo
 ```
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-git clone https://github.com/KeygraphHQ/shannon.git
-cd shannon
+git clone https://github.com/KeygraphHQ/dora.git
+cd dora
 cp .env.example .env  # Edit with your API key
-./shannon start -u https://your-app.com -r /path/to/your-repo
+./dora start -u https://your-app.com -r /path/to/your-repo
 ```
 
 </details>
@@ -730,27 +730,27 @@ Works out of the box with Docker Desktop installed.
 Docker containers cannot reach `localhost` on your host machine. Use `host.docker.internal` in place of `localhost`:
 
 ```bash
-npx @keygraph/shannon start -u http://host.docker.internal:3000 -r /path/to/repo
+npx @keygraph/dora start -u http://host.docker.internal:3000 -r /path/to/repo
 ```
 
 <details>
 <summary>Clone and Build command equivalents</summary>
 
 ```bash
-./shannon start -u http://host.docker.internal:3000 -r /path/to/repo
+./dora start -u http://host.docker.internal:3000 -r /path/to/repo
 ```
 
 </details>
 
 **Custom hostnames in `/etc/hosts`:**
 
-If your local stack uses custom hostnames mapped in `/etc/hosts`, Shannon forwards those entries into the worker container at scan start:
+If your local stack uses custom hostnames mapped in `/etc/hosts`, Dora forwards those entries into the worker container at scan start:
 
-To disable, add `SHANNON_FORWARD_HOSTS=false` to `.env` (local mode) or export it in your shell: `export SHANNON_FORWARD_HOSTS=false`. In npx mode, the shell export is the only option since there's no `.env`.
+To disable, add `DORA_FORWARD_HOSTS=false` to `.env` (local mode) or export it in your shell: `export DORA_FORWARD_HOSTS=false`. In npx mode, the shell export is the only option since there's no `.env`.
 
 ### Output and Results
 
-All results are saved to the workspaces directory: `./workspaces/` (local mode) or `~/.shannon/workspaces/` (npx mode). Use `-o <path>` to copy deliverables to a custom output directory after the run completes.
+All results are saved to the workspaces directory: `./workspaces/` (local mode) or `~/.dora/workspaces/` (npx mode). Use `-o <path>` to copy deliverables to a custom output directory after the run completes.
 
 Output structure:
 
@@ -783,7 +783,7 @@ Sample penetration test reports from industry-standard vulnerable applications:
 - IDOR vulnerabilities enabling access to other users' data and shopping carts
 - SSRF enabling internal network reconnaissance
 
-[View Complete Report →](sample-reports/shannon-report-juice-shop.md)
+[View Complete Report →](sample-reports/dora-report-juice-shop.md)
 
 ---
 
@@ -800,7 +800,7 @@ Sample penetration test reports from industry-standard vulnerable applications:
 - Privilege escalation via Mass Assignment in the user profile update function
 - Zero false positives for XSS (correctly confirmed robust XSS defenses)
 
-[View Complete Report →](sample-reports/shannon-report-capital-api.md)
+[View Complete Report →](sample-reports/dora-report-capital-api.md)
 
 ---
 
@@ -817,13 +817,13 @@ Sample penetration test reports from industry-standard vulnerable applications:
 - SSRF attack forwarding internal authentication tokens to an external service
 - Zero false positives for XSS (correctly identified robust XSS defenses)
 
-[View Complete Report →](sample-reports/shannon-report-crapi.md)
+[View Complete Report →](sample-reports/dora-report-crapi.md)
 
 ---
 
 ## Benchmark
 
-Shannon Lite scored **96.15% (100/104 exploits)** on a hint-free, source-aware variant of the XBOW security benchmark.
+Dora Lite scored **96.15% (100/104 exploits)** on a hint-free, source-aware variant of the XBOW security benchmark.
 
 **[Full results with detailed agent logs and per-challenge pentest reports →](https://github.com/KeygraphHQ/xbow-validation-benchmarks/blob/main/xben-benchmark-results/)**
 
@@ -831,7 +831,7 @@ Shannon Lite scored **96.15% (100/104 exploits)** on a hint-free, source-aware v
 
 ## Architecture
 
-Shannon uses one dynamic pipeline with a source-mode branch:
+Dora uses one dynamic pipeline with a source-mode branch:
 
 ```mermaid
 flowchart LR
@@ -854,7 +854,7 @@ flowchart LR
 - **Triage** emits PASS, DOWNGRADE, KILL, or CHAIN_REQUIRED verdicts. If triage fails open, candidates remain visible but are labeled unvalidated.
 - **Reporting** sanitizes Markdown and deterministically discloses URL-only coverage limits.
 
-The CLI and localhost Hono API share a scan controller. Each run has an atomic `.shannon/run.json` with an immutable non-secret snapshot, attempt history, Docker labels, lifecycle timestamps, and source mode. Target secrets are materialized only in a mode-`0600` runtime file and deleted on terminal states. Provider credentials remain managed by the existing environment and CLI setup.
+The CLI and localhost Hono API share a scan controller. Each run has an atomic `.dora/run.json` with an immutable non-secret snapshot, attempt history, Docker labels, lifecycle timestamps, and source mode. Target secrets are materialized only in a mode-`0600` runtime file and deleted on terminal states. Provider credentials remain managed by the existing environment and CLI setup.
 
 The React operator UI is bundled into the published package and binds only to `127.0.0.1`. Session cookies, CSRF checks, Host/Origin validation, CSP, realpath containment, and a triage-derived artifact allowlist protect the local control plane.
 
@@ -863,48 +863,48 @@ See [Architecture and Local Control Plane](docs/architecture.md) for API, persis
 
 ## Coverage and Roadmap
 
-For detailed information about Shannon's security testing coverage and development roadmap, see our [Coverage and Roadmap](./COVERAGE.md) documentation.
+For detailed information about Dora's security testing coverage and development roadmap, see our [Coverage and Roadmap](./COVERAGE.md) documentation.
 
 ## Disclaimers
 
 ### Important Usage Guidelines & Disclaimers
 
-Please review the following guidelines carefully before using Shannon (Lite). As a user, you are responsible for your actions and assume all liability.
+Please review the following guidelines carefully before using Dora (Lite). As a user, you are responsible for your actions and assume all liability.
 
 #### **1. Potential for Mutative Effects & Environment Selection**
 
 This is not a passive scanner. The exploitation agents are designed to **actively execute attacks** to confirm vulnerabilities. This process can have mutative effects on the target application and its data.
 
 > [!WARNING]
-> **DO NOT run Shannon on production environments.**
+> **DO NOT run Dora on production environments.**
 >
 > - It is intended exclusively for use on sandboxed, staging, or local development environments where data integrity is not a concern.
 > - Potential mutative effects include, but are not limited to: creating new users, modifying or deleting data, compromising test accounts, and triggering unintended side effects from injection attacks.
-> - **For maximum security and isolation, run Shannon inside a virtual machine (VM).** This confines any side effects from exploitation — including unexpected outbound traffic, file writes from agent tooling, or interactions with local services — to a disposable environment.
+> - **For maximum security and isolation, run Dora inside a virtual machine (VM).** This confines any side effects from exploitation — including unexpected outbound traffic, file writes from agent tooling, or interactions with local services — to a disposable environment.
 
 #### **2. Legal & Ethical Use**
 
-Shannon is designed for legitimate security auditing purposes only.
+Dora is designed for legitimate security auditing purposes only.
 
 > [!CAUTION]
-> **You must have explicit, written authorization** from the owner of the target system before running Shannon.
+> **You must have explicit, written authorization** from the owner of the target system before running Dora.
 >
-> Unauthorized scanning and exploitation of systems you do not own is illegal and can be prosecuted under laws such as the Computer Fraud and Abuse Act (CFAA). Keygraph is not responsible for any misuse of Shannon.
+> Unauthorized scanning and exploitation of systems you do not own is illegal and can be prosecuted under laws such as the Computer Fraud and Abuse Act (CFAA). Keygraph is not responsible for any misuse of Dora.
 
 #### **3. LLM & Automation Caveats**
 
 - **Verification is Required**: While significant engineering has gone into our "proof-by-exploitation" methodology to eliminate false positives, the underlying LLMs can still generate hallucinated or weakly-supported content in the final report. **Human oversight is essential** to validate the legitimacy and severity of all reported findings.
-- **Model Support**: Shannon is officially supported only with **Claude models**. Our evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Shannon's instructions or tool-use constraints, and are not officially supported.
-- **Comprehensiveness**: The analysis in Shannon Lite may not be exhaustive due to the inherent limitations of LLM context windows. For a more comprehensive, graph-based analysis of your entire codebase, **Shannon Pro** leverages its advanced data flow analysis engine to ensure deeper and more thorough coverage.
+- **Model Support**: Dora is officially supported only with **Claude models**. Our evaluations, internal testing, and agent harness are all optimized for Claude. Smaller or alternative models — including non-Claude models routed through a proxy — may not reliably follow Dora's instructions or tool-use constraints, and are not officially supported.
+- **Comprehensiveness**: The analysis in Dora Lite may not be exhaustive due to the inherent limitations of LLM context windows. For a more comprehensive, graph-based analysis of your entire codebase, **Dora Pro** leverages its advanced data flow analysis engine to ensure deeper and more thorough coverage.
 
 #### **4. Scope of Analysis**
 
-- **Targeted Vulnerabilities**: The current version of Shannon Lite specifically targets the following classes of *exploitable* vulnerabilities:
+- **Targeted Vulnerabilities**: The current version of Dora Lite specifically targets the following classes of *exploitable* vulnerabilities:
   - Broken Authentication & Authorization
   - Injection
   - Cross-Site Scripting (XSS)
   - Server-Side Request Forgery (SSRF)
-- **What Shannon Lite Does Not Cover**: This list is not exhaustive of all potential security risks. Shannon Lite's "proof-by-exploitation" model means it will not report on issues it cannot actively exploit, such as vulnerable third-party libraries or insecure configurations. These types of deep static-analysis findings are a core focus of the advanced analysis engine in **Shannon Pro**.
+- **What Dora Lite Does Not Cover**: This list is not exhaustive of all potential security risks. Dora Lite's "proof-by-exploitation" model means it will not report on issues it cannot actively exploit, such as vulnerable third-party libraries or insecure configurations. These types of deep static-analysis findings are a core focus of the advanced analysis engine in **Dora Pro**.
 
 #### **5. Cost & Performance**
 
@@ -913,22 +913,22 @@ Shannon is designed for legitimate security auditing purposes only.
 
 #### **6. Windows Antivirus False Positives**
 
-Windows Defender may flag files in `xben-benchmark-results/` or `deliverables/` as malware. These are false positives caused by exploit code in the reports. Add an exclusion for the Shannon directory in Windows Defender, or use Docker/WSL2.
+Windows Defender may flag files in `xben-benchmark-results/` or `deliverables/` as malware. These are false positives caused by exploit code in the reports. Add an exclusion for the Dora directory in Windows Defender, or use Docker/WSL2.
 
 #### **7. Security Considerations**
 
-Shannon Lite is designed for scanning repositories and applications you own or have explicit permission to test. Do not point it at untrusted or adversarial codebases. Like any AI-powered tool that reads source code, Shannon Lite is susceptible to prompt injection from content in the scanned repository.
+Dora Lite is designed for scanning repositories and applications you own or have explicit permission to test. Do not point it at untrusted or adversarial codebases. Like any AI-powered tool that reads source code, Dora Lite is susceptible to prompt injection from content in the scanned repository.
 
 
 ## License
 
-Shannon Lite is released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+Dora Lite is released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
 
-Shannon is open source (AGPL v3). This license allows you to:
+Dora is open source (AGPL v3). This license allows you to:
 - Use it freely for all internal security testing.
 - Modify the code privately for internal use without sharing your changes.
 
-The AGPL's sharing requirements primarily apply to organizations offering Shannon as a public or managed service (such as a SaaS platform). In those specific cases, any modifications made to the core software must be open-sourced.
+The AGPL's sharing requirements primarily apply to organizations offering Dora as a public or managed service (such as a SaaS platform). In those specific cases, any modifications made to the core software must be open-sourced.
 
 
 ## Community & Support
@@ -938,15 +938,15 @@ The AGPL's sharing requirements primarily apply to organizations offering Shanno
 **1:1 Office Hours** — Thursdays, two time zones
 Book a free 15-min session for hands-on help with bugs, deployments, or config questions.
 → US/EU: 10:00 AM PT  |  Asia: 2:00 PM IST
-→ [Book a slot](https://cal.com/george-flores-keygraph/shannon-community-office-hours)
+→ [Book a slot](https://cal.com/george-flores-keygraph/dora-community-office-hours)
 
-[Join our Discord](https://discord.gg/cmctpMBXwE) to ask questions, share feedback, and connect with other Shannon users.
+[Join our Discord](https://discord.gg/cmctpMBXwE) to ask questions, share feedback, and connect with other Dora users.
 
 **Contributing:** At this time, we're not accepting external code contributions (PRs).  
 Issues are welcome for bug reports and feature requests.
 
-- **Report bugs** via [GitHub Issues](https://github.com/KeygraphHQ/shannon/issues)
-- **Suggest features** in [Discussions](https://github.com/KeygraphHQ/shannon/discussions)
+- **Report bugs** via [GitHub Issues](https://github.com/KeygraphHQ/dora/issues)
+- **Suggest features** in [Discussions](https://github.com/KeygraphHQ/dora/discussions)
 
 ### Stay Connected
 
@@ -958,17 +958,17 @@ Issues are welcome for bug reports and feature requests.
 
 ## Get in Touch
 
-### Shannon Pro
+### Dora Pro
 
-Shannon Pro is Keygraph's all-in-one AppSec platform. For organizations that need unified SAST, SCA, and autonomous pentesting with static-dynamic correlation, CI/CD integration, or self-hosted deployment, see the [Shannon Pro technical overview](./SHANNON-PRO.md).
+Dora Pro is Keygraph's all-in-one AppSec platform. For organizations that need unified SAST, SCA, and autonomous pentesting with static-dynamic correlation, CI/CD integration, or self-hosted deployment, see the [Dora Pro technical overview](./DORA-PRO.md).
 
 <p align="center">
-  <a href="https://cal.com/team/keygraph/shannon-pro" target="_blank">
-    <img src="./assets/Demo_Button.png" height="40" alt="Shannon Pro Inquiry">
+  <a href="https://cal.com/team/keygraph/dora-pro" target="_blank">
+    <img src="./assets/Demo_Button.png" height="40" alt="Dora Pro Inquiry">
   </a>
 </p>
 
-**Email**: [shannon@keygraph.io](mailto:shannon@keygraph.io)
+**Email**: [dora@keygraph.io](mailto:dora@keygraph.io)
 
 ---
 

@@ -51,7 +51,7 @@ No database or dependency changes are required.
 
 - Require staging, an HTTPS Splunk origin without path/query/fragment, safe index/sourcetype identifiers, a relative
   target path without query/fragment, and a 0–1 threshold plus 30–600 second wait.
-- Build SPL only from validated identifiers and Shannon markers; expose no arbitrary query input.
+- Build SPL only from validated identifiers and Dora markers; expose no arbitrary query input.
 - Use native `fetch`/`crypto`, strict TLS, bounded response reads, abort timeouts, bounded search windows/results, and
   exact-value redaction.
 - The activity returns evidence-backed failure states instead of throwing for expected detector outcomes. Invalid

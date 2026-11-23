@@ -6,8 +6,8 @@ This is a URL-only dynamic assessment. Use only behavior observed through the au
 Authorized target: {{WEB_URL}}
 {{DESCRIPTION}}
 Working directory: {{WORKING_DIRECTORY}}
-Deliverables: .shannon/deliverables/
-Scratch evidence: .shannon/scratchpad/
+Deliverables: .dora/deliverables/
+Scratch evidence: .dora/scratchpad/
 </target>
 
 <scope>

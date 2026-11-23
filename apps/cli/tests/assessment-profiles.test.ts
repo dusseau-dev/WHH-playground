@@ -10,7 +10,7 @@ import { createSecretStore, MemorySecretStore } from '../src/secret-store.js';
 const temporaryDirectories: string[] = [];
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-profiles-'));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-profiles-'));
   temporaryDirectories.push(directory);
   return directory;
 }

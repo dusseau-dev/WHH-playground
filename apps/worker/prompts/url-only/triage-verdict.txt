@@ -11,8 +11,8 @@ For every queued candidate decide whether live evidence proves a repeatable secu
 
 <output>
 For every verdict, copy `id` exactly, byte-for-byte, from the matching queue `ID`. Never normalize, trim, recase, translate, or renumber it.
-Write strict JSON to .shannon/deliverables/triage_verdicts.json:
+Write strict JSON to .dora/deliverables/triage_verdicts.json:
 {"version":1,"verdicts":[{"id":"stable-id","vulnType":"injection|xss|auth|ssrf|authz","title":"short title","verdict":"PASS|DOWNGRADE|KILL|CHAIN_REQUIRED","severity":"critical|high|medium|low|info","reason":"evidence-grounded reason","evidenceFile":"matching evidence filename"}]}
 claimedSeverity is optional and only for DOWNGRADE. Include every candidate; use an empty array when none exist. Save with:
-save-deliverable --type TRIAGE_VERDICT --file-path ".shannon/deliverables/triage_verdicts.json"
+save-deliverable --type TRIAGE_VERDICT --file-path ".dora/deliverables/triage_verdicts.json"
 </output>

@@ -54,7 +54,7 @@ export class FakeRuntime implements ScanRuntime {
 
   async listManagedContainers(): Promise<ContainerState[]> {
     if (this.unavailable) throw new Error('Docker unavailable');
-    return [...this.containers.values()].filter((container) => container.labels['shannon.managed'] === 'true');
+    return [...this.containers.values()].filter((container) => container.labels['dora.managed'] === 'true');
   }
 
   async stopContainer(containerName: string): Promise<void> {

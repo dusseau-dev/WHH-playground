@@ -26,8 +26,8 @@ body:
       label: Which CLI mode does this apply to?
       options:
         - Both
-        - "npx (@keygraph/shannon)"
-        - "Local (./shannon)"
+        - "npx (@keygraph/dora)"
+        - "Local (./dora)"
 
   - type: textarea
     id: alternatives-considered

@@ -51,13 +51,13 @@ function mutationHeaders(cookie = harness.cookie): Headers {
   return new Headers({
     Cookie: cookie,
     Origin: ORIGIN,
-    'X-Shannon-CSRF': CSRF,
+    'X-Dora-CSRF': CSRF,
     'Content-Type': 'application/json',
   });
 }
 
 async function createHarness(secretStore = new MemorySecretStore()): Promise<Harness> {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-api-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-api-'));
   temporaryDirectories.push(root);
   const workspacesDir = path.join(root, 'workspaces');
   const profilesDir = path.join(root, 'profiles');
@@ -67,7 +67,7 @@ async function createHarness(secretStore = new MemorySecretStore()): Promise<Har
     fs.mkdir(profilesDir, { recursive: true }),
     fs.mkdir(assetsDir, { recursive: true }),
   ]);
-  await fs.writeFile(path.join(assetsDir, 'index.html'), '<!doctype html><title>Shannon</title>');
+  await fs.writeFile(path.join(assetsDir, 'index.html'), '<!doctype html><title>Dora</title>');
   const profiles = new ProfileStore({ profilesDir, secretStore, idGenerator: () => 'profile-api' });
   await profiles.initialize();
   const { controller, temporal } = testController(workspacesDir, {
@@ -135,23 +135,23 @@ describe('local API security', () => {
   it('serves the SPA with restrictive browser headers', async () => {
     const response = await request(harness.app, '/runs/example');
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain('<title>Shannon</title>');
+    expect(await response.text()).toContain('<title>Dora</title>');
     expect(response.headers.get('content-security-policy')).toContain("default-src 'self'");
     expect(response.headers.get('x-frame-options')).toBe('DENY');
   });
 
   it('exposes configured model metadata without exposing its credential', async () => {
     const environmentNames = [
-      'SHANNON_AI_MODEL',
-      'SHANNON_AI_BASE_URL',
-      'SHANNON_AI_OPENAI_FORMAT',
-      'SHANNON_AI_API_KEY',
+      'DORA_AI_MODEL',
+      'DORA_AI_BASE_URL',
+      'DORA_AI_OPENAI_FORMAT',
+      'DORA_AI_API_KEY',
     ] as const;
     const previous = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
-    process.env.SHANNON_AI_MODEL = 'openai:anthropic/claude-sonnet-4.6';
-    process.env.SHANNON_AI_BASE_URL = 'https://openrouter.ai/api/v1';
-    process.env.SHANNON_AI_OPENAI_FORMAT = 'chat-completions';
-    process.env.SHANNON_AI_API_KEY = 'server-side-openrouter-secret';
+    process.env.DORA_AI_MODEL = 'openai:anthropic/claude-sonnet-4.6';
+    process.env.DORA_AI_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.DORA_AI_OPENAI_FORMAT = 'chat-completions';
+    process.env.DORA_AI_API_KEY = 'server-side-openrouter-secret';
 
     try {
       const configuredHarness = await createHarness();
@@ -366,7 +366,7 @@ describe('reports, evidence, and event streams', () => {
       workspace: 'artifact-api-run',
       config: {},
     });
-    const deliverables = path.join(harness.workspacesDir, 'artifact-api-run', '.shannon', 'deliverables');
+    const deliverables = path.join(harness.workspacesDir, 'artifact-api-run', '.dora', 'deliverables');
     await fs.writeFile(
       path.join(deliverables, 'triage_verdicts.json'),
       JSON.stringify({
@@ -490,7 +490,7 @@ describe('reports, evidence, and event streams', () => {
   it('uses Last-Event-ID as the activity cursor and closes terminal streams', async () => {
     await createArtifactRun();
     await fs.writeFile(
-      path.join(harness.workspacesDir, 'artifact-api-run', '.shannon', 'workflow.log'),
+      path.join(harness.workspacesDir, 'artifact-api-run', '.dora', 'workflow.log'),
       '[time] completed safely\n',
     );
     await harness.controller.cancelRun('artifact-api-run');

@@ -1,5 +1,5 @@
 {
-  "name": "shannon",
+  "name": "dora",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "biome:fix": "biome check --write .",
     "clean": "turbo run clean",
     "test": "turbo run test",
-    "test:e2e": "pnpm --filter @keygraph/shannon test:e2e",
+    "test:e2e": "pnpm --filter @keygraph/dora test:e2e",
     "test:integration": "turbo run test:integration",
     "test:docker-smoke": "bash scripts/docker-pipeline-smoke.sh",
     "temporal:worker": "node apps/worker/dist/temporal/worker.js",

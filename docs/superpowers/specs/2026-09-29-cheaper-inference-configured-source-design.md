@@ -2,9 +2,9 @@
 
 ## Summary
 
-Shannon's operator UI distinguishes the runner's environment-backed model from manual per-run provider overrides. The existing behavior is technically capable of using an environment-backed gateway, but its source picker makes direct providers look equivalent to the configured source. Selecting one of those direct-provider entries unexpectedly requires a model ID and API key.
+Dora's operator UI distinguishes the runner's environment-backed model from manual per-run provider overrides. The existing behavior is technically capable of using an environment-backed gateway, but its source picker makes direct providers look equivalent to the configured source. Selecting one of those direct-provider entries unexpectedly requires a model ID and API key.
 
-Add first-class recognition for Cheaper Inference as an environment-backed OpenAI-compatible gateway. When the runner is configured for Cheaper Inference, the UI displays `Cheaper Inference (configured)`, keeps its credential on the server, uses the model from `SHANNON_AI_MODEL` by default, and offers models returned by the gateway's `/models` endpoint. Direct-provider entries remain available in a clearly labeled `Per-run override` group and continue to require explicit credentials.
+Add first-class recognition for Cheaper Inference as an environment-backed OpenAI-compatible gateway. When the runner is configured for Cheaper Inference, the UI displays `Cheaper Inference (configured)`, keeps its credential on the server, uses the model from `DORA_AI_MODEL` by default, and offers models returned by the gateway's `/models` endpoint. Direct-provider entries remain available in a clearly labeled `Per-run override` group and continue to require explicit credentials.
 
 ## Goals
 
@@ -27,16 +27,16 @@ Add first-class recognition for Cheaper Inference as an environment-backed OpenA
 
 ## Configuration contract
 
-Cheaper Inference uses Shannon's existing generic gateway variables:
+Cheaper Inference uses Dora's existing generic gateway variables:
 
 ```env
-SHANNON_AI_MODEL=openai:claude-sonnet-4.6
-SHANNON_AI_BASE_URL=https://api.cheaperinference.com/v1
-SHANNON_AI_OPENAI_FORMAT=chat-completions
-SHANNON_AI_API_KEY=<rotated-secret-from-a-local-secret-store>
+DORA_AI_MODEL=openai:claude-sonnet-4.6
+DORA_AI_BASE_URL=https://api.cheaperinference.com/v1
+DORA_AI_OPENAI_FORMAT=chat-completions
+DORA_AI_API_KEY=<rotated-secret-from-a-local-secret-store>
 ```
 
-`SHANNON_AI_MODEL` remains required at process configuration time because it supplies the default model for unattended runs. The assessment form does not require a model ID when it uses the configured source. `SHANNON_AI_API_KEY` remains the credential name so the existing CLI-to-worker allowlist, validation, redaction, and Docker forwarding behavior is unchanged.
+`DORA_AI_MODEL` remains required at process configuration time because it supplies the default model for unattended runs. The assessment form does not require a model ID when it uses the configured source. `DORA_AI_API_KEY` remains the credential name so the existing CLI-to-worker allowlist, validation, redaction, and Docker forwarding behavior is unchanged.
 
 ## User experience
 
@@ -141,7 +141,7 @@ Implementation follows red-green-refactor.
 
 ## Documentation
 
-Update the provider/gateway documentation with a Cheaper Inference example using placeholder credentials. State that only Claude models are officially supported by Shannon even when the gateway exposes other model families. Link to Cheaper Inference's official API documentation for current endpoint and model details.
+Update the provider/gateway documentation with a Cheaper Inference example using placeholder credentials. State that only Claude models are officially supported by Dora even when the gateway exposes other model families. Link to Cheaper Inference's official API documentation for current endpoint and model details.
 
 ## Acceptance criteria
 

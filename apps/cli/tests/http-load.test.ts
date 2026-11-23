@@ -9,7 +9,7 @@ import { testController } from './helpers.js';
 const temporaryDirectories: string[] = [];
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-http-load-'));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-http-load-'));
   temporaryDirectories.push(directory);
   return directory;
 }

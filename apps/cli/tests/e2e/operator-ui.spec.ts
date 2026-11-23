@@ -603,7 +603,7 @@ test('configures a staging-only detection validation assessment', async ({ page 
   await page.getByRole('button', { name: 'Expand A09:2025 Security Logging and Alerting Failures' }).click();
   await page.getByText('Alerting effectiveness', { exact: true }).click();
   await expect(page.getByRole('group', { name: 'Detection validation' })).toBeVisible();
-  await expect(page.getByLabel('Canary path')).toHaveValue('/__shannon__/detection-simulation');
+  await expect(page.getByLabel('Canary path')).toHaveValue('/__dora__/detection-simulation');
   await expect(page.getByLabel('Minimum detection rate')).toHaveValue('1');
   await expect(page.getByLabel('Maximum wait (seconds)')).toHaveValue('180');
   await expect(page.getByText('Select a staging clone below before running this check.')).toBeVisible();
@@ -624,7 +624,7 @@ test('configures a staging-only detection validation assessment', async ({ page 
       testScopes: ['alerting-effectiveness'],
       moduleSafety: { targetEnvironment: 'staging' },
       detectionValidation: {
-        canaryPath: '/__shannon__/detection-simulation',
+        canaryPath: '/__dora__/detection-simulation',
         minimumDetectionRate: 1,
         maxWaitSeconds: 180,
         splunk: {
@@ -647,7 +647,7 @@ test('shows detection validation cohort and scenario evidence in run detail', as
   detectionRun.snapshot.config.testScopes = ['alerting-effectiveness'];
   detectionRun.snapshot.config.moduleSafety = { targetEnvironment: 'staging' };
   detectionRun.snapshot.config.detectionValidation = {
-    canaryPath: '/__shannon__/detection-simulation',
+    canaryPath: '/__dora__/detection-simulation',
     minimumDetectionRate: 1,
     maxWaitSeconds: 180,
     splunk: {

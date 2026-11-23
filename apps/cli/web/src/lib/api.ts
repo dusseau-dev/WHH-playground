@@ -260,7 +260,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (isMutation(method)) {
     const session = bootstrapValue ?? (await bootstrap());
-    headers.set('X-Shannon-CSRF', session.csrfToken);
+    headers.set('X-Dora-CSRF', session.csrfToken);
   }
   const response = await fetch(`${API_ROOT}${path}`, { ...init, headers, credentials: 'same-origin' });
   if ((response.status === 401 || response.status === 403) && retry) {

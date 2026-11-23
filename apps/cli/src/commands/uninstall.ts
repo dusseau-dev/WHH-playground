@@ -1,5 +1,5 @@
 /**
- * `shn uninstall` command — remove ~/.shannon/ after confirmation (npx only).
+ * `shn uninstall` command — remove ~/.dora/ after confirmation (npx only).
  */
 
 import fs from 'node:fs';
@@ -8,13 +8,13 @@ import path from 'node:path';
 import * as p from '@clack/prompts';
 import { stopInfra, stopWorkers } from '../docker.js';
 
-const SHANNON_HOME = path.join(os.homedir(), '.shannon');
+const DORA_HOME = path.join(os.homedir(), '.dora');
 
 export async function uninstall(): Promise<void> {
-  p.intro('Shannon Uninstall');
+  p.intro('Dora Uninstall');
 
-  if (!fs.existsSync(SHANNON_HOME)) {
-    p.log.info('Nothing to remove. Shannon is not configured on this machine.');
+  if (!fs.existsSync(DORA_HOME)) {
+    p.log.info('Nothing to remove. Dora is not configured on this machine.');
     p.outro('Done.');
     return;
   }
@@ -31,7 +31,7 @@ export async function uninstall(): Promise<void> {
   stopWorkers();
   stopInfra(false);
 
-  fs.rmSync(SHANNON_HOME, { recursive: true, force: true });
-  p.log.success('All Shannon data has been removed.');
-  p.outro('Shannon has been uninstalled. Run `npx @keygraph/shannon setup` to start fresh.');
+  fs.rmSync(DORA_HOME, { recursive: true, force: true });
+  p.log.success('All Dora data has been removed.');
+  p.outro('Dora has been uninstalled. Run `npx @keygraph/dora setup` to start fresh.');
 }

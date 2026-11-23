@@ -35,7 +35,7 @@ LEGAL NOTICE:
   parameters and coordinating with affected operators.
 """.strip()
 
-DEFAULT_USER_AGENT = "shannon-http-load/1.0 authorized-single-host-capacity-test"
+DEFAULT_USER_AGENT = "dora-http-load/1.0 authorized-single-host-capacity-test"
 RESERVED_HEADERS = {"host", "connection", "content-length", "transfer-encoding", "user-agent"}
 SENSITIVE_QUERY_KEY = re.compile(
     r"(?:api[-_]?key|auth|bearer|cookie|credential|email|key|password|secret|session|token)",

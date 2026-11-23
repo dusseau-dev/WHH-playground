@@ -1,11 +1,11 @@
 networks:
   default:
-    name: shannon-net
+    name: dora-net
 
 services:
   temporal:
     image: temporalio/temporal:1.7.0
-    container_name: shannon-temporal
+    container_name: dora-temporal
     command: ["server", "start-dev", "--db-filename", "/home/temporal/temporal.db", "--ip", "0.0.0.0"]
     ports:
       - "127.0.0.1:7233:7233"   # gRPC

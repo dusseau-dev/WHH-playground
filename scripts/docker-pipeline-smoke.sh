@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -z "${SHANNON_SMOKE_URL:-}" || -z "${SHANNON_SMOKE_REPO:-}" ]]; then
-  printf '%s\n' 'Set SHANNON_SMOKE_URL to an authorized live target and SHANNON_SMOKE_REPO to its repository path.' >&2
+if [[ -z "${DORA_SMOKE_URL:-}" || -z "${DORA_SMOKE_REPO:-}" ]]; then
+  printf '%s\n' 'Set DORA_SMOKE_URL to an authorized live target and DORA_SMOKE_REPO to its repository path.' >&2
   exit 2
 fi
 
-if [[ ! -d "$SHANNON_SMOKE_REPO" ]]; then
-  printf 'Repository does not exist: %s\n' "$SHANNON_SMOKE_REPO" >&2
+if [[ ! -d "$DORA_SMOKE_REPO" ]]; then
+  printf 'Repository does not exist: %s\n' "$DORA_SMOKE_REPO" >&2
   exit 2
 fi
 
 stamp="$(date +%s)"
 url_workspace="docker-url-only-${stamp}"
 source_workspace="docker-source-assisted-${stamp}"
-timeout_seconds="${SHANNON_SMOKE_TIMEOUT_SECONDS:-1800}"
+timeout_seconds="${DORA_SMOKE_TIMEOUT_SECONDS:-1800}"
 
 wait_for_session() {
   local workspace="$1"
   local deadline=$((SECONDS + timeout_seconds))
   while (( SECONDS < deadline )); do
-    local session="workspaces/${workspace}/.shannon/session.json"
+    local session="workspaces/${workspace}/.dora/session.json"
     if [[ -f "$session" ]]; then
       local status
       status="$(node -e "const f=require('fs');const s=JSON.parse(f.readFileSync(process.argv[1],'utf8'));process.stdout.write(s.session.status)" "$session")"
@@ -40,12 +40,12 @@ wait_for_session() {
 
 pnpm build
 
-./shannon start --url "$SHANNON_SMOKE_URL" --workspace "$url_workspace" --pipeline-testing
-node -e "const f=require('fs');const r=JSON.parse(f.readFileSync(process.argv[1],'utf8'));if(r.kind!=='managed'||r.version!==1||r.snapshot.sourceMode!=='url-only'||'repoPath'in r.snapshot)process.exit(1)" "workspaces/${url_workspace}/.shannon/run.json"
+./dora start --url "$DORA_SMOKE_URL" --workspace "$url_workspace" --pipeline-testing
+node -e "const f=require('fs');const r=JSON.parse(f.readFileSync(process.argv[1],'utf8'));if(r.kind!=='managed'||r.version!==1||r.snapshot.sourceMode!=='url-only'||'repoPath'in r.snapshot)process.exit(1)" "workspaces/${url_workspace}/.dora/run.json"
 wait_for_session "$url_workspace"
 
-./shannon start --url "$SHANNON_SMOKE_URL" --repo "$SHANNON_SMOKE_REPO" --workspace "$source_workspace" --pipeline-testing
-node -e "const f=require('fs');const r=JSON.parse(f.readFileSync(process.argv[1],'utf8'));if(r.kind!=='managed'||r.version!==1||r.snapshot.sourceMode!=='source-assisted'||!r.snapshot.repoPath)process.exit(1)" "workspaces/${source_workspace}/.shannon/run.json"
+./dora start --url "$DORA_SMOKE_URL" --repo "$DORA_SMOKE_REPO" --workspace "$source_workspace" --pipeline-testing
+node -e "const f=require('fs');const r=JSON.parse(f.readFileSync(process.argv[1],'utf8'));if(r.kind!=='managed'||r.version!==1||r.snapshot.sourceMode!=='source-assisted'||!r.snapshot.repoPath)process.exit(1)" "workspaces/${source_workspace}/.dora/run.json"
 wait_for_session "$source_workspace"
 
 printf 'Docker pipeline smoke passed: %s and %s\n' "$url_workspace" "$source_workspace"

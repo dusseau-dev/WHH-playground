@@ -10,13 +10,13 @@ export const PROMPTS_DIR = path.join(WORKER_ROOT, 'prompts');
 export const CONFIGS_DIR = path.join(WORKER_ROOT, 'configs');
 
 /** Default deliverables subdirectory relative to the run's working directory */
-export const DEFAULT_DELIVERABLES_SUBDIR = '.shannon/deliverables';
+export const DEFAULT_DELIVERABLES_SUBDIR = '.dora/deliverables';
 
 /** Default audit log directory */
 export const DEFAULT_AUDIT_DIR = './workspaces';
 
 /** Hidden internal state directory inside each assessment workspace. */
-export const INTERNAL_DIR = '.shannon';
+export const INTERNAL_DIR = '.dora';
 
 /** Resolve current session state while retaining read compatibility with legacy workspaces. */
 export function resolveSessionJsonPath(runDirectory: string): string {
@@ -29,7 +29,7 @@ export function resolveSessionJsonPath(runDirectory: string): string {
 /**
  * Resolve the deliverables directory for a working root and optional subdir override.
  * @param workingDirectory - Absolute writable root for the run
- * @param subdir - Subdirectory relative to workingDirectory (default: '.shannon/deliverables')
+ * @param subdir - Subdirectory relative to workingDirectory (default: '.dora/deliverables')
  */
 export function deliverablesDir(workingDirectory: string, subdir: string = DEFAULT_DELIVERABLES_SUBDIR): string {
   return path.join(workingDirectory, ...subdir.split('/'));

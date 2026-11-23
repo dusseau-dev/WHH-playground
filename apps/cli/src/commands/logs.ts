@@ -1,5 +1,5 @@
 /**
- * `shannon logs` command — tail a workspace's workflow log.
+ * `dora logs` command — tail a workspace's workflow log.
  *
  * Uses chokidar for reliable cross-platform file watching and
  * bounded synchronous reads to prevent duplicate output.
@@ -42,8 +42,8 @@ function resolveLogFile(workspaceId: string): string {
     if (fs.existsSync(resumePath)) return resumePath;
   }
 
-  // 3. Named workspace ID (e.g. workspace_shannon-123)
-  const namedBase = workspaceId.replace(/_shannon-\d+$/, '');
+  // 3. Named workspace ID (e.g. workspace_dora-123)
+  const namedBase = workspaceId.replace(/_dora-\d+$/, '');
   if (namedBase !== workspaceId) {
     const namedPath = resolveRunFile(path.join(workspacesDir, namedBase), 'workflow.log');
     if (fs.existsSync(namedPath)) return namedPath;

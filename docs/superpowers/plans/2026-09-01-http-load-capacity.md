@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `http-load-capacity` an explicitly authorized, manually configured, single-host assessment that executes through a dedicated worker activity and appears deterministically in Shannon reports.
+**Goal:** Make `http-load-capacity` an explicitly authorized, manually configured, single-host assessment that executes through a dedicated worker activity and appears deterministically in Dora reports.
 
 **Architecture:** Keep the five vulnerability agents unchanged. A dedicated Python load generator runs from a non-retrying Temporal activity after vulnerability testing; typed normalization shared within each package enforces defaults, elevated thresholds, and emergency ceilings before traffic begins. The CLI and UI carry ephemeral authorization acknowledgements to the workflow while profiles and snapshots persist only non-secret load parameters.
 
@@ -96,7 +96,7 @@ it('normalizes safe defaults and enforces elevated and emergency limits', () => 
 
 - [ ] **Step 2: Run the worker tests and confirm the missing-contract failures**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/http-load.test.ts tests/assessment-scopes.test.ts tests/config-preflight.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/http-load.test.ts tests/assessment-scopes.test.ts tests/config-preflight.test.ts`
 
 Expected: FAIL because `http-load-capacity` is still coming soon and the HTTP load interfaces do not exist.
 
@@ -154,7 +154,7 @@ Permit an empty derived `vuln_classes` array only when explicit `test_scopes` de
 
 - [ ] **Step 5: Run focused worker tests**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/http-load.test.ts tests/assessment-scopes.test.ts tests/config-preflight.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/http-load.test.ts tests/assessment-scopes.test.ts tests/config-preflight.test.ts`
 
 Expected: all focused tests PASS.
 
@@ -224,7 +224,7 @@ it('does not persist authorization acknowledgements in snapshots or profiles', a
 
 - [ ] **Step 2: Run focused CLI tests and verify they fail**
 
-Run: `pnpm --filter @keygraph/shannon exec vitest run tests/http-load.test.ts tests/security-scopes.test.ts tests/assessment-profiles.test.ts tests/scan-controller.test.ts tests/api.test.ts`
+Run: `pnpm --filter @keygraph/dora exec vitest run tests/http-load.test.ts tests/security-scopes.test.ts tests/assessment-profiles.test.ts tests/scan-controller.test.ts tests/api.test.ts`
 
 Expected: FAIL because the CLI catalog and launch schemas do not support active HTTP load settings.
 
@@ -254,7 +254,7 @@ Extend `RunSnapshotSchema` by omitting both fields. Validate that the regular ac
 
 - [ ] **Step 5: Verify snapshot and profile persistence**
 
-Run: `pnpm --filter @keygraph/shannon exec vitest run tests/http-load.test.ts tests/assessment-profiles.test.ts tests/scan-controller.test.ts tests/api.test.ts`
+Run: `pnpm --filter @keygraph/dora exec vitest run tests/http-load.test.ts tests/assessment-profiles.test.ts tests/scan-controller.test.ts tests/api.test.ts`
 
 Expected: PASS; profile/snapshot JSON contains `httpLoad` settings and contains no acknowledgement fields.
 
@@ -301,9 +301,9 @@ Playwright must expand A06, select `HTTP load and capacity`, enter `25`, `75`, a
 
 - [ ] **Step 2: Run the form and desktop Playwright tests to verify failure**
 
-Run: `pnpm --filter @keygraph/shannon exec vitest run tests/assessment-form.test.ts`
+Run: `pnpm --filter @keygraph/dora exec vitest run tests/assessment-form.test.ts`
 
-Run: `pnpm --filter @keygraph/shannon exec playwright test tests/e2e/operator-ui.spec.ts --grep "HTTP load" --project=desktop`
+Run: `pnpm --filter @keygraph/dora exec playwright test tests/e2e/operator-ui.spec.ts --grep "HTTP load" --project=desktop`
 
 Expected: FAIL because the checkbox is disabled and the controls do not exist.
 
@@ -330,9 +330,9 @@ elevatedLoadConfirmed: z.boolean(),
 
 - [ ] **Step 6: Run unit and desktop/mobile E2E tests**
 
-Run: `pnpm --filter @keygraph/shannon exec vitest run tests/assessment-form.test.ts tests/http-load.test.ts`
+Run: `pnpm --filter @keygraph/dora exec vitest run tests/assessment-form.test.ts tests/http-load.test.ts`
 
-Run: `pnpm --filter @keygraph/shannon exec playwright test tests/e2e/operator-ui.spec.ts --grep "HTTP load"`
+Run: `pnpm --filter @keygraph/dora exec playwright test tests/e2e/operator-ui.spec.ts --grep "HTTP load"`
 
 Expected: all tests PASS at desktop and mobile widths with no accessibility violations.
 
@@ -378,7 +378,7 @@ it('writes a bounded machine-readable summary', async () => {
 
 - [ ] **Step 2: Run the focused script tests and verify failure**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/http-load.test.ts -t "ownership flag|machine-readable"`
+Run: `pnpm --filter @dora/worker exec vitest run tests/http-load.test.ts -t "ownership flag|machine-readable"`
 
 Expected: FAIL because the worker-packaged script and JSON option do not exist.
 
@@ -414,7 +414,7 @@ Write JSON atomically, redact sensitive query values, preserve the legal disclai
 
 - [ ] **Step 4: Run script tests**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/http-load.test.ts -t "ownership flag|machine-readable"`
+Run: `pnpm --filter @dora/worker exec vitest run tests/http-load.test.ts -t "ownership flag|machine-readable"`
 
 Expected: PASS with request count bounded by configured scheduling.
 
@@ -458,7 +458,7 @@ it('forwards cancellation to the child process', async () => {
 
 - [ ] **Step 2: Run runner tests and verify failure**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/http-load.test.ts -t "existing valid|forwards cancellation|activity"`
+Run: `pnpm --filter @dora/worker exec vitest run tests/http-load.test.ts -t "existing valid|forwards cancellation|activity"`
 
 Expected: FAIL because the runner and activity do not exist.
 
@@ -469,7 +469,7 @@ Use `spawn('python3', args, { stdio: ['ignore', 'pipe', 'pipe'] })`; never invok
 The canonical artifact path is:
 
 ```ts
-path.join(workingDirectory, '.shannon', 'http-load-capacity.json');
+path.join(workingDirectory, '.dora', 'http-load-capacity.json');
 ```
 
 Only a schema-valid `status: 'completed'` artifact is idempotent. Invalid or interrupted files are replaced atomically after the next explicitly authorized execution.
@@ -480,7 +480,7 @@ The activity validates authorization before spawn, uses `Context.current().cance
 
 - [ ] **Step 5: Run activity and runner tests**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/http-load.test.ts tests/activity-source-mode.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/http-load.test.ts tests/activity-source-mode.test.ts`
 
 Expected: PASS.
 
@@ -530,7 +530,7 @@ it('rejects changed load parameters on resume', async () => {
 
 - [ ] **Step 2: Run workflow/resume tests and verify failure**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/workflow-resume-finalization.test.ts tests/resume-scope.test.ts tests/source-mode.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/workflow-resume-finalization.test.ts tests/resume-scope.test.ts tests/source-mode.test.ts`
 
 Expected: FAIL because no load phase or persisted load settings exist.
 
@@ -548,7 +548,7 @@ Add `httpLoad?: HttpLoadSettings` to session scope. Compare every normalized fie
 
 - [ ] **Step 5: Run workflow/resume tests**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/workflow-resume-finalization.test.ts tests/resume-scope.test.ts tests/source-mode.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/workflow-resume-finalization.test.ts tests/resume-scope.test.ts tests/source-mode.test.ts`
 
 Expected: PASS.
 
@@ -601,7 +601,7 @@ it('renders neutral HTTP capacity metrics', () => {
 
 - [ ] **Step 2: Run report tests and verify failure**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/report-model.test.ts tests/prompts-reporting-redaction.test.ts tests/assessment-scopes.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/report-model.test.ts tests/prompts-reporting-redaction.test.ts tests/assessment-scopes.test.ts`
 
 Expected: FAIL because activity-backed completion and HTTP metrics are not represented.
 
@@ -615,7 +615,7 @@ Place `## HTTP Load and Capacity` after OWASP coverage. Include configured envel
 
 - [ ] **Step 5: Run report tests**
 
-Run: `pnpm --filter @shannon/worker exec vitest run tests/report-model.test.ts tests/prompts-reporting-redaction.test.ts tests/assessment-scopes.test.ts`
+Run: `pnpm --filter @dora/worker exec vitest run tests/report-model.test.ts tests/prompts-reporting-redaction.test.ts tests/assessment-scopes.test.ts`
 
 Expected: PASS with no secret-bearing target query values in snapshots or reports.
 
@@ -639,31 +639,31 @@ git commit -m "feat(worker): report HTTP load capacity results"
 
 Run: `pnpm biome check apps/cli apps/worker`
 
-Run: `pnpm --filter @keygraph/shannon check`
+Run: `pnpm --filter @keygraph/dora check`
 
-Run: `pnpm --filter @shannon/worker check`
+Run: `pnpm --filter @dora/worker check`
 
 Expected: exit `0` from all commands.
 
 - [ ] **Step 2: Run all unit and integration tests**
 
-Run: `pnpm --filter @keygraph/shannon test`
+Run: `pnpm --filter @keygraph/dora test`
 
-Run: `pnpm --filter @shannon/worker test`
+Run: `pnpm --filter @dora/worker test`
 
-Run: `pnpm --filter @keygraph/shannon test:integration`
+Run: `pnpm --filter @keygraph/dora test:integration`
 
-Run: `pnpm --filter @shannon/worker test:integration`
+Run: `pnpm --filter @dora/worker test:integration`
 
 Expected: all tests PASS with zero failures.
 
 - [ ] **Step 3: Run production builds and full browser coverage**
 
-Run: `pnpm --filter @keygraph/shannon build`
+Run: `pnpm --filter @keygraph/dora build`
 
-Run: `pnpm --filter @shannon/worker build`
+Run: `pnpm --filter @dora/worker build`
 
-Run: `pnpm --filter @keygraph/shannon test:e2e`
+Run: `pnpm --filter @keygraph/dora test:e2e`
 
 Expected: builds exit `0`; desktop and mobile Playwright projects pass.
 
@@ -673,7 +673,7 @@ Start a loopback-only HTTP fixture, run the worker-packaged Python script at `2`
 
 - [ ] **Step 5: Inspect desktop and mobile screenshots**
 
-Start `./shannon ui --port 8788 --no-open`, select the load scope, exercise standard and elevated values, and capture screenshots at `1440x900` and `390x844`. Verify no overlap, clipped labels, unexpected layout shift, or enabled start action before all required confirmations.
+Start `./dora ui --port 8788 --no-open`, select the load scope, exercise standard and elevated values, and capture screenshots at `1440x900` and `390x844`. Verify no overlap, clipped labels, unexpected layout shift, or enabled start action before all required confirmations.
 
 - [ ] **Step 6: Review the final diff**
 

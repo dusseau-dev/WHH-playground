@@ -84,7 +84,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
         webUrl: 'https://target.test',
         workingDirectory: '/tmp/work',
         sourceMode: 'url-only',
-        deliverablesPath: '/tmp/work/.shannon/deliverables',
+        deliverablesPath: '/tmp/work/.dora/deliverables',
         attemptNumber: 1,
         callerTools,
         postExecutionFinalizer: async () => {
@@ -128,7 +128,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
         webUrl: 'https://target.test',
         workingDirectory: '/tmp/work',
         sourceMode: 'url-only',
-        deliverablesPath: '/tmp/work/.shannon/deliverables',
+        deliverablesPath: '/tmp/work/.dora/deliverables',
         attemptNumber: 1,
         postExecutionFinalizer: async () => {
           throw new Error('missing report metadata');
@@ -140,7 +140,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
 
     expect(result).toMatchObject({ ok: false });
     expect(rollbackGitWorkspace).toHaveBeenCalledWith(
-      '/tmp/work/.shannon/deliverables',
+      '/tmp/work/.dora/deliverables',
       'post-execution finalization failure',
       expect.anything(),
     );
@@ -202,7 +202,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
           webUrl: 'https://target.test',
           workingDirectory: '/tmp/work',
           sourceMode: 'url-only',
-          deliverablesPath: '/tmp/work/.shannon/deliverables',
+          deliverablesPath: '/tmp/work/.dora/deliverables',
           attemptNumber: 2,
           cancellationSignal: controller.signal,
           postExecutionFinalizer,
@@ -213,7 +213,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
     ).rejects.toBe(cancellation);
 
     expect(atomicWrite).toHaveBeenCalledWith(
-      '/tmp/work/.shannon/deliverables/auth_exploitation_queue.json',
+      '/tmp/work/.dora/deliverables/auth_exploitation_queue.json',
       structuredOutput,
     );
     expect(postExecutionFinalizer).not.toHaveBeenCalled();
@@ -221,7 +221,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
     expect(commitGitSuccess).not.toHaveBeenCalled();
     expect(rollbackGitWorkspace).toHaveBeenCalledTimes(1);
     expect(rollbackGitWorkspace).toHaveBeenCalledWith(
-      '/tmp/work/.shannon/deliverables',
+      '/tmp/work/.dora/deliverables',
       'agent execution cancellation',
       expect.anything(),
     );
@@ -269,7 +269,7 @@ describe('AgentExecutionService post-execution finalizer', () => {
           webUrl: 'https://target.test',
           workingDirectory: '/tmp/work',
           sourceMode: 'url-only',
-          deliverablesPath: '/tmp/work/.shannon/deliverables',
+          deliverablesPath: '/tmp/work/.dora/deliverables',
           attemptNumber: 1,
           cancellationSignal: controller.signal,
           postExecutionFinalizer,

@@ -88,7 +88,7 @@ const containers = new Map<string, Container>();
 
 /** Default container config — OSS standalone defaults */
 const DEFAULT_CONFIG: ContainerConfig = {
-  deliverablesSubdir: '.shannon/deliverables',
+  deliverablesSubdir: '.dora/deliverables',
   auditDir: './workspaces',
 };
 

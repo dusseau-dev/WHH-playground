@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildEnvFlags, resolveProviderCredentialFiles, validateCredentials } from '../src/env.js';
 
 const PROVIDER_ENV = [
-  'SHANNON_AI_MODEL',
-  'SHANNON_AI_API_KEY',
-  'SHANNON_AI_BASE_URL',
-  'SHANNON_AI_OPENAI_FORMAT',
+  'DORA_AI_MODEL',
+  'DORA_AI_API_KEY',
+  'DORA_AI_BASE_URL',
+  'DORA_AI_OPENAI_FORMAT',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_BASE_URL',
   'ANTHROPIC_AUTH_TOKEN',
@@ -55,21 +55,21 @@ afterEach(() => {
 describe('provider-scoped Docker environment forwarding', () => {
   it('forwards names only for the selected provider and never puts secret values in argv', () => {
     cleanProviderEnv();
-    process.env.SHANNON_AI_MODEL = 'openai:gpt-5.2';
-    process.env.SHANNON_AI_BASE_URL = 'https://gateway.test/v1';
+    process.env.DORA_AI_MODEL = 'openai:gpt-5.2';
+    process.env.DORA_AI_BASE_URL = 'https://gateway.test/v1';
     process.env.OPENAI_API_KEY = 'selected-secret';
     process.env.ANTHROPIC_API_KEY = 'unused-anthropic-secret';
     process.env.XAI_API_KEY = 'unused-xai-secret';
-    process.env.SHANNON_AI_API_KEY = 'unused-generic-secret';
+    process.env.DORA_AI_API_KEY = 'unused-generic-secret';
 
     const args = buildEnvFlags();
 
-    expect(args).toContain('SHANNON_AI_MODEL');
-    expect(args).toContain('SHANNON_AI_BASE_URL');
+    expect(args).toContain('DORA_AI_MODEL');
+    expect(args).toContain('DORA_AI_BASE_URL');
     expect(args).toContain('OPENAI_API_KEY');
     expect(args).not.toContain('ANTHROPIC_API_KEY');
     expect(args).not.toContain('XAI_API_KEY');
-    expect(args).not.toContain('SHANNON_AI_API_KEY');
+    expect(args).not.toContain('DORA_AI_API_KEY');
     expect(args.join(' ')).not.toContain('selected-secret');
     expect(args.join(' ')).not.toContain('unused-anthropic-secret');
     expect(args).not.toContain('OPENAI_API_KEY=selected-secret');
@@ -77,17 +77,17 @@ describe('provider-scoped Docker environment forwarding', () => {
 
   it('forwards the generic credential only when it is the selected credential', () => {
     cleanProviderEnv();
-    process.env.SHANNON_AI_MODEL = 'google:gemini-2.5-pro';
-    process.env.SHANNON_AI_API_KEY = 'generic-secret';
+    process.env.DORA_AI_MODEL = 'google:gemini-2.5-pro';
+    process.env.DORA_AI_API_KEY = 'generic-secret';
     process.env.OPENAI_API_KEY = 'unused-secret';
 
     expect(buildEnvFlags()).toEqual([
       '-e',
-      'TEMPORAL_ADDRESS=shannon-temporal:7233',
+      'TEMPORAL_ADDRESS=dora-temporal:7233',
       '-e',
-      'SHANNON_AI_MODEL',
+      'DORA_AI_MODEL',
       '-e',
-      'SHANNON_AI_API_KEY',
+      'DORA_AI_API_KEY',
     ]);
     expect(validateCredentials()).toMatchObject({ valid: true });
   });
@@ -111,7 +111,7 @@ describe('provider-scoped Docker environment forwarding', () => {
 
   it('accepts and forwards a Bedrock access-key pair with an optional session token', () => {
     cleanProviderEnv();
-    process.env.SHANNON_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
+    process.env.DORA_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
     process.env.AWS_DEFAULT_REGION = 'us-west-2';
     process.env.AWS_ACCESS_KEY_ID = 'access-key';
     process.env.AWS_SECRET_ACCESS_KEY = 'secret-key';
@@ -122,9 +122,9 @@ describe('provider-scoped Docker environment forwarding', () => {
     expect(validateCredentials()).toMatchObject({ valid: true, mode: 'bedrock' });
     expect(args).toEqual([
       '-e',
-      'TEMPORAL_ADDRESS=shannon-temporal:7233',
+      'TEMPORAL_ADDRESS=dora-temporal:7233',
       '-e',
-      'SHANNON_AI_MODEL',
+      'DORA_AI_MODEL',
       '-e',
       'AWS_ACCESS_KEY_ID',
       '-e',
@@ -153,7 +153,7 @@ describe('provider-scoped Docker environment forwarding', () => {
       values: {
         AWS_WEB_IDENTITY_TOKEN_FILE: '/var/run/secrets/aws/token',
         AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/audit',
-        AWS_ROLE_SESSION_NAME: 'shannon',
+        AWS_ROLE_SESSION_NAME: 'dora',
       },
       expected: ['AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_ROLE_ARN', 'AWS_ROLE_SESSION_NAME'],
     },
@@ -174,7 +174,7 @@ describe('provider-scoped Docker environment forwarding', () => {
     },
   ])('accepts and forwards the Bedrock $name credential environment', ({ values, expected }) => {
     cleanProviderEnv();
-    process.env.SHANNON_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
+    process.env.DORA_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
     Object.assign(process.env, values);
 
     const args = buildEnvFlags();
@@ -184,7 +184,7 @@ describe('provider-scoped Docker environment forwarding', () => {
 
   it('forwards only the highest-priority configured Bedrock credential source', () => {
     cleanProviderEnv();
-    process.env.SHANNON_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
+    process.env.DORA_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
     process.env.AWS_BEARER_TOKEN_BEDROCK = 'selected-token';
     process.env.AWS_ACCESS_KEY_ID = 'unused-access-key';
     process.env.AWS_SECRET_ACCESS_KEY = 'unused-secret-key';
@@ -199,12 +199,12 @@ describe('provider-scoped Docker environment forwarding', () => {
 
   it('resolves selected AWS profile files to fixed read-only container paths', () => {
     cleanProviderEnv();
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shannon-aws-profile-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dora-aws-profile-'));
     const credentialsPath = path.join(directory, 'credentials');
     const configPath = path.join(directory, 'config');
     fs.writeFileSync(credentialsPath, '[audit-role]\naws_access_key_id = test\n');
     fs.writeFileSync(configPath, '[profile audit-role]\nregion = us-east-1\n');
-    process.env.SHANNON_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
+    process.env.DORA_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
     process.env.AWS_PROFILE = 'audit-role';
     process.env.AWS_SHARED_CREDENTIALS_FILE = credentialsPath;
     process.env.AWS_CONFIG_FILE = configPath;
@@ -229,10 +229,10 @@ describe('provider-scoped Docker environment forwarding', () => {
 
   it('resolves a selected web-identity token to a fixed container path and rejects missing files', () => {
     cleanProviderEnv();
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shannon-web-identity-'));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'dora-web-identity-'));
     const tokenPath = path.join(directory, 'token');
     fs.writeFileSync(tokenPath, 'token-value');
-    process.env.SHANNON_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
+    process.env.DORA_AI_MODEL = 'amazon-bedrock:us.anthropic.claude-sonnet-4-6';
     process.env.AWS_WEB_IDENTITY_TOKEN_FILE = tokenPath;
 
     try {
@@ -240,7 +240,7 @@ describe('provider-scoped Docker environment forwarding', () => {
         {
           environmentName: 'AWS_WEB_IDENTITY_TOKEN_FILE',
           hostPath: fs.realpathSync(tokenPath),
-          containerPath: '/tmp/shannon-aws-web-identity-token',
+          containerPath: '/tmp/dora-aws-web-identity-token',
         },
       ]);
       process.env.AWS_WEB_IDENTITY_TOKEN_FILE = path.join(directory, 'missing-token');
@@ -255,7 +255,7 @@ describe('provider-scoped Docker environment forwarding', () => {
     process.env.CLAUDE_CODE_USE_VERTEX = '1';
     expect(validateCredentials()).toMatchObject({
       valid: false,
-      error: expect.stringMatching(/Vertex AI.*no longer supported.*SHANNON_AI_MODEL/i),
+      error: expect.stringMatching(/Vertex AI.*no longer supported.*DORA_AI_MODEL/i),
     });
   });
 });

@@ -4,18 +4,18 @@
 
 **Goal:** Make Cheaper Inference a recognized environment-backed model source whose server-side credential and default model require no browser input, while retaining clearly separated manual per-run overrides.
 
-**Architecture:** Extend the CLI's existing base-URL-based catalog identification so Cheaper Inference uses the same safe bootstrap and catalog path as OpenRouter. Keep request and credential forwarding contracts unchanged: the browser receives only safe provider metadata, while `SHANNON_AI_API_KEY` remains server-side. Update the React source picker with a native `optgroup`, then document the environment configuration.
+**Architecture:** Extend the CLI's existing base-URL-based catalog identification so Cheaper Inference uses the same safe bootstrap and catalog path as OpenRouter. Keep request and credential forwarding contracts unchanged: the browser receives only safe provider metadata, while `DORA_AI_API_KEY` remains server-side. Update the React source picker with a native `optgroup`, then document the environment configuration.
 
 **Tech Stack:** TypeScript, Vitest, React 19, React Hook Form, Testing Library, Hono, Zod, Vite.
 
 ## Global Constraints
 
-- Use `SHANNON_AI_MODEL`, `SHANNON_AI_BASE_URL`, `SHANNON_AI_OPENAI_FORMAT`, and `SHANNON_AI_API_KEY`; do not introduce a second credential-forwarding path.
+- Use `DORA_AI_MODEL`, `DORA_AI_BASE_URL`, `DORA_AI_OPENAI_FORMAT`, and `DORA_AI_API_KEY`; do not introduce a second credential-forwarding path.
 - Never include a real API key in source, tests, documentation, browser responses, run snapshots, profiles, logs, or artifacts.
 - The configured model remains the unattended default; a blank configured-source model field must omit `providerConfig`.
 - Only known catalog hosts may enable server-side `/models` requests.
 - OpenRouter behavior and manual provider overrides must remain backward compatible.
-- Only Claude models remain officially supported by Shannon, even when a gateway lists other model families.
+- Only Claude models remain officially supported by Dora, even when a gateway lists other model families.
 - Do not edit the workspace `.env`; the exposed credential must be revoked and replaced locally by the operator.
 
 ## File structure
@@ -45,10 +45,10 @@ Add this environment fixture and tests to `apps/cli/tests/model-catalog.test.ts`
 
 ```ts
 const cheaperInferenceEnvironment = {
-  SHANNON_AI_MODEL: 'openai:claude-sonnet-4.6',
-  SHANNON_AI_BASE_URL: 'https://api.cheaperinference.com/v1',
-  SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
-  SHANNON_AI_API_KEY: 'server-side-cheaper-inference-secret',
+  DORA_AI_MODEL: 'openai:claude-sonnet-4.6',
+  DORA_AI_BASE_URL: 'https://api.cheaperinference.com/v1',
+  DORA_AI_OPENAI_FORMAT: 'chat-completions',
+  DORA_AI_API_KEY: 'server-side-cheaper-inference-secret',
 };
 
 it('describes Cheaper Inference without exposing its credential', () => {
@@ -73,7 +73,7 @@ it('does not trust a Cheaper Inference lookalike hostname', () => {
   expect(
     describeConfiguredModel({
       ...cheaperInferenceEnvironment,
-      SHANNON_AI_BASE_URL: 'https://api.cheaperinference.com.attacker.test/v1',
+      DORA_AI_BASE_URL: 'https://api.cheaperinference.com.attacker.test/v1',
     }),
   ).toMatchObject({ providerId: 'openai', providerLabel: 'OpenAI', catalogAvailable: false });
 });
@@ -111,7 +111,7 @@ it('loads Cheaper Inference models with the credential kept server-side', async 
 Run:
 
 ```bash
-npx --yes pnpm@10.33.0 --filter @keygraph/shannon exec vitest run tests/model-catalog.test.ts
+npx --yes pnpm@10.33.0 --filter @keygraph/dora exec vitest run tests/model-catalog.test.ts
 ```
 
 Expected: FAIL because Cheaper Inference is labelled `OpenAI`, `catalogAvailable` is `false`, and `listConfiguredModels` rejects the provider.
@@ -172,7 +172,7 @@ Do not alter credential selection, catalog parsing, URL normalization, timeout, 
 Run:
 
 ```bash
-npx --yes pnpm@10.33.0 --filter @keygraph/shannon exec vitest run tests/model-catalog.test.ts tests/scan-controller.test.ts
+npx --yes pnpm@10.33.0 --filter @keygraph/dora exec vitest run tests/model-catalog.test.ts tests/scan-controller.test.ts
 ```
 
 Expected: PASS, including the existing keyless model-override and credential-persistence tests.
@@ -268,7 +268,7 @@ describe('assessment model configuration', () => {
 Run:
 
 ```bash
-npx --yes pnpm@10.33.0 --filter @keygraph/shannon exec vitest run tests/assessment-config-fields.test.tsx
+npx --yes pnpm@10.33.0 --filter @keygraph/dora exec vitest run tests/assessment-config-fields.test.tsx
 ```
 
 Expected: FAIL because the manual options are direct children of the select and no `Per-run override` group exists.
@@ -299,7 +299,7 @@ Do not change `assessmentFormSchema`, `assessmentDefaults`, or `providerConfig` 
 Run:
 
 ```bash
-npx --yes pnpm@10.33.0 --filter @keygraph/shannon exec vitest run tests/assessment-config-fields.test.tsx tests/assessment-form.test.ts
+npx --yes pnpm@10.33.0 --filter @keygraph/dora exec vitest run tests/assessment-config-fields.test.tsx tests/assessment-form.test.ts
 ```
 
 Expected: PASS.
@@ -309,7 +309,7 @@ Expected: PASS.
 Run:
 
 ```bash
-npx --yes pnpm@10.33.0 --filter @keygraph/shannon check
+npx --yes pnpm@10.33.0 --filter @keygraph/dora check
 ```
 
 Expected: PASS with no TypeScript errors in the Node or web projects.
@@ -329,7 +329,7 @@ git commit -m "feat(ui): separate configured model source"
 - Modify: `README.md`
 
 **Interfaces:**
-- Consumes: the existing `SHANNON_AI_*` gateway contract.
+- Consumes: the existing `DORA_AI_*` gateway contract.
 - Produces: an operator-facing configuration example with placeholder credentials and an official documentation link.
 
 - [ ] **Step 1: Add a Cheaper Inference subsection under Custom Base URL**
@@ -342,10 +342,10 @@ Add this content after the generic gateway environment example in `README.md`:
 [Cheaper Inference](https://api.cheaperinference.com/docs) exposes an OpenAI-compatible API and model catalog. Configure it as the runner's environment-backed source:
 
 ```bash
-export SHANNON_AI_MODEL=openai:claude-sonnet-4.6
-export SHANNON_AI_BASE_URL=https://api.cheaperinference.com/v1
-export SHANNON_AI_OPENAI_FORMAT=chat-completions
-# Inject SHANNON_AI_API_KEY through your shell or secret manager.
+export DORA_AI_MODEL=openai:claude-sonnet-4.6
+export DORA_AI_BASE_URL=https://api.cheaperinference.com/v1
+export DORA_AI_OPENAI_FORMAT=chat-completions
+# Inject DORA_AI_API_KEY through your shell or secret manager.
 ```
 
 The local operator UI labels this source **Cheaper Inference (configured)**, uses the environment model by default, and loads optional model choices without sending the credential to the browser. Use an exact model ID returned by the provider's `/v1/models` endpoint.
@@ -389,7 +389,7 @@ Run:
 npx --yes pnpm@10.33.0 test
 ```
 
-Expected: PASS for both `@keygraph/shannon` and `@shannon/worker`.
+Expected: PASS for both `@keygraph/dora` and `@dora/worker`.
 
 - [ ] **Step 2: Run type checking and linting**
 
@@ -407,7 +407,7 @@ Expected: PASS without errors.
 Run:
 
 ```bash
-npx --yes pnpm@10.33.0 --filter @keygraph/shannon build
+npx --yes pnpm@10.33.0 --filter @keygraph/dora build
 ```
 
 Expected: `dist/index.mjs` and `dist/ui/` build successfully. Vite's existing chunk-size advisory is non-blocking.
@@ -417,14 +417,14 @@ Expected: `dist/index.mjs` and `dist/ui/` build successfully. Vite's existing ch
 Run in a persistent terminal session:
 
 ```bash
-SHANNON_AI_MODEL=openai:claude-sonnet-4.6 \
-SHANNON_AI_BASE_URL=https://api.cheaperinference.com/v1 \
-SHANNON_AI_OPENAI_FORMAT=chat-completions \
-SHANNON_AI_API_KEY=smoke-test-placeholder \
-./shannon ui --port 8790 --no-open
+DORA_AI_MODEL=openai:claude-sonnet-4.6 \
+DORA_AI_BASE_URL=https://api.cheaperinference.com/v1 \
+DORA_AI_OPENAI_FORMAT=chat-completions \
+DORA_AI_API_KEY=smoke-test-placeholder \
+./dora ui --port 8790 --no-open
 ```
 
-Expected: `Shannon UI: http://127.0.0.1:8790`.
+Expected: `Dora UI: http://127.0.0.1:8790`.
 
 - [ ] **Step 5: Verify health and safe bootstrap metadata**
 

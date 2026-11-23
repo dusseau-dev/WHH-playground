@@ -38,7 +38,7 @@ export interface RenderReportPdfOptions {
 export async function renderReportPdf(options: RenderReportPdfOptions): Promise<void> {
   const templatePath = options.templatePath ?? DEFAULT_REPORT_TEMPLATE_PATH;
   const commandRunner = options.commandRunner ?? runCommand;
-  const workDir = await mkdtemp(path.join(tmpdir(), 'shannon-typst-'));
+  const workDir = await mkdtemp(path.join(tmpdir(), 'dora-typst-'));
 
   try {
     const templateCopy = path.join(workDir, TEMPLATE_FILENAME);

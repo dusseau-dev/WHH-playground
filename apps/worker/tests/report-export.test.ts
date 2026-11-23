@@ -18,9 +18,9 @@ afterEach(async () => {
 
 describe('public deliverable export', () => {
   it('copies public reports and evidence without canonical JSON or workspace internals', async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-report-export-'));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-report-export-'));
     roots.push(root);
-    const deliverables = path.join(root, '.shannon', 'deliverables');
+    const deliverables = path.join(root, '.dora', 'deliverables');
     const output = path.join(root, 'output');
     await fs.mkdir(path.join(deliverables, 'internal'), { recursive: true });
     await fs.mkdir(path.join(deliverables, 'modules', 'automated-dast'), { recursive: true });

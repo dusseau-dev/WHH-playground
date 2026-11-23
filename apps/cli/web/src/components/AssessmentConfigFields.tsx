@@ -258,7 +258,7 @@ export const assessmentDefaults: AssessmentFormValues = {
   httpLoadRequestsPerSecond: HTTP_LOAD_DEFAULTS.requestsPerSecond,
   httpLoadDurationSeconds: HTTP_LOAD_DEFAULTS.durationSeconds,
   elevatedLoadConfirmed: false,
-  detectionCanaryPath: "/__shannon__/detection-simulation",
+  detectionCanaryPath: "/__dora__/detection-simulation",
   detectionMinimumRate: 1,
   detectionMaxWaitSeconds: 180,
   splunkManagementUrl: "",

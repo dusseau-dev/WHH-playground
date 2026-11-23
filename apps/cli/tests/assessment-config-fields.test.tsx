@@ -69,7 +69,7 @@ describe('assessment model configuration', () => {
     render(<DetectionForm />);
 
     expect(screen.getByText('Detection validation')).toBeInTheDocument();
-    expect(screen.getByLabelText('Canary path')).toHaveValue('/__shannon__/detection-simulation');
+    expect(screen.getByLabelText('Canary path')).toHaveValue('/__dora__/detection-simulation');
     expect(screen.getByLabelText('Splunk management URL')).toBeInTheDocument();
     expect(screen.getByLabelText('Splunk token')).toHaveAttribute('type', 'password');
     expect(screen.getByText(/fixed, inert paired corpus/i)).toBeInTheDocument();

@@ -41,7 +41,7 @@ export function collectRuntimeProviderSecrets(): string[] {
     process.env.ANTHROPIC_API_KEY,
     process.env.OPENAI_API_KEY,
     process.env.XAI_API_KEY,
-    process.env.SHANNON_AI_API_KEY,
+    process.env.DORA_AI_API_KEY,
     process.env.CLAUDE_CODE_OAUTH_TOKEN,
     process.env.AWS_ACCESS_KEY_ID,
     process.env.AWS_SECRET_ACCESS_KEY,

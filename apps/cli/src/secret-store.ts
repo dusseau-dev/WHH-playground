@@ -1,6 +1,6 @@
 import type { SecretField } from './contracts.js';
 
-const KEYCHAIN_SERVICE = 'com.keygraph.shannon.target';
+const KEYCHAIN_SERVICE = 'com.keygraph.dora.target';
 
 export interface SecretStore {
   readonly persistence: 'keychain' | 'memory';

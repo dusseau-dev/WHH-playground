@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          LATEST=$(npm view "@keygraph/shannon" dist-tags.beta 2>/dev/null || echo "")
+          LATEST=$(npm view "@keygraph/dora" dist-tags.beta 2>/dev/null || echo "")
 
           if [[ -z "$LATEST" ]]; then
             echo "version=1.0.0-beta.1" >> "$GITHUB_OUTPUT"
@@ -80,7 +80,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           provenance: mode=max
           sbom: true
-          outputs: type=image,name=keygraph/shannon,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=keygraph/dora,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         run: |
@@ -127,21 +127,21 @@ jobs:
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
-            --tag "keygraph/shannon:${{ needs.preflight.outputs.version }}" \
-            $(printf 'keygraph/shannon@sha256:%s ' *)
+            --tag "keygraph/dora:${{ needs.preflight.outputs.version }}" \
+            $(printf 'keygraph/dora@sha256:%s ' *)
 
       - name: Inspect image
         id: inspect
         run: |
-          docker buildx imagetools inspect "keygraph/shannon:${{ needs.preflight.outputs.version }}"
-          DIGEST="sha256:$(docker buildx imagetools inspect --raw "keygraph/shannon:${{ needs.preflight.outputs.version }}" | sha256sum | cut -d' ' -f1)"
+          docker buildx imagetools inspect "keygraph/dora:${{ needs.preflight.outputs.version }}"
+          DIGEST="sha256:$(docker buildx imagetools inspect --raw "keygraph/dora:${{ needs.preflight.outputs.version }}" | sha256sum | cut -d' ' -f1)"
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
 
       - name: Sign Docker image
-        run: cosign sign --yes "keygraph/shannon@${{ steps.inspect.outputs.digest }}"
+        run: cosign sign --yes "keygraph/dora@${{ steps.inspect.outputs.digest }}"
 
       - name: Verify Docker image signature
         run: |
@@ -149,7 +149,7 @@ jobs:
           cosign verify \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-identity https://github.com/${{ github.repository }}/.github/workflows/release-beta.yml@${{ github.ref }} \
-            "keygraph/shannon@${{ steps.inspect.outputs.digest }}"
+            "keygraph/dora@${{ steps.inspect.outputs.digest }}"
 
   publish-npm:
     name: Publish npm (beta)
@@ -183,14 +183,14 @@ jobs:
         run: pnpm install --lockfile-only
 
       - name: Build CLI
-        run: pnpm --filter @keygraph/shannon run build
+        run: pnpm --filter @keygraph/dora run build
 
       - name: Publish npm package
         working-directory: apps/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if npm view "@keygraph/shannon@${{ needs.preflight.outputs.version }}" version 2>/dev/null; then
+          if npm view "@keygraph/dora@${{ needs.preflight.outputs.version }}" version 2>/dev/null; then
             echo "Version already published, skipping"
           else
             pnpm publish --access public --no-git-checks --tag beta

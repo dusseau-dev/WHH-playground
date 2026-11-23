@@ -2,17 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { describeConfiguredModel, listConfiguredModels } from '../src/model-catalog.js';
 
 const openRouterEnvironment = {
-  SHANNON_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
-  SHANNON_AI_BASE_URL: 'https://openrouter.ai/api/v1',
-  SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
-  SHANNON_AI_API_KEY: 'server-side-openrouter-secret',
+  DORA_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
+  DORA_AI_BASE_URL: 'https://openrouter.ai/api/v1',
+  DORA_AI_OPENAI_FORMAT: 'chat-completions',
+  DORA_AI_API_KEY: 'server-side-openrouter-secret',
 };
 
 const cheaperInferenceEnvironment = {
-  SHANNON_AI_MODEL: 'openai:claude-sonnet-4.6',
-  SHANNON_AI_BASE_URL: 'https://api.cheaperinference.com/v1',
-  SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
-  SHANNON_AI_API_KEY: 'server-side-cheaper-inference-secret',
+  DORA_AI_MODEL: 'openai:claude-sonnet-4.6',
+  DORA_AI_BASE_URL: 'https://api.cheaperinference.com/v1',
+  DORA_AI_OPENAI_FORMAT: 'chat-completions',
+  DORA_AI_API_KEY: 'server-side-cheaper-inference-secret',
 };
 
 describe('configured model catalog', () => {
@@ -38,7 +38,7 @@ describe('configured model catalog', () => {
     expect(
       describeConfiguredModel({
         ...openRouterEnvironment,
-        SHANNON_AI_BASE_URL: 'https://eu.openrouter.ai/api/v1',
+        DORA_AI_BASE_URL: 'https://eu.openrouter.ai/api/v1',
       }),
     ).toMatchObject({ providerId: 'openrouter', providerLabel: 'OpenRouter', catalogAvailable: true });
   });
@@ -65,7 +65,7 @@ describe('configured model catalog', () => {
     expect(
       describeConfiguredModel({
         ...cheaperInferenceEnvironment,
-        SHANNON_AI_BASE_URL: 'https://api.cheaperinference.com.attacker.test/v1',
+        DORA_AI_BASE_URL: 'https://api.cheaperinference.com.attacker.test/v1',
       }),
     ).toMatchObject({ providerId: 'openai', providerLabel: 'OpenAI', catalogAvailable: false });
   });

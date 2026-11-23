@@ -53,7 +53,7 @@ import { createTaskTool, type PiUsage } from './task-tool.js';
 import { providerTurnError } from './turn-error.js';
 
 declare global {
-  var SHANNON_DISABLE_LOADER: boolean | undefined;
+  var DORA_DISABLE_LOADER: boolean | undefined;
 }
 
 const BUILTIN_TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
@@ -276,7 +276,7 @@ export async function runPiPrompt(options: RunPiPromptOptions): Promise<PiPrompt
   const execContext = detectExecutionContext(description);
   const progress = createProgressManager(
     { description, useCleanOutput: execContext.useCleanOutput },
-    global.SHANNON_DISABLE_LOADER ?? false,
+    global.DORA_DISABLE_LOADER ?? false,
   );
   const auditLogger = createAuditLogger(auditSession);
   const childUsage: PiUsage = {
@@ -302,8 +302,8 @@ export async function runPiPrompt(options: RunPiPromptOptions): Promise<PiPrompt
 
   logger.info(`Running Pi agent: ${description}...`);
   process.env.PLAYWRIGHT_MCP_OUTPUT_DIR = paths.playwrightOutputDir;
-  if (deliverablesSubdir) process.env.SHANNON_DELIVERABLES_SUBDIR = deliverablesSubdir;
-  else delete process.env.SHANNON_DELIVERABLES_SUBDIR;
+  if (deliverablesSubdir) process.env.DORA_DELIVERABLES_SUBDIR = deliverablesSubdir;
+  else delete process.env.DORA_DELIVERABLES_SUBDIR;
   progress.start();
 
   try {

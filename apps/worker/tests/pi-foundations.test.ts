@@ -16,8 +16,8 @@ describe('Pi model runtime foundations', () => {
         model: 'gpt-private',
       },
       env: {
-        SHANNON_AI_MODEL: 'anthropic:claude-env',
-        SHANNON_AI_API_KEY: 'environment-secret',
+        DORA_AI_MODEL: 'anthropic:claude-env',
+        DORA_AI_API_KEY: 'environment-secret',
       },
     });
 
@@ -49,10 +49,10 @@ describe('Pi model runtime foundations', () => {
         openAIFormat: 'chat-completions',
       },
       env: {
-        SHANNON_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
-        SHANNON_AI_BASE_URL: 'https://openrouter.ai/api/v1',
-        SHANNON_AI_OPENAI_FORMAT: 'chat-completions',
-        SHANNON_AI_API_KEY: 'environment-openrouter-secret',
+        DORA_AI_MODEL: 'openai:anthropic/claude-sonnet-4.6',
+        DORA_AI_BASE_URL: 'https://openrouter.ai/api/v1',
+        DORA_AI_OPENAI_FORMAT: 'chat-completions',
+        DORA_AI_API_KEY: 'environment-openrouter-secret',
       },
     });
 
@@ -139,16 +139,16 @@ describe('Pi model runtime foundations', () => {
     {
       source: 'web identity',
       env: {
-        AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/shannon-aws-web-identity-token',
+        AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/dora-aws-web-identity-token',
         AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/audit',
-        AWS_ROLE_SESSION_NAME: 'shannon',
+        AWS_ROLE_SESSION_NAME: 'dora',
       },
       expectedCredential: {
         type: 'api_key',
         env: {
-          AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/shannon-aws-web-identity-token',
+          AWS_WEB_IDENTITY_TOKEN_FILE: '/tmp/dora-aws-web-identity-token',
           AWS_ROLE_ARN: 'arn:aws:iam::123456789012:role/audit',
-          AWS_ROLE_SESSION_NAME: 'shannon',
+          AWS_ROLE_SESSION_NAME: 'dora',
         },
       },
     },
@@ -170,7 +170,7 @@ describe('Pi model runtime foundations', () => {
     const { resolvePiModelRuntime } = await import('../src/ai/pi/model-runtime.js');
     const runtime = await resolvePiModelRuntime({
       env: {
-        SHANNON_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
+        DORA_AI_MODEL: 'amazon-bedrock:us.anthropic.claude-sonnet-4-6',
         ...env,
       },
     });
@@ -210,7 +210,7 @@ describe('Pi model runtime foundations', () => {
 describe('Pi execution safety foundations', () => {
   it('propagates cancellation instead of converting it to an ordinary failed result', async () => {
     const { runPiPrompt } = await import('../src/ai/pi/pi-executor.js');
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-pi-cancel-'));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-pi-cancel-'));
     const controller = new AbortController();
     const reason = new Error('temporal activity cancelled');
     controller.abort(reason);
@@ -281,11 +281,11 @@ describe('Pi execution safety foundations', () => {
   it('redacts audit, console, error-file, and returned failure surfaces', async () => {
     const { runPiPrompt } = await import('../src/ai/pi/pi-executor.js');
     const secret = 'pi-runtime-secret';
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-pi-redaction-'));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-pi-redaction-'));
     const auditEvents: unknown[] = [];
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const previousLoaderSetting = global.SHANNON_DISABLE_LOADER;
-    global.SHANNON_DISABLE_LOADER = true;
+    const previousLoaderSetting = global.DORA_DISABLE_LOADER;
+    global.DORA_DISABLE_LOADER = true;
     try {
       const auditSession = {
         redactText: (value: string) => value.replaceAll(secret, '[REDACTED]'),
@@ -320,7 +320,7 @@ describe('Pi execution safety foundations', () => {
       expect(JSON.stringify(consoleLog.mock.calls)).not.toContain(secret);
       expect(errorLog).not.toContain(secret);
     } finally {
-      global.SHANNON_DISABLE_LOADER = previousLoaderSetting;
+      global.DORA_DISABLE_LOADER = previousLoaderSetting;
       consoleLog.mockRestore();
       await fs.rm(cwd, { recursive: true, force: true });
     }
@@ -393,7 +393,7 @@ describe('Pi custom tools', () => {
     );
     expect(note).toHaveBeenCalledWith('todo', '[~] Map routes');
 
-    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-pi-tools-'));
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-pi-tools-'));
     try {
       await fs.mkdir(path.join(cwd, 'src'));
       await fs.writeFile(path.join(cwd, 'src', 'one.ts'), 'export {};');
@@ -430,13 +430,13 @@ describe('runtime secret collection', () => {
     const previous = {
       OPENAI_API_KEY: process.env.OPENAI_API_KEY,
       XAI_API_KEY: process.env.XAI_API_KEY,
-      SHANNON_AI_API_KEY: process.env.SHANNON_AI_API_KEY,
+      DORA_AI_API_KEY: process.env.DORA_AI_API_KEY,
       AWS_SESSION_TOKEN: process.env.AWS_SESSION_TOKEN,
       AWS_CONTAINER_AUTHORIZATION_TOKEN: process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN,
     };
     process.env.OPENAI_API_KEY = 'openai-secret';
     process.env.XAI_API_KEY = 'xai-secret';
-    process.env.SHANNON_AI_API_KEY = 'gateway-secret';
+    process.env.DORA_AI_API_KEY = 'gateway-secret';
     process.env.AWS_SESSION_TOKEN = 'session-secret';
     process.env.AWS_CONTAINER_AUTHORIZATION_TOKEN = 'ecs-secret';
 

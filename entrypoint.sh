@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-TARGET_UID="${SHANNON_HOST_UID:-}"
-TARGET_GID="${SHANNON_HOST_GID:-}"
+TARGET_UID="${DORA_HOST_UID:-}"
+TARGET_GID="${DORA_HOST_GID:-}"
 CURRENT_UID=$(id -u pentest 2>/dev/null || echo "")
 
 if [ -n "$TARGET_UID" ] && [ "$TARGET_UID" != "$CURRENT_UID" ]; then

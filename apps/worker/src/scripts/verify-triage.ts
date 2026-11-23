@@ -12,7 +12,7 @@
  * Confirmed/ruled-out tables and the fail-open UNVALIDATED banner. Also exercises the
  * pure renderVerdictSections/validateTriageVerdicts helpers where a temp dir isn't
  * needed. Run after build:
- *   pnpm --filter @shannon/worker build && node apps/worker/dist/scripts/verify-triage.js
+ *   pnpm --filter @dora/worker build && node apps/worker/dist/scripts/verify-triage.js
  */
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -38,7 +38,7 @@ function parse(raw: unknown, label: string): TriageVerdicts | null {
 
 function seed(): string {
   const root = mkdtempSync(join(tmpdir(), 'triage-smoke-'));
-  const dir = join(root, '.shannon', 'deliverables');
+  const dir = join(root, '.dora', 'deliverables');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'injection_exploitation_evidence.md'), '# Injection Exploitation Evidence\n');
   return root;
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   // Case 1: valid verdicts → Confirmed table + ruled-out appendix, no banner.
   const root1 = seed();
   writeFileSync(
-    join(root1, '.shannon', 'deliverables', 'triage_verdicts.json'),
+    join(root1, '.dora', 'deliverables', 'triage_verdicts.json'),
     JSON.stringify({
       version: 1,
       verdicts: [
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
   // Case 3: invalid verdicts (bad enum) → fail-open banner.
   const root3 = seed();
   writeFileSync(
-    join(root3, '.shannon', 'deliverables', 'triage_verdicts.json'),
+    join(root3, '.dora', 'deliverables', 'triage_verdicts.json'),
     JSON.stringify({
       version: 1,
       verdicts: [
@@ -161,7 +161,7 @@ async function main(): Promise<void> {
   // execution (triageRan=false). The banner must honor the run's gate outcome, not just disk state.
   const root7 = seed();
   writeFileSync(
-    join(root7, '.shannon', 'deliverables', 'triage_verdicts.json'),
+    join(root7, '.dora', 'deliverables', 'triage_verdicts.json'),
     JSON.stringify({
       version: 1,
       verdicts: [

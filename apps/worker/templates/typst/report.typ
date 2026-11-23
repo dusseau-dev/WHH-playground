@@ -3,13 +3,13 @@
 #let field(value, key, default: none) = value.at(key, default: default)
 #let label(value) = value.replace("_", " ")
 
-#set document(title: "Security Assessment Report", author: "Shannon")
+#set document(title: "Security Assessment Report", author: "Dora")
 #set page(
   paper: "us-letter",
   margin: (x: 0.8in, y: 0.75in),
   footer: context [
     #set text(size: 8pt, fill: rgb("#667085"))
-    Shannon Security Assessment #h(1fr) #counter(page).display()
+    Dora Security Assessment #h(1fr) #counter(page).display()
   ],
 )
 #set text(size: 9.5pt, fill: rgb("#182230"))

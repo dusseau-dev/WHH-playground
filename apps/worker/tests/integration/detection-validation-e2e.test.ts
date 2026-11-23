@@ -41,7 +41,7 @@ describe('detection validation local-server flow', () => {
     const splunkRequests: Array<{ authorization?: string; search?: string }> = [];
     const target = await listen(async (request, response) => {
       await body(request);
-      targetRequests.push({ url: request.url ?? '', marker: request.headers['x-shannon-simulation-id'] as string });
+      targetRequests.push({ url: request.url ?? '', marker: request.headers['x-dora-simulation-id'] as string });
       response.writeHead(204).end();
     });
     const splunk = await listen(async (request, response) => {
@@ -60,7 +60,7 @@ describe('detection validation local-server flow', () => {
           .join('\n'),
       );
     });
-    const deliverablesPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-detection-e2e-'));
+    const deliverablesPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-detection-e2e-'));
     temporaryDirectories.push(deliverablesPath);
     const bridgeFetch: typeof fetch = async (input, init) => {
       const original = new URL(String(input));
@@ -74,7 +74,7 @@ describe('detection validation local-server flow', () => {
         workflowId,
         deliverablesPath,
         settings: {
-          canaryPath: '/__shannon__/detection-simulation',
+          canaryPath: '/__dora__/detection-simulation',
           minimumDetectionRate: 1,
           maxWaitSeconds: 30,
           splunk: {

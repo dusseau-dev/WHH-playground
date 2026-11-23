@@ -17,7 +17,7 @@ afterEach(async () => {
 
 describe('pipeline secret references', () => {
   it('protects backward-compatible PipelineInput fields before Temporal submission', async () => {
-    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-protected-input-'));
+    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-protected-input-'));
     tempRoots.push(outputPath);
     const providerSecret = 'provider-api-secret';
     const targetPassword = 'target-auth-password';
@@ -41,7 +41,7 @@ describe('pipeline secret references', () => {
     const secretPath = path.join(
       outputPath,
       'workspace-a',
-      '.shannon',
+      '.dora',
       'runtime',
       'workflow-secrets',
       `${protectedInput.secretRef}.json`,
@@ -59,10 +59,10 @@ describe('pipeline secret references', () => {
   });
 
   it('loads and deletes staged credentials while merging non-secret provider settings', async () => {
-    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-pipeline-secrets-'));
+    const outputPath = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-pipeline-secrets-'));
     tempRoots.push(outputPath);
     const secretRef = 'ps_0123456789abcdef0123456789abcdef';
-    const secretDirectory = path.join(outputPath, 'workspace-a', '.shannon', 'runtime', 'workflow-secrets');
+    const secretDirectory = path.join(outputPath, 'workspace-a', '.dora', 'runtime', 'workflow-secrets');
     const secretPath = path.join(secretDirectory, `${secretRef}.json`);
     await fs.mkdir(secretDirectory, { recursive: true, mode: 0o700 });
     await fs.writeFile(

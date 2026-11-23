@@ -208,7 +208,7 @@ export function buildSplunkSearch(index: string, sourcetype: string | undefined,
   const safeSourcetype = sourcetype
     ? ` sourcetype="${boundedIdentifier(sourcetype, 'sourcetype', SOURCETYPE_PATTERN)}"`
     : '';
-  if (!MARKER_PATTERN.test(marker)) throw new Error('Invalid Shannon detection marker');
+  if (!MARKER_PATTERN.test(marker)) throw new Error('Invalid Dora detection marker');
   return `search index="${safeIndex}"${safeSourcetype} "${marker}" | fields _time _raw | head 1000`;
 }
 
@@ -290,9 +290,9 @@ function canaryUrl(
   const targetOrigin = new URL(webUrl).origin;
   const url = new URL(canaryPath, targetOrigin);
   if (url.origin !== targetOrigin) throw new Error('Detection validation canary must remain same-origin');
-  url.searchParams.set('shannon_run_id', runMarker);
-  url.searchParams.set('shannon_simulation_id', scenarioMarker);
-  url.searchParams.set('shannon_scenario', scenario);
+  url.searchParams.set('dora_run_id', runMarker);
+  url.searchParams.set('dora_simulation_id', scenarioMarker);
+  url.searchParams.set('dora_scenario', scenario);
   return url;
 }
 
@@ -309,8 +309,8 @@ async function emitCanary(
     redirect: 'manual',
     headers: {
       'Content-Type': 'application/json',
-      'X-Shannon-Simulation-Id': scenarioMarker,
-      'X-Shannon-Simulation-Run': runMarker,
+      'X-Dora-Simulation-Id': scenarioMarker,
+      'X-Dora-Simulation-Run': runMarker,
     },
     body: JSON.stringify({ ...body, run_marker: runMarker, simulation_marker: scenarioMarker }),
     signal: requestSignal(options.signal),
@@ -442,7 +442,7 @@ export async function runDetectionValidation(
       runMarker,
       calibrationMarker,
       'calibration',
-      { simulation: 'shannon-inert', event: 'calibration' },
+      { simulation: 'dora-inert', event: 'calibration' },
       fetchImpl,
     );
   } catch {

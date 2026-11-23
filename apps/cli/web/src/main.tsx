@@ -22,7 +22,7 @@ const queryClient = new QueryClient({
 });
 
 const root = document.getElementById("root");
-if (!root) throw new Error("Shannon UI root element was not found");
+if (!root) throw new Error("Dora UI root element was not found");
 
 createRoot(root).render(
   <StrictMode>

@@ -17,16 +17,16 @@ interface ConfigMapping {
 }
 
 const NEW_MAP: readonly ConfigMapping[] = [
-  { env: 'SHANNON_AI_MODEL', toml: 'core.model', type: 'string' },
-  { env: 'SHANNON_AI_BASE_URL', toml: 'core.base_url', type: 'string' },
+  { env: 'DORA_AI_MODEL', toml: 'core.model', type: 'string' },
+  { env: 'DORA_AI_BASE_URL', toml: 'core.base_url', type: 'string' },
   { env: 'ANTHROPIC_API_KEY', toml: 'anthropic.api_key', type: 'string' },
   { env: 'CLAUDE_CODE_OAUTH_TOKEN', toml: 'anthropic.oauth_token', type: 'string' },
   { env: 'OPENAI_API_KEY', toml: 'openai.api_key', type: 'string' },
-  { env: 'SHANNON_AI_OPENAI_FORMAT', toml: 'openai.format', type: 'string' },
+  { env: 'DORA_AI_OPENAI_FORMAT', toml: 'openai.format', type: 'string' },
   { env: 'XAI_API_KEY', toml: 'xai.api_key', type: 'string' },
   { env: 'AWS_REGION', toml: 'bedrock.region', type: 'string' },
   { env: 'AWS_BEARER_TOKEN_BEDROCK', toml: 'bedrock.token', type: 'string' },
-  { env: 'SHANNON_AI_API_KEY', toml: 'provider.api_key', type: 'string' },
+  { env: 'DORA_AI_API_KEY', toml: 'provider.api_key', type: 'string' },
 ] as const;
 
 const LEGACY_MAP: readonly ConfigMapping[] = [
@@ -92,7 +92,7 @@ function loadTOML(): TOMLConfig | null {
     return parseTOML(fs.readFileSync(configPath, 'utf8')) as TOMLConfig;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    fail(`Failed to parse ${configPath}: ${message}`, `Run 'npx @keygraph/shannon setup' to reconfigure.`);
+    fail(`Failed to parse ${configPath}: ${message}`, `Run 'npx @keygraph/dora setup' to reconfigure.`);
   }
 }
 
@@ -141,7 +141,7 @@ function environmentHas(...names: string[]): boolean {
 
 function configuredBaseUrl(config: TOMLConfig, provider: string): string | undefined {
   return (
-    process.env.SHANNON_AI_BASE_URL?.trim() ||
+    process.env.DORA_AI_BASE_URL?.trim() ||
     tomlValue(config, NEW_MAP[1]) ||
     (provider === 'anthropic' ? process.env.ANTHROPIC_BASE_URL?.trim() : undefined)
   );
@@ -158,7 +158,7 @@ function isCuratedProvider(provider: string): provider is CuratedProvider {
 function validateNewProvider(config: TOMLConfig, provider: string): string[] {
   if (provider === 'vertex') return [vertexMigrationMessage()];
   if (!isCuratedProvider(provider)) {
-    return environmentHas('SHANNON_AI_API_KEY') || hasValue(config, 'provider.api_key')
+    return environmentHas('DORA_AI_API_KEY') || hasValue(config, 'provider.api_key')
       ? []
       : [`[provider] requires api_key for provider "${provider}"`];
   }
@@ -176,7 +176,7 @@ function validateNewProvider(config: TOMLConfig, provider: string): string[] {
       ? []
       : [`[${CURATED_PROVIDER_SECTION[provider]}] requires api_key`];
   if (provider === 'openai') {
-    const format = process.env.SHANNON_AI_OPENAI_FORMAT ?? tomlValue(config, NEW_MAP[5]);
+    const format = process.env.DORA_AI_OPENAI_FORMAT ?? tomlValue(config, NEW_MAP[5]);
     if (format && format !== 'chat-completions' && format !== 'responses') {
       errors.push('[openai].format must be "chat-completions" or "responses"');
     }
@@ -199,7 +199,7 @@ function validateLegacyProvider(config: TOMLConfig): string[] {
 }
 
 function vertexMigrationMessage(): string {
-  return 'Vertex AI is no longer supported by this model runtime. Migrate to SHANNON_AI_MODEL=<provider>:<model-id> with SHANNON_AI_API_KEY, or use SHANNON_AI_BASE_URL.';
+  return 'Vertex AI is no longer supported by this model runtime. Migrate to DORA_AI_MODEL=<provider>:<model-id> with DORA_AI_API_KEY, or use DORA_AI_BASE_URL.';
 }
 
 function inject(config: TOMLConfig, mappings: readonly ConfigMapping[]): void {
@@ -250,14 +250,14 @@ function fail(...lines: string[]): never {
   process.exit(1);
 }
 
-/** Fill missing process.env values from ~/.shannon/config.toml in package mode. */
+/** Fill missing process.env values from ~/.dora/config.toml in package mode. */
 export function resolveConfig(): void {
   if (getMode() === 'local') return;
   const config = loadTOML();
   if (!config) return;
 
   const errors = validateShape(config);
-  const configuredModel = process.env.SHANNON_AI_MODEL?.trim() || tomlValue(config, NEW_MAP[0]);
+  const configuredModel = process.env.DORA_AI_MODEL?.trim() || tomlValue(config, NEW_MAP[0]);
   if (configuredModel) {
     let provider: string | undefined;
     try {

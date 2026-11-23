@@ -49,7 +49,7 @@ export interface PipelineInput {
   configData?: DistributedConfig; // Pre-parsed config (bypasses file loading)
   /** @deprecated Stage with an opaque secretRef before starting a Temporal workflow. */
   apiKey?: string;
-  deliverablesSubdir?: string; // Override deliverables path (default: '.shannon/deliverables')
+  deliverablesSubdir?: string; // Override deliverables path (default: '.dora/deliverables')
   auditDir?: string; // Override audit log directory (default: './workspaces')
   promptDir?: string; // Override prompt template directory
   sastSarifPath?: string; // Optional path for consumer-supplied findings input

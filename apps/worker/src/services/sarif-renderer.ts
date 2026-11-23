@@ -22,20 +22,20 @@ interface SarifRule {
 
 type FindingCategory = AddFindingInput['category'];
 
-const TOOL_NAME = 'Shannon';
-const TOOL_URI = 'https://github.com/KeygraphHQ/shannon';
+const TOOL_NAME = 'Dora';
+const TOOL_URI = 'https://github.com/KeygraphHQ/dora';
 const OWASP_TAXONOMY_NAME = 'OWASP Top Ten 2025';
 
 const RULES: Readonly<Record<FindingCategory, SarifRule>> = {
-  Injection: rule('shannon/injection', 'Injection', 'Separate untrusted data from interpreter syntax at every sink.'),
-  XSS: rule('shannon/xss', 'Cross-Site Scripting', 'Encode untrusted output for its browser context.'),
-  Authentication: rule('shannon/auth', 'Authentication', 'Harden credential verification and session lifecycle.'),
+  Injection: rule('dora/injection', 'Injection', 'Separate untrusted data from interpreter syntax at every sink.'),
+  XSS: rule('dora/xss', 'Cross-Site Scripting', 'Encode untrusted output for its browser context.'),
+  Authentication: rule('dora/auth', 'Authentication', 'Harden credential verification and session lifecycle.'),
   Authorization: rule(
-    'shannon/authz',
+    'dora/authz',
     'Authorization',
     'Enforce server-side ownership and role checks for every resource.',
   ),
-  SSRF: rule('shannon/ssrf', 'Server-Side Request Forgery', 'Allowlist destinations and block private network ranges.'),
+  SSRF: rule('dora/ssrf', 'Server-Side Request Forgery', 'Allowlist destinations and block private network ranges.'),
 };
 
 const CATEGORY_ORDER: readonly FindingCategory[] = ['Injection', 'XSS', 'Authentication', 'Authorization', 'SSRF'];
@@ -45,9 +45,9 @@ function rule(id: string, name: string, help: string): SarifRule {
     id,
     name,
     shortDescription: { text: name },
-    fullDescription: { text: `${name} vulnerability identified by Shannon.` },
+    fullDescription: { text: `${name} vulnerability identified by Dora.` },
     help: { text: help },
-    properties: { tags: ['security', 'shannon'] },
+    properties: { tags: ['security', 'dora'] },
   };
 }
 
@@ -166,7 +166,7 @@ function renderFinding(finding: AddFindingInput, ruleId: string): Record<string,
         webRequest: { method: finding.http_location.method.toUpperCase(), target: httpUrl.href },
       }),
     taxa: [{ id: owasp.id, toolComponent: { name: OWASP_TAXONOMY_NAME } }],
-    partialFingerprints: { 'shannon/finding-id/v1': fingerprint(ruleId, finding.finding_id) },
+    partialFingerprints: { 'dora/finding-id/v1': fingerprint(ruleId, finding.finding_id) },
     properties: {
       findingId: finding.finding_id,
       ...(finding.original_severity && { originalSeverity: finding.original_severity }),
@@ -204,7 +204,7 @@ export function renderSarif(data: ReportData, options: SarifOptions): string {
     runs: [
       {
         tool: { driver: { name: TOOL_NAME, informationUri: TOOL_URI, rules } },
-        automationDetails: { id: `shannon/safe-demonstration/${workspaceName}` },
+        automationDetails: { id: `dora/safe-demonstration/${workspaceName}` },
         invocations: [{ executionSuccessful: data.not_assessed.length === 0 }],
         ...(taxa.length > 0 && {
           taxonomies: [

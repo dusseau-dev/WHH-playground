@@ -1,5 +1,5 @@
 /**
- * `shannon stop` command — stop workers and infrastructure.
+ * `dora stop` command — stop workers and infrastructure.
  */
 
 import * as p from '@clack/prompts';

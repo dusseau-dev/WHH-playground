@@ -21,7 +21,7 @@ function baseInput(workingDirectory: string): ActivityInput {
 }
 
 async function makeTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'shannon-worker-'));
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dora-worker-'));
   tempRoots.push(root);
   return root;
 }

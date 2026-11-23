@@ -131,7 +131,7 @@ describe('CLI detection validation settings', () => {
 
   it('normalizes safe defaults only for the selected staging scope', () => {
     expect(normalizeDetectionValidationSettings(['alerting-effectiveness'], { splunk }, 'staging')).toEqual({
-      canaryPath: '/__shannon__/detection-simulation',
+      canaryPath: '/__dora__/detection-simulation',
       minimumDetectionRate: 1,
       maxWaitSeconds: 180,
       splunk,

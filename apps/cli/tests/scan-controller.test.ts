@@ -8,7 +8,7 @@ import { FakeRuntime, FakeTemporal, testController } from './helpers.js';
 const temporaryDirectories: string[] = [];
 
 async function temporaryDirectory(): Promise<string> {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'shannon-controller-'));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'dora-controller-'));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -153,16 +153,16 @@ describe('managed run launch', () => {
       workingDirectory: '/app/target',
       sourceMode: 'url-only',
       labels: {
-        'shannon.managed': 'true',
-        'shannon.run': 'url-only-run',
-        'shannon.attempt': '1',
+        'dora.managed': 'true',
+        'dora.run': 'url-only-run',
+        'dora.attempt': '1',
       },
     });
 
-    const runPath = path.join(workspacesDir, 'url-only-run', '.shannon', 'run.json');
+    const runPath = path.join(workspacesDir, 'url-only-run', '.dora', 'run.json');
     const snapshot = await fs.readFile(runPath, 'utf8');
     const runtimeConfig = await fs.readFile(
-      path.join(workspacesDir, 'url-only-run', '.shannon', 'runtime', 'worker-config.yaml'),
+      path.join(workspacesDir, 'url-only-run', '.dora', 'runtime', 'worker-config.yaml'),
       'utf8',
     );
     await expect(fs.access(path.join(workspacesDir, 'url-only-run', 'run.json'))).rejects.toThrow();
@@ -212,23 +212,23 @@ describe('managed run launch', () => {
       apiKey: providerApiKey,
     });
 
-    const persisted = await fs.readFile(path.join(workspacesDir, 'provider-run', '.shannon', 'run.json'), 'utf8');
+    const persisted = await fs.readFile(path.join(workspacesDir, 'provider-run', '.dora', 'run.json'), 'utf8');
     expect(persisted).toContain('~anthropic/claude-sonnet-latest');
     expect(persisted).not.toContain(providerApiKey);
   });
 
   it('reuses the configured provider credential when a run changes only the model', async () => {
     const environmentNames = [
-      'SHANNON_AI_MODEL',
-      'SHANNON_AI_BASE_URL',
-      'SHANNON_AI_OPENAI_FORMAT',
-      'SHANNON_AI_API_KEY',
+      'DORA_AI_MODEL',
+      'DORA_AI_BASE_URL',
+      'DORA_AI_OPENAI_FORMAT',
+      'DORA_AI_API_KEY',
     ] as const;
     const previous = Object.fromEntries(environmentNames.map((name) => [name, process.env[name]]));
-    process.env.SHANNON_AI_MODEL = 'openai:anthropic/claude-sonnet-4.6';
-    process.env.SHANNON_AI_BASE_URL = 'https://openrouter.ai/api/v1';
-    process.env.SHANNON_AI_OPENAI_FORMAT = 'chat-completions';
-    process.env.SHANNON_AI_API_KEY = 'environment-openrouter-secret';
+    process.env.DORA_AI_MODEL = 'openai:anthropic/claude-sonnet-4.6';
+    process.env.DORA_AI_BASE_URL = 'https://openrouter.ai/api/v1';
+    process.env.DORA_AI_OPENAI_FORMAT = 'chat-completions';
+    process.env.DORA_AI_API_KEY = 'environment-openrouter-secret';
 
     try {
       const workspacesDir = await temporaryDirectory();
@@ -250,7 +250,7 @@ describe('managed run launch', () => {
 
       expect(run.snapshot.providerConfig).toEqual(providerConfig);
       expect(temporal.starts[0]?.input.providerConfig).toEqual(providerConfig);
-      expect(runtime.launches[0]?.envFlags).toContain('SHANNON_AI_API_KEY');
+      expect(runtime.launches[0]?.envFlags).toContain('DORA_AI_API_KEY');
       expect(JSON.stringify(temporal.starts)).not.toContain('environment-openrouter-secret');
     } finally {
       for (const name of environmentNames) {
@@ -290,15 +290,15 @@ describe('managed run launch', () => {
       awsSessionToken: 'aws-session-provider-token',
     });
 
-    const persisted = await fs.readFile(path.join(workspacesDir, 'provider-aws-run', '.shannon', 'run.json'), 'utf8');
+    const persisted = await fs.readFile(path.join(workspacesDir, 'provider-aws-run', '.dora', 'run.json'), 'utf8');
     expect(persisted).not.toContain('AKIAIOSFODNN7EXAMPLE');
     expect(persisted).not.toContain('aws-secret-provider-key');
     expect(persisted).not.toContain('aws-session-provider-token');
   });
 
   it('does not inspect ambient provider env when a run-scoped provider config is supplied', async () => {
-    const previous = process.env.SHANNON_AI_MODEL;
-    process.env.SHANNON_AI_MODEL = 'malformed-model-spec';
+    const previous = process.env.DORA_AI_MODEL;
+    process.env.DORA_AI_MODEL = 'malformed-model-spec';
     try {
       const workspacesDir = await temporaryDirectory();
       const { controller, runtime } = testController(workspacesDir);
@@ -317,10 +317,10 @@ describe('managed run launch', () => {
           },
         }),
       ).resolves.toMatchObject({ runId: 'provider-env-isolated-run' });
-      expect(runtime.launches[0]?.envFlags).toEqual(['-e', 'TEMPORAL_ADDRESS=shannon-temporal:7233']);
+      expect(runtime.launches[0]?.envFlags).toEqual(['-e', 'TEMPORAL_ADDRESS=dora-temporal:7233']);
     } finally {
-      if (previous === undefined) delete process.env.SHANNON_AI_MODEL;
-      else process.env.SHANNON_AI_MODEL = previous;
+      if (previous === undefined) delete process.env.DORA_AI_MODEL;
+      else process.env.DORA_AI_MODEL = previous;
     }
   });
 
@@ -363,7 +363,7 @@ describe('managed run launch', () => {
       secretRefs: { password: 'keychain:profile-1:password' },
     });
 
-    const internal = path.join(workspacesDir, 'reference-start', '.shannon');
+    const internal = path.join(workspacesDir, 'reference-start', '.dora');
     expect(await fs.readFile(path.join(internal, 'runtime', 'worker-config.yaml'), 'utf8')).toContain(
       'reference-only-password',
     );
@@ -387,11 +387,11 @@ describe('managed run launch', () => {
 
     expect(temporal.cancelled).toEqual(['failed-start-attempt-1-attempt1']);
     const stored = JSON.parse(
-      await fs.readFile(path.join(workspacesDir, 'failed-start', '.shannon', 'run.json'), 'utf8'),
+      await fs.readFile(path.join(workspacesDir, 'failed-start', '.dora', 'run.json'), 'utf8'),
     );
     expect(stored.status).toBe('failed');
     await expect(
-      fs.access(path.join(workspacesDir, 'failed-start', '.shannon', 'runtime', 'worker-config.yaml')),
+      fs.access(path.join(workspacesDir, 'failed-start', '.dora', 'runtime', 'worker-config.yaml')),
     ).rejects.toThrow();
   });
 });
@@ -429,11 +429,11 @@ describe('resume and cancellation', () => {
     });
     expect(runtime.launches).toHaveLength(2);
     const runtimeConfig = await fs.readFile(
-      path.join(workspacesDir, 'resume-run', '.shannon', 'runtime', 'worker-config.yaml'),
+      path.join(workspacesDir, 'resume-run', '.dora', 'runtime', 'worker-config.yaml'),
       'utf8',
     );
     expect(runtimeConfig).toContain('resolved-on-resume');
-    expect(await fs.readFile(path.join(workspacesDir, 'resume-run', '.shannon', 'run.json'), 'utf8')).not.toContain(
+    expect(await fs.readFile(path.join(workspacesDir, 'resume-run', '.dora', 'run.json'), 'utf8')).not.toContain(
       'resolved-on-resume',
     );
   });
@@ -504,7 +504,7 @@ describe('resume and cancellation', () => {
       config: {},
     });
     await controller.cancelRun(started.runId);
-    const runPath = path.join(workspacesDir, 'tampered-run', '.shannon', 'run.json');
+    const runPath = path.join(workspacesDir, 'tampered-run', '.dora', 'run.json');
     const stored = JSON.parse(await fs.readFile(runPath, 'utf8'));
     stored.snapshot.targetUrl = 'https://changed.test';
     await fs.writeFile(runPath, JSON.stringify(stored));
@@ -576,7 +576,7 @@ describe('progress and reconciliation', () => {
       config: { authentication },
       secrets: { password: 'ephemeral-progress-password' },
     });
-    const runtimeConfig = path.join(workspacesDir, 'progress-run', '.shannon', 'runtime', 'worker-config.yaml');
+    const runtimeConfig = path.join(workspacesDir, 'progress-run', '.dora', 'runtime', 'worker-config.yaml');
     await expect(fs.access(runtimeConfig)).resolves.toBeUndefined();
     const workflowId = started.attempts[0]?.workflowId as string;
     expect((await controller.getRunProgress(started.runId))?.currentPhase).toBe('recon');
@@ -609,19 +609,19 @@ describe('progress and reconciliation', () => {
     const workspacesDir = await temporaryDirectory();
     const runtime = new FakeRuntime();
     runtime.addContainer({
-      name: 'shannon-worker-orphan',
+      name: 'dora-worker-orphan',
       running: true,
       status: 'running',
       exitCode: null,
       labels: {
-        'shannon.managed': 'true',
-        'shannon.run': 'missing-run',
-        'shannon.attempt': '1',
+        'dora.managed': 'true',
+        'dora.run': 'missing-run',
+        'dora.attempt': '1',
       },
     });
     const { controller } = testController(workspacesDir, { runtime });
     await controller.reconcileRuns();
-    expect(runtime.stopped).toEqual(['shannon-worker-orphan']);
+    expect(runtime.stopped).toEqual(['dora-worker-orphan']);
   });
 
   it('stops a container whose run and attempt labels match but workflow label does not', async () => {
@@ -641,7 +641,7 @@ describe('progress and reconciliation', () => {
       running: true,
       status: 'running',
       exitCode: null,
-      labels: { ...attempt.dockerLabels, 'shannon.workflow': 'other-workflow' },
+      labels: { ...attempt.dockerLabels, 'dora.workflow': 'other-workflow' },
     });
 
     await controller.reconcileRuns();
@@ -707,7 +707,7 @@ describe('legacy workspaces and artifacts', () => {
       workspace: 'artifact-run',
       config: {},
     });
-    const deliverables = path.join(workspacesDir, 'artifact-run', '.shannon', 'deliverables');
+    const deliverables = path.join(workspacesDir, 'artifact-run', '.dora', 'deliverables');
     await fs.writeFile(
       path.join(deliverables, 'xss_exploitation_queue.json'),
       JSON.stringify({
@@ -751,7 +751,7 @@ describe('legacy workspaces and artifacts', () => {
       },
       secrets: { splunkToken: 'must-not-appear' },
     });
-    const deliverables = path.join(workspacesDir, 'detection-summary-run', '.shannon', 'deliverables');
+    const deliverables = path.join(workspacesDir, 'detection-summary-run', '.dora', 'deliverables');
     await fs.writeFile(
       path.join(deliverables, 'detection-validation.json'),
       JSON.stringify({
@@ -807,7 +807,7 @@ describe('legacy workspaces and artifacts', () => {
       workspace: 'malformed-detection-run',
       config: {},
     });
-    const deliverables = path.join(workspacesDir, 'malformed-detection-run', '.shannon', 'deliverables');
+    const deliverables = path.join(workspacesDir, 'malformed-detection-run', '.dora', 'deliverables');
     await fs.writeFile(path.join(deliverables, 'detection-validation.json'), '{not-json');
 
     const detail = await controller.getRunDetail('malformed-detection-run');
@@ -839,7 +839,7 @@ describe('legacy workspaces and artifacts', () => {
       config: {},
     });
     const workspace = path.join(workspacesDir, 'multi-report-run');
-    const deliverables = path.join(workspace, '.shannon', 'deliverables');
+    const deliverables = path.join(workspace, '.dora', 'deliverables');
     await fs.writeFile(path.join(deliverables, 'comprehensive_security_assessment_report.md'), '# Report');
     await fs.writeFile(path.join(deliverables, 'Security-Assessment-Report.pdf'), '%PDF-1.7');
     await fs.writeFile(path.join(deliverables, 'report.sarif'), '{"version":"2.1.0"}');

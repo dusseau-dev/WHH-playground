@@ -15,7 +15,7 @@ variants without generating offensive content at runtime.
   defaults to 100% for each cohort.
 - Preserve deterministic machine-readable evidence and show a concise summary in the canonical report and Run Detail
   UI.
-- Finish the Shannon workflow even when the detection threshold fails.
+- Finish the Dora workflow even when the detection threshold fails.
 
 ## Non-goals
 
@@ -31,7 +31,7 @@ variants without generating offensive content at runtime.
   confirm that the telemetry path works before simulations begin.
 - As a purple-team operator, I can see which fixed scenarios generated alerts, how long detection took, and whether
   each cohort met the configured threshold.
-- As a Shannon operator, I can store the Splunk token through the existing secret-reference mechanism without writing
+- As a Dora operator, I can store the Splunk token through the existing secret-reference mechanism without writing
   it to profiles, workflow history, logs, or deliverables.
 - As a report consumer, I can distinguish a valid threshold failure from an incomplete or unavailable assessment.
 
@@ -43,7 +43,7 @@ variants without generating offensive content at runtime.
    calibration request.
 4. Splunk configuration accepts an HTTPS management origin, telemetry index, alert index, optional sourcetypes, a
    30–600 second wait, and a 0–1 cohort threshold.
-5. Shannon builds bounded searches itself and calls `POST /services/search/v2/jobs/export` with bearer authentication.
+5. Dora builds bounded searches itself and calls `POST /services/search/v2/jobs/export` with bearer authentication.
 6. A telemetry calibration marker must be observable before the ten scenarios are emitted sequentially at no more
    than one request per second.
 7. Scenario markers remain stable across retries and results are de-duplicated by marker.

@@ -6,7 +6,7 @@
 
 **Architecture:** A new agent in the `AGENTS` registry (so `AgentExecutionService` runs it for free), inserted into `workflows.ts` as a fail-open phase before reporting. Validation (`triage-validation.ts`) and deterministic rendering (`triage-report.ts`) are pure modules; `assembleFinalReport` prepends the rendered sections to the concatenated evidence.
 
-**Tech Stack:** TypeScript (ESM, `tsc`), Temporal, `zx` fs/path, hand-rolled validation mirroring `queue-validation.ts` + `Result<T,E>`. **No test runner** (repo has none — decision C). Gates per task: `pnpm --filter @shannon/worker check` (tsc) + `pnpm biome`. Behavioral verification: a standalone smoke script (Task 8). Spec: `docs/superpowers/specs/2026-06-10-triage-gate-design.md`.
+**Tech Stack:** TypeScript (ESM, `tsc`), Temporal, `zx` fs/path, hand-rolled validation mirroring `queue-validation.ts` + `Result<T,E>`. **No test runner** (repo has none — decision C). Gates per task: `pnpm --filter @dora/worker check` (tsc) + `pnpm biome`. Behavioral verification: a standalone smoke script (Task 8). Spec: `docs/superpowers/specs/2026-06-10-triage-gate-design.md`.
 
 ---
 
@@ -30,7 +30,7 @@
 - `apps/worker/prompts/report-executive.txt` — consume verdicts / preserve sections.
 - `COVERAGE.md` — note the triage phase.
 
-> **Note on paths:** the existing validators/report read deliverables via `path.join(sourceDir, '.shannon', 'deliverables', <file>)` (e.g. `reporting.ts:31`, `session-manager.ts:147`). Mirror that exact join for `triage_verdicts.json` so it resolves wherever the evidence files do — do not invent a new path scheme.
+> **Note on paths:** the existing validators/report read deliverables via `path.join(sourceDir, '.dora', 'deliverables', <file>)` (e.g. `reporting.ts:31`, `session-manager.ts:147`). Mirror that exact join for `triage_verdicts.json` so it resolves wherever the evidence files do — do not invent a new path scheme.
 
 > **Prerequisites are metadata:** the workflow sequences phases explicitly (`workflows.ts`), so `triage.prerequisites` is descriptive. Do NOT add `triage` to `report.prerequisites` — that must stay independent so report still runs when triage fails open.
 
@@ -170,7 +170,7 @@ export function validateTriageVerdicts(raw: unknown): Result<TriageVerdicts, Pen
 
 - [ ] **Step 3: Type-check + lint.**
 
-Run: `pnpm --filter @shannon/worker check && pnpm biome`
+Run: `pnpm --filter @dora/worker check && pnpm biome`
 Expected: PASS (no errors).
 
 - [ ] **Step 4: Commit.**
@@ -226,7 +226,7 @@ function cell(s: string): string {
  * Mirrors the deliverable path-join used by assembleFinalReport / the agent validators.
  */
 export async function loadVerdicts(sourceDir: string, logger: ActivityLogger): Promise<TriageVerdicts | null> {
-  const file = path.join(sourceDir, '.shannon', 'deliverables', 'triage_verdicts.json');
+  const file = path.join(sourceDir, '.dora', 'deliverables', 'triage_verdicts.json');
   if (!(await fs.pathExists(file))) {
     logger.warn('triage_verdicts.json not found — report will be UNVALIDATED');
     return null;
@@ -281,7 +281,7 @@ export function renderVerdictSections(verdicts: TriageVerdicts | null): string {
 }
 ```
 
-- [ ] **Step 2: Type-check + lint.** Run: `pnpm --filter @shannon/worker check && pnpm biome` — Expected: PASS.
+- [ ] **Step 2: Type-check + lint.** Run: `pnpm --filter @dora/worker check && pnpm biome` — Expected: PASS.
 
 - [ ] **Step 3: Commit.**
 
@@ -345,7 +345,7 @@ import { validateTriageVerdicts } from './services/triage-validation.js';
 
 ```ts
   triage: async (sourceDir: string, logger: ActivityLogger): Promise<boolean> => {
-    const verdictsFile = path.join(sourceDir, '.shannon', 'deliverables', 'triage_verdicts.json');
+    const verdictsFile = path.join(sourceDir, '.dora', 'deliverables', 'triage_verdicts.json');
     if (!(await fs.pathExists(verdictsFile))) {
       logger.warn('Missing required deliverable: triage_verdicts.json');
       return false;
@@ -365,7 +365,7 @@ import { validateTriageVerdicts } from './services/triage-validation.js';
   },
 ```
 
-- [ ] **Step 7: Type-check + lint.** Run: `pnpm --filter @shannon/worker check && pnpm biome`
+- [ ] **Step 7: Type-check + lint.** Run: `pnpm --filter @dora/worker check && pnpm biome`
 Expected: PASS. (tsc enforces that `AGENTS`, `AGENT_PHASE_MAP`, and `AGENT_VALIDATORS` — all `Record<AgentName, …>` — now include `triage`. If you missed one, this fails here.)
 
 - [ ] **Step 8: Confirm prerequisites are metadata.** Run: `grep -rn "\.prerequisites" apps/worker/src | grep -v node_modules` — verify no runtime gate would block `report` on `triage`. (Workflow ordering is explicit; expect only display/resume usage.)
@@ -396,7 +396,7 @@ export async function runTriageAgent(input: ActivityInput): Promise<AgentMetrics
 }
 ```
 
-- [ ] **Step 2: Type-check + lint.** Run: `pnpm --filter @shannon/worker check && pnpm biome` — Expected: PASS.
+- [ ] **Step 2: Type-check + lint.** Run: `pnpm --filter @dora/worker check && pnpm biome` — Expected: PASS.
 
 - [ ] **Step 3: Commit.**
 
@@ -459,7 +459,7 @@ git commit -m "feat(triage): add runTriageAgent activity"
     // === Phase 5: Reporting ===
 ```
 
-- [ ] **Step 4: Type-check + lint.** Run: `pnpm --filter @shannon/worker check && pnpm biome` — Expected: PASS.
+- [ ] **Step 4: Type-check + lint.** Run: `pnpm --filter @dora/worker check && pnpm biome` — Expected: PASS.
 
 - [ ] **Step 5: Commit.**
 
@@ -500,7 +500,7 @@ with:
 - [ ] **Step 3: Update the report prompt.** In `apps/worker/prompts/report-executive.txt`, add to `<input_files>` (after line 40):
 
 ```
-- `.shannon/deliverables/triage_verdicts.json` - Triage verdicts (authoritative validation results)
+- `.dora/deliverables/triage_verdicts.json` - Triage verdicts (authoritative validation results)
 ```
 
 and append this block at the end of `<instructions>` (before the closing `</instructions>`, line 129):
@@ -516,7 +516,7 @@ and append this block at the end of `<instructions>` (before the closing `</inst
      KILL/ruled-out finding as confirmed, and do NOT promote a ruled-out item.
 ```
 
-- [ ] **Step 4: Type-check + lint.** Run: `pnpm --filter @shannon/worker check && pnpm biome` — Expected: PASS.
+- [ ] **Step 4: Type-check + lint.** Run: `pnpm --filter @dora/worker check && pnpm biome` — Expected: PASS.
 
 - [ ] **Step 5: Commit.**
 
@@ -546,17 +546,17 @@ URL: {{WEB_URL}}
 {{DESCRIPTION}}
 
 Workspace:
-- .shannon/deliverables/ (read-write)
-- .shannon/scratchpad/ (read-write)
+- .dora/deliverables/ (read-write)
+- .dora/scratchpad/ (read-write)
 </target>
 
 <input_files>
 Read the exploitation evidence and queue files that exist for this run:
-- `.shannon/deliverables/injection_exploitation_evidence.md` + `injection_exploitation_queue.json`
-- `.shannon/deliverables/xss_exploitation_evidence.md` + `xss_exploitation_queue.json`
-- `.shannon/deliverables/auth_exploitation_evidence.md` + `auth_exploitation_queue.json`
-- `.shannon/deliverables/ssrf_exploitation_evidence.md` + `ssrf_exploitation_queue.json`
-- `.shannon/deliverables/authz_exploitation_evidence.md` + `authz_exploitation_queue.json`
+- `.dora/deliverables/injection_exploitation_evidence.md` + `injection_exploitation_queue.json`
+- `.dora/deliverables/xss_exploitation_evidence.md` + `xss_exploitation_queue.json`
+- `.dora/deliverables/auth_exploitation_evidence.md` + `auth_exploitation_queue.json`
+- `.dora/deliverables/ssrf_exploitation_evidence.md` + `ssrf_exploitation_queue.json`
+- `.dora/deliverables/authz_exploitation_evidence.md` + `authz_exploitation_queue.json`
 Some files may be absent — only triage the findings that exist.
 </input_files>
 
@@ -601,8 +601,8 @@ Produce STRICT JSON (no prose, no markdown fences) with a verdict for every cand
 }
 
 To save it:
-1. Use the Write tool to create `.shannon/deliverables/triage_verdicts.json` containing the JSON.
-2. Run: save-deliverable --type TRIAGE_VERDICT --file-path ".shannon/deliverables/triage_verdicts.json"
+1. Use the Write tool to create `.dora/deliverables/triage_verdicts.json` containing the JSON.
+2. Run: save-deliverable --type TRIAGE_VERDICT --file-path ".dora/deliverables/triage_verdicts.json"
    (returns {"status":"success","filepath":"..."} or {"status":"error","message":"...","retryable":true})
 
 If there are zero candidate findings, still emit {"version":1,"verdicts":[]}.
@@ -616,12 +616,12 @@ Every field except claimedSeverity is REQUIRED and non-empty, or validation reje
 <role>You are a triage analyst (pipeline-testing mode — be fast).</role>
 <target>URL: {{WEB_URL}}</target>
 <task>
-Read any `.shannon/deliverables/*_exploitation_evidence.md` files that exist. For each finding,
+Read any `.dora/deliverables/*_exploitation_evidence.md` files that exist. For each finding,
 emit a verdict (PASS/DOWNGRADE/KILL/CHAIN_REQUIRED). Use the Write tool to create
-`.shannon/deliverables/triage_verdicts.json` with STRICT JSON:
+`.dora/deliverables/triage_verdicts.json` with STRICT JSON:
 {"version":1,"verdicts":[{"id":"injection-1","vulnType":"injection","title":"...","verdict":"PASS","severity":"low","reason":"...","evidenceFile":"injection_exploitation_evidence.md"}]}
 If none exist, emit {"version":1,"verdicts":[]}. Then run:
-  save-deliverable --type TRIAGE_VERDICT --file-path ".shannon/deliverables/triage_verdicts.json"
+  save-deliverable --type TRIAGE_VERDICT --file-path ".dora/deliverables/triage_verdicts.json"
 </task>
 ```
 
@@ -656,7 +656,7 @@ git commit -m "feat(triage): triage-verdict prompt (full + pipeline-testing)"
  * Standalone smoke for the triage → report rendering path (the repo has no test
  * runner). Seeds a temp deliverables dir, runs assembleFinalReport, and asserts the
  * Confirmed/ruled-out tables and the fail-open UNVALIDATED banner. Run after build:
- *   pnpm --filter @shannon/worker build && node apps/worker/dist/scripts/verify-triage.js
+ *   pnpm --filter @dora/worker build && node apps/worker/dist/scripts/verify-triage.js
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -672,7 +672,7 @@ function assert(cond: boolean, msg: string): void {
 
 function seed(): string {
   const root = mkdtempSync(join(tmpdir(), 'triage-smoke-'));
-  const dir = join(root, '.shannon', 'deliverables');
+  const dir = join(root, '.dora', 'deliverables');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'injection_exploitation_evidence.md'), '# Injection Exploitation Evidence\n');
   return root;
@@ -682,7 +682,7 @@ async function main(): Promise<void> {
   // Case 1: valid verdicts → Confirmed table + ruled-out appendix, no banner.
   const root1 = seed();
   writeFileSync(
-    join(root1, '.shannon', 'deliverables', 'triage_verdicts.json'),
+    join(root1, '.dora', 'deliverables', 'triage_verdicts.json'),
     JSON.stringify({
       version: 1,
       verdicts: [
@@ -706,7 +706,7 @@ async function main(): Promise<void> {
   // Case 3: invalid verdicts (bad enum) → fail-open banner.
   const root3 = seed();
   writeFileSync(
-    join(root3, '.shannon', 'deliverables', 'triage_verdicts.json'),
+    join(root3, '.dora', 'deliverables', 'triage_verdicts.json'),
     JSON.stringify({ version: 1, verdicts: [{ id: 'x', vulnType: 'xss', title: 't', verdict: 'NOPE', severity: 'high', reason: 'r', evidenceFile: 'f.md' }] }),
   );
   const report3 = await assembleFinalReport(root3, logger);
@@ -727,7 +727,7 @@ main().catch((e) => {
 
 - [ ] **Step 2: Build + run the smoke.**
 
-Run: `pnpm --filter @shannon/worker build && node apps/worker/dist/scripts/verify-triage.js`
+Run: `pnpm --filter @dora/worker build && node apps/worker/dist/scripts/verify-triage.js`
 Expected: `TRIAGE SMOKE PASSED (3 cases)` and exit 0.
 
 - [ ] **Step 3: Lint.** Run: `pnpm biome` — Expected: PASS.
@@ -775,9 +775,9 @@ git commit -m "docs(triage): document the triage gate phase and verdicts"
 
 ## Final verification (Phase 5 gate)
 
-- [ ] `pnpm --filter @shannon/worker check` — typecheck clean.
+- [ ] `pnpm --filter @dora/worker check` — typecheck clean.
 - [ ] `pnpm biome` — lint/format clean.
-- [ ] `pnpm --filter @shannon/worker build && node apps/worker/dist/scripts/verify-triage.js` — smoke PASSED.
+- [ ] `pnpm --filter @dora/worker build && node apps/worker/dist/scripts/verify-triage.js` — smoke PASSED.
 - [ ] (Manual, optional, needs creds) a real `--pipeline-testing` run against a target to confirm the triage agent emits valid `triage_verdicts.json` and the report renders the sections end-to-end.
 
 ## Out of scope (per spec)

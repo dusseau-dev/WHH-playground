@@ -2,7 +2,7 @@
  * Environment variable loading and credential validation.
  *
  * Local mode: loads ./.env via dotenv.
- * NPX mode: fills gaps from ~/.shannon/config.toml (no .env).
+ * NPX mode: fills gaps from ~/.dora/config.toml (no .env).
  */
 
 import fs from 'node:fs';
@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { resolveConfig } from './config/resolver.js';
+import { applyLegacyEnvAliases } from './legacy-env.js';
 import { getMode } from './mode.js';
 import { resolveCliModelSelection, selectedProviderEnvNames } from './model-spec.js';
 
@@ -89,7 +90,7 @@ export function resolveProviderCredentialFiles(): ProviderCredentialFile[] {
       {
         environmentName: 'AWS_WEB_IDENTITY_TOKEN_FILE',
         hostPath: credentialFile(tokenPath, 'AWS_WEB_IDENTITY_TOKEN_FILE'),
-        containerPath: '/tmp/shannon-aws-web-identity-token',
+        containerPath: '/tmp/dora-aws-web-identity-token',
       },
     ];
   }
@@ -100,8 +101,11 @@ export function resolveProviderCredentialFiles(): ProviderCredentialFile[] {
 /**
  * Load credentials into process.env.
  * Local mode: loads ./.env via dotenv.
- * NPX mode: fills gaps from ~/.shannon/config.toml.
+ * NPX mode: fills gaps from ~/.dora/config.toml.
  * Exported env vars always take precedence in both modes.
+ *
+ * Pre-rename SHANNON_* variables are aliased onto DORA_* after both sources
+ * have been applied, so an existing .env or shell profile keeps working.
  */
 export function loadEnv(): void {
   if (getMode() === 'local') {
@@ -109,6 +113,7 @@ export function loadEnv(): void {
   } else {
     resolveConfig();
   }
+  applyLegacyEnvAliases();
 }
 
 /**
@@ -116,7 +121,7 @@ export function loadEnv(): void {
  * its own environment, keeping credentials out of process argv and diagnostics.
  */
 export function buildEnvFlags(options: { includeProvider?: boolean } = {}): string[] {
-  const flags: string[] = ['-e', 'TEMPORAL_ADDRESS=shannon-temporal:7233'];
+  const flags: string[] = ['-e', 'TEMPORAL_ADDRESS=dora-temporal:7233'];
   const providerNames = options.includeProvider === false ? [] : selectedProviderEnvNames();
 
   for (const key of [...providerNames, ...RUNTIME_FORWARD_VARS]) {
@@ -172,8 +177,8 @@ export function validateCredentials(): CredentialValidation {
 
   const hint =
     getMode() === 'local'
-      ? 'Set the selected provider credential or SHANNON_AI_API_KEY in .env (Bedrock accepts a bearer token or the AWS credential chain).'
-      : `Authentication not configured. Export variables or run 'npx @keygraph/shannon setup'.`;
+      ? 'Set the selected provider credential or DORA_AI_API_KEY in .env (Bedrock accepts a bearer token or the AWS credential chain).'
+      : `Authentication not configured. Export variables or run 'npx @keygraph/dora setup'.`;
   return {
     valid: false,
     error: `No credentials found for provider "${selection.providerId}". ${hint}`,

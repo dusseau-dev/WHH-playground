@@ -8,30 +8,30 @@ AI-powered penetration testing agent for defensive security analysis. Automates 
 
 ### Dual CLI
 
-Shannon supports two CLI modes, auto-detected based on the current working directory:
+Dora supports two CLI modes, auto-detected based on the current working directory:
 
-| | **npx** (`npx @keygraph/shannon`) | **Local** (`./shannon`) |
+| | **npx** (`npx @keygraph/dora`) | **Local** (`./dora`) |
 |---|---|---|
 | **Install** | Zero-install via npm | Clone the repo |
-| **Image** | Pulled from Docker Hub (`keygraph/shannon:latest`) | Built locally (`shannon-worker`) |
-| **State** | `~/.shannon/` | Project directory |
-| **Credentials** | `~/.shannon/config.toml` (via `shn setup`) or env vars | `./.env` |
-| **Config** | `~/.shannon/config.toml` (via `shn setup`) | N/A |
+| **Image** | Pulled from Docker Hub (`keygraph/dora:latest`) | Built locally (`dora-worker`) |
+| **State** | `~/.dora/` | Project directory |
+| **Credentials** | `~/.dora/config.toml` (via `shn setup`) or env vars | `./.env` |
+| **Config** | `~/.dora/config.toml` (via `shn setup`) | N/A |
 | **Prompts** | Bundled in Docker image | Mounted from `./apps/worker/prompts/` (live-editable) |
 
-Mode auto-detection: local mode activates when env var `SHANNON_LOCAL=1` is set by the `./shannon` entry point (`apps/cli/src/mode.ts`). Otherwise npx mode.
+Mode auto-detection: local mode activates when env var `DORA_LOCAL=1` is set by the `./dora` entry point (`apps/cli/src/mode.ts`). Otherwise npx mode.
 
 ### npx Quick Start
 
 ```bash
 # Configure credentials (interactive wizard)
-npx @keygraph/shannon setup
+npx @keygraph/dora setup
 
 # Or export env vars directly (non-interactive / CI)
 export ANTHROPIC_API_KEY=your-key
 
 # Run
-npx @keygraph/shannon start -u <url> -r /path/to/repo
+npx @keygraph/dora start -u <url> -r /path/to/repo
 ```
 
 ### Local (Development) Quick Start
@@ -41,37 +41,37 @@ npx @keygraph/shannon start -u <url> -r /path/to/repo
 echo "ANTHROPIC_API_KEY=your-key" > .env
 
 # Build (auto-runs if image missing)
-./shannon build
+./dora build
 
 # Run
-./shannon start -u <url> -r my-repo
-./shannon start -u <url> -r my-repo -c ./apps/worker/configs/my-config.yaml
-./shannon start -u <url> -r /any/path/to/repo
+./dora start -u <url> -r my-repo
+./dora start -u <url> -r my-repo -c ./apps/worker/configs/my-config.yaml
+./dora start -u <url> -r /any/path/to/repo
 ```
 
 ### Common Commands
 
 ```bash
 # Setup (npx mode only — one-time credential configuration)
-npx @keygraph/shannon setup
+npx @keygraph/dora setup
 
 # Workspaces & Resume
-./shannon start -u <url> -r my-repo -w my-audit    # New named workspace
-./shannon start -u <url> -r my-repo -w my-audit    # Resume (same command)
-./shannon workspaces                                 # List all workspaces
+./dora start -u <url> -r my-repo -w my-audit    # New named workspace
+./dora start -u <url> -r my-repo -w my-audit    # Resume (same command)
+./dora workspaces                                 # List all workspaces
 
 # Monitor
-./shannon logs <workspace>            # Tail workflow log
-./shannon status                      # Show running workers
+./dora logs <workspace>            # Tail workflow log
+./dora status                      # Show running workers
 # Temporal Web UI: http://localhost:8233
 
 # Stop
-./shannon stop                        # Preserves workflow data
-./shannon stop --clean                # Full cleanup including volumes (confirms first)
+./dora stop                        # Preserves workflow data
+./dora stop --clean                # Full cleanup including volumes (confirms first)
 
 # Image management
-./shannon build [--no-cache]          # Local mode: build worker image
-npx @keygraph/shannon uninstall             # npx mode: remove ~/.shannon/ (confirms first)
+./dora build [--no-cache]          # Local mode: build worker image
+npx @keygraph/dora uninstall             # npx mode: remove ~/.dora/ (confirms first)
 
 # Build TypeScript (development)
 pnpm run build                       # Build all packages via Turborepo
@@ -89,34 +89,34 @@ pnpm biome:fix                       # Auto-fix lint, format, and import sorting
 ### Monorepo Layout
 
 ```
-apps/cli/        — @keygraph/shannon (published to npm, bundled with tsdown)
-apps/worker/     — @shannon/worker (private, Temporal worker + pipeline logic)
+apps/cli/        — @keygraph/dora (published to npm, bundled with tsdown)
+apps/worker/     — @dora/worker (private, Temporal worker + pipeline logic)
 ```
 
 ### CLI Package (`apps/cli/`)
-Published as `@keygraph/shannon` on npm. Contains only Docker orchestration logic — no Temporal SDK, business logic, or prompts. Bundled with tsdown for single-file ESM output.
+Published as `@keygraph/dora` on npm. Contains only Docker orchestration logic — no Temporal SDK, business logic, or prompts. Bundled with tsdown for single-file ESM output.
 
 - `apps/cli/src/index.ts` — CLI dispatcher (`setup`, `start`, `stop`, `logs`, `workspaces`, `status`, `build`, `uninstall`, `info`)
-- `apps/cli/src/mode.ts` — Auto-detection: local mode if `SHANNON_LOCAL=1` env var is set
+- `apps/cli/src/mode.ts` — Auto-detection: local mode if `DORA_LOCAL=1` env var is set
 - `apps/cli/src/docker.ts` — Compose lifecycle, image pull/build, ephemeral `docker run` worker spawning
-- `apps/cli/src/home.ts` — State directory management (`~/.shannon/` for npx, `./` for local)
+- `apps/cli/src/home.ts` — State directory management (`~/.dora/` for npx, `./` for local)
 - `apps/cli/src/env.ts` — `.env` loading, TOML fallback (npx only) via `apps/cli/src/config/resolver.ts`, credential validation, env flag building
-- `apps/cli/src/config/resolver.ts` — Cascading config (npx only): env vars → `~/.shannon/config.toml` (parsed with `smol-toml`)
+- `apps/cli/src/config/resolver.ts` — Cascading config (npx only): env vars → `~/.dora/config.toml` (parsed with `smol-toml`)
 - `apps/cli/src/config/writer.ts` — TOML serialization and secure file persistence (0o600)
 - `apps/cli/src/commands/setup.ts` — Interactive TUI wizard (`@clack/prompts`) for provider credential setup (npx only)
 - `apps/cli/src/paths.ts` — Repo/config path resolution (bare name → `./repos/<name>`, or any absolute/relative path)
 - `apps/cli/src/commands/` — Command handlers
 - `apps/cli/infra/compose.yml` — Bundled Temporal compose file for npx mode
 - `apps/cli/tsdown.config.ts` — tsdown bundler config
-- `shannon` — Node.js entry point (`#!/usr/bin/env node`) that delegates to `apps/cli/dist/index.mjs`
+- `dora` — Node.js entry point (`#!/usr/bin/env node`) that delegates to `apps/cli/dist/index.mjs`
 
 ### Docker Architecture
 Infra (Temporal) runs via `docker-compose.yml`. Workers are ephemeral `docker run --rm` containers, one per scan, each with a unique task queue and isolated volume mounts.
 
-- `docker-compose.yml` — Infra only: `shannon-temporal` (port 7233/8233). Network: `shannon-net`
+- `docker-compose.yml` — Infra only: `dora-temporal` (port 7233/8233). Network: `dora-net`
 - `Dockerfile` — 2-stage build (builder + Chainguard Wolfi runtime). Uses pnpm. Entrypoint: `CMD ["node", "apps/worker/dist/temporal/worker.js"]`
 - No `docker-compose.docker.yml` — host gateway handled via `--add-host` flag in CLI
-- `/etc/hosts` forwarding — at worker spawn, `forwardEtcHostsFlags` in `apps/cli/src/docker.ts` reads the host's `/etc/hosts` and emits one `--add-host` flag per valid user-added entry. Loopback IPs (`127.x`, `::1`) are rewritten to `host-gateway`; IPv6 addresses are bracketed. Disable per-scan via `SHANNON_FORWARD_HOSTS=false`. No-op on Windows native (WSL2 reads its own `/etc/hosts` via the Linux path).
+- `/etc/hosts` forwarding — at worker spawn, `forwardEtcHostsFlags` in `apps/cli/src/docker.ts` reads the host's `/etc/hosts` and emits one `--add-host` flag per valid user-added entry. Loopback IPs (`127.x`, `::1`) are rewritten to `host-gateway`; IPv6 addresses are bracketed. Disable per-scan via `DORA_FORWARD_HOSTS=false`. No-op on Windows native (WSL2 reads its own `/etc/hosts` via the Linux path).
 
 ### Worker Package (`apps/worker/`)
 - `apps/worker/src/paths.ts` — Centralized path constants (`PROMPTS_DIR`, `CONFIGS_DIR`, `WORKSPACES_DIR`)
@@ -145,7 +145,7 @@ Durable workflow orchestration with crash recovery, queryable progress, intellig
 5. **Reporting** (`report`) — Executive-level security report
 
 ### Supporting Systems
-- **Configuration** — YAML configs in `apps/worker/configs/` with JSON Schema validation (`config-schema.json`). Supports auth settings (MFA/TOTP), URL/code rule scoping (`rules.avoid`/`rules.focus`), run-scope steering (`vuln_classes`, `exploit`), free-form `rules_of_engagement`, and post-hoc `report` filters (`min_severity`, `min_confidence`, `guidance`). `code_path` avoid rules are written into `~/.claude/settings.json` `permissions.deny` (`Read`/`Edit`) once per workflow by `apps/worker/src/temporal/activities.ts:syncCodePathDenyRules` so the SDK enforces them at the tool layer even in `bypassPermissions` mode. `vuln_classes`/`exploit` scope is locked into `session.json` on first run; resumes with a different scope fail fast (`persistOrValidateRunScope`). Credential resolution — local mode: env vars → `./.env`; npx mode: env vars → `~/.shannon/config.toml` (via `shn setup`)
+- **Configuration** — YAML configs in `apps/worker/configs/` with JSON Schema validation (`config-schema.json`). Supports auth settings (MFA/TOTP), URL/code rule scoping (`rules.avoid`/`rules.focus`), run-scope steering (`vuln_classes`, `exploit`), free-form `rules_of_engagement`, and post-hoc `report` filters (`min_severity`, `min_confidence`, `guidance`). `code_path` avoid rules are written into `~/.claude/settings.json` `permissions.deny` (`Read`/`Edit`) once per workflow by `apps/worker/src/temporal/activities.ts:syncCodePathDenyRules` so the SDK enforces them at the tool layer even in `bypassPermissions` mode. `vuln_classes`/`exploit` scope is locked into `session.json` on first run; resumes with a different scope fail fast (`persistOrValidateRunScope`). Credential resolution — local mode: env vars → `./.env`; npx mode: env vars → `~/.dora/config.toml` (via `shn setup`)
 - **Prompts** — Per-phase templates in `apps/worker/prompts/` with variable substitution (`{{TARGET_URL}}`, `{{CONFIG_CONTEXT}}`). Shared partials in `apps/worker/prompts/shared/` via `apps/worker/src/services/prompt-manager.ts`, including `_code-path-rules.txt` (focus/avoid `[FILE]`/`[GLOB]` routing) and `_rules-of-engagement.txt` (free-text engagement rules). When `exploit: false`, `apps/worker/src/services/findings-renderer.ts` deterministically converts each `*_exploitation_queue.json` into a `*_findings.md` for report assembly — no LLM in the loop
 - **SDK Integration** — Uses `@anthropic-ai/claude-agent-sdk` with `maxTurns: 10_000` and `bypassPermissions` mode. Adaptive thinking is enabled by default on Opus 4.6/4.7 (`supportsAdaptiveThinking` in `apps/worker/src/ai/models.ts`); disable per-scan via `CLAUDE_ADAPTIVE_THINKING=false` (env) or `core.adaptive_thinking = false` (npx TOML). Browser automation via `playwright-cli` with session isolation (`-s=<session>`). TOTP generation via `generate-totp` CLI tool. Login flow template at `apps/worker/prompts/shared/login-instructions.txt` supports form, SSO, API, and basic auth. On authenticated whitebox scans, the `validate-authentication` preflight performs the single real login and saves the browser session to `auth-state.json` in the per-session audit directory (path from `authStateFile()` in `apps/worker/src/audit/utils.ts`, derived from `generateAuditPath()`). The validation activity (`apps/worker/src/services/validate-authentication.ts`) removes any stale file from a prior run before the agent runs and verifies the file parses and contains cookies or storage before the preflight is marked complete; `logWorkflowComplete` deletes it when the workflow ends so authenticated cookies don't sit on disk between scans. Agent prompts opt in to session reuse by `@include(shared/_shared-session.txt)` before their `<login_instructions>` block — the partial restores the session and falls through to the full login flow if verification fails. `vuln-auth`/`exploit-auth` omit the include and own their own login
 - **Audit System** — Crash-safe append-only logging in `workspaces/{hostname}_{sessionId}/`. Tracks session metrics, per-agent logs, prompts, and deliverables. WorkflowLogger (`apps/worker/src/audit/workflow-logger.ts`) provides unified human-readable per-workflow logs, backed by LogStream (`apps/worker/src/audit/log-stream.ts`) shared stream primitive
@@ -224,7 +224,7 @@ Comments must be **timeless** — no references to this conversation, refactorin
 
 ## Key Files
 
-**CLI:** `shannon` (entry point), `apps/cli/src/index.ts` (dispatcher), `apps/cli/src/docker.ts` (orchestration), `apps/cli/src/mode.ts` (auto-detection)
+**CLI:** `dora` (entry point), `apps/cli/src/index.ts` (dispatcher), `apps/cli/src/docker.ts` (orchestration), `apps/cli/src/mode.ts` (auto-detection)
 
 **Entry Points:** `apps/worker/src/temporal/workflows.ts`, `apps/worker/src/temporal/activities.ts`, `apps/worker/src/temporal/worker.ts`
 
@@ -242,7 +242,7 @@ Package managers are configured with a minimum release age (7 days). Requires pn
 
 - **"Repository not found"** — Pass a bare name (`-r my-repo`) for `./repos/my-repo`, or a path (`-r /path/to/repo`) for any directory
 - **"Temporal not ready"** — Wait for health check or `docker compose logs temporal`
-- **Worker not processing** — Check `docker ps --filter "name=shannon-worker-"`
-- **Reset state** — `./shannon stop --clean`
+- **Worker not processing** — Check `docker ps --filter "name=dora-worker-"`
+- **Reset state** — `./dora stop --clean`
 - **Local apps unreachable** — Use `host.docker.internal` instead of `localhost`
 - **Container permissions** — On Linux, may need `sudo` for docker commands

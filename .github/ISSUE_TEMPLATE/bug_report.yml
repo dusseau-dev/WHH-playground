@@ -46,7 +46,7 @@ body:
       options:
         - label: I have searched the existing open issues and confirmed this bug has not already been reported.
           required: true
-        - label: I am running the latest released version of `shannon`.
+        - label: I am running the latest released version of `dora`.
           required: true
 
   - type: checkboxes
@@ -70,7 +70,7 @@ body:
         Issues without this information may be difficult to triage.
 
         - Check the workflow log:
-            - **npx mode:** `~/.shannon/workspaces/<workspace>/workflow.log`
+            - **npx mode:** `~/.dora/workspaces/<workspace>/workflow.log`
             - **Local mode:** `./workspaces/<workspace>/workflow.log`
           Use `grep` or search to identify errors.
           Paste the relevant error output below.
@@ -105,8 +105,8 @@ body:
     attributes:
       label: CLI mode
       options:
-        - "npx (@keygraph/shannon)"
-        - "Local (./shannon)"
+        - "npx (@keygraph/dora)"
+        - "Local (./dora)"
     validations:
       required: true
 
@@ -124,10 +124,10 @@ body:
       required: true
 
   - type: input
-    id: shannon-command
+    id: dora-command
     attributes:
       label: Full command with all flags used (with redactions)
-      placeholder: "e.g. npx @keygraph/shannon start -u <url> -r my-repo  OR  ./shannon start -u <url> -r my-repo"
+      placeholder: "e.g. npx @keygraph/dora start -u <url> -r my-repo  OR  ./dora start -u <url> -r my-repo"
     validations:
       required: true
 

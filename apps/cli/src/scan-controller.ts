@@ -42,7 +42,7 @@ import { getWorkspacesDir, initHome } from './home.js';
 import { assertHttpLoadAuthorization, type HttpLoadSettings } from './http-load.js';
 import { isLocal } from './mode.js';
 import { providerConfigMatchesConfiguredModel } from './model-catalog.js';
-import { FINAL_REPORT_FILENAME, INTERNAL_DIR } from './paths.js';
+import { FINAL_REPORT_FILENAME, INTERNAL_DIR, LEGACY_INTERNAL_DIR } from './paths.js';
 import { SecretRedactor, safeErrorMessage, sanitizeReportMarkdown } from './redaction.js';
 import type {
   AssessmentModule,
@@ -354,7 +354,7 @@ export function hashRunSnapshot(snapshot: RunSnapshot): string {
 
 function safeWorkspaceName(targetUrl: string, now: Date): string {
   const hostname = new URL(targetUrl).hostname.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 60) || 'target';
-  return `${hostname}_shannon-${now.getTime()}-${crypto.randomBytes(2).toString('hex')}`;
+  return `${hostname}_dora-${now.getTime()}-${crypto.randomBytes(2).toString('hex')}`;
 }
 
 function requiredSecrets(secrets: TargetSecrets, references: SecretReferences): SecretField[] {
@@ -1094,15 +1094,15 @@ export class ScanController {
     this.assertSnapshotIntegrity(run);
     const attemptNumber = run.attempts.length + 1;
     const suffix = this.suffix();
-    const taskQueue = `shannon-${suffix}`;
+    const taskQueue = `dora-${suffix}`;
     const workflowId = `${run.runId}-attempt-${attemptNumber}-${suffix}`;
-    const containerName = `shannon-worker-${suffix}`;
+    const containerName = `dora-worker-${suffix}`;
     const dockerLabels = {
-      'shannon.managed': 'true',
-      'shannon.run': run.runId,
-      'shannon.workspace': run.runId,
-      'shannon.attempt': String(attemptNumber),
-      'shannon.workflow': workflowId,
+      'dora.managed': 'true',
+      'dora.run': run.runId,
+      'dora.workspace': run.runId,
+      'dora.attempt': String(attemptNumber),
+      'dora.workflow': workflowId,
     };
     const createdAt = this.now().toISOString();
     const attempt: RunAttempt = {
@@ -1539,6 +1539,9 @@ export class ScanController {
     const workspace = this.workspacePath(runId);
     const current = path.join(workspace, INTERNAL_DIR, filename);
     if (await pathExists(current)) return current;
+    // Pre-rename workspaces keep their evidence under .shannon/.
+    const preRename = path.join(workspace, LEGACY_INTERNAL_DIR, filename);
+    if (await pathExists(preRename)) return preRename;
     const legacy = path.join(workspace, filename);
     if (await pathExists(legacy)) return legacy;
     if (allowMissing) return current;
@@ -1674,9 +1677,9 @@ export class ScanController {
       'scratchpad',
       '.playwright-cli',
       '.playwright',
-      path.join('runtime', 'target', '.shannon', 'deliverables'),
-      path.join('runtime', 'target', '.shannon', 'scratchpad'),
-      path.join('runtime', 'target', '.shannon', '.playwright-cli'),
+      path.join('runtime', 'target', '.dora', 'deliverables'),
+      path.join('runtime', 'target', '.dora', 'scratchpad'),
+      path.join('runtime', 'target', '.dora', '.playwright-cli'),
       path.join('runtime', 'target', '.playwright'),
     ]) {
       await ensureDirectory(path.join(internal, relative), 0o777);
@@ -1685,9 +1688,9 @@ export class ScanController {
 
   private async prepareRepositoryOverlayMounts(repoPath: string): Promise<void> {
     for (const relative of [
-      path.join('.shannon', 'deliverables'),
-      path.join('.shannon', 'scratchpad'),
-      path.join('.shannon', '.playwright-cli'),
+      path.join('.dora', 'deliverables'),
+      path.join('.dora', 'scratchpad'),
+      path.join('.dora', '.playwright-cli'),
       '.playwright',
     ]) {
       await ensureDirectory(path.join(repoPath, relative), 0o755);

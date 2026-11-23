@@ -18,8 +18,8 @@ import { INTERNAL_DIR } from './paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const NPX_IMAGE_REPO = 'keygraph/shannon';
-const DEV_IMAGE = 'shannon-worker';
+const NPX_IMAGE_REPO = 'keygraph/dora';
+const DEV_IMAGE = 'dora-worker';
 
 export function getWorkerImage(version: string): string {
   return getMode() === 'local' ? DEV_IMAGE : `${NPX_IMAGE_REPO}:${version}`;
@@ -84,7 +84,7 @@ function isMissingContainerError(error: unknown): boolean {
 export function isTemporalReady(): boolean {
   const output = runOutput('docker', [
     'exec',
-    'shannon-temporal',
+    'dora-temporal',
     'temporal',
     'operator',
     'cluster',
@@ -104,7 +104,7 @@ export async function ensureInfra(): Promise<void> {
   }
 
   const composeFile = getComposeFile();
-  console.log('Starting Shannon infrastructure...');
+  console.log('Starting Dora infrastructure...');
   execFileSync('docker', ['compose', '-f', composeFile, 'up', '-d'], { stdio: 'inherit' });
 
   console.log('Waiting for Temporal to be ready...');
@@ -149,7 +149,7 @@ export function ensureImage(version: string): void {
     } catch {
       throw new Error(
         `Failed to pull ${image}. The image may not be available for your platform yet; ` +
-          'check https://hub.docker.com/r/keygraph/shannon for available tags.',
+          'check https://hub.docker.com/r/keygraph/dora for available tags.',
       );
     }
     pruneOldImages(version);
@@ -192,7 +192,7 @@ function isLoopbackIp(ip: string): boolean {
 
 function shouldSkipHostsIp(ip: string): boolean {
   if (ip === '0.0.0.0' || ip === '255.255.255.255') return true;
-  // Cloud metadata range — consistent with Shannon's SSRF guard
+  // Cloud metadata range — consistent with Dora's SSRF guard
   if (ip.startsWith('169.254.')) return true;
   const lower = ip.toLowerCase();
   if (lower.startsWith('fe80:') || lower.startsWith('ff')) return true;
@@ -213,7 +213,7 @@ function shouldSkipHostsName(name: string, hostname: string): boolean {
  * `host-gateway` so they target the host's loopback instead of the container's.
  */
 function forwardEtcHostsFlags(): string[] {
-  if (process.env.SHANNON_FORWARD_HOSTS === 'false') return [];
+  if (process.env.DORA_FORWARD_HOSTS === 'false') return [];
   if (os.platform() === 'win32') return [];
 
   let content: string;
@@ -279,7 +279,7 @@ export function buildWorkerArgs(opts: WorkerOptions): string[] {
   if (!opts.debug) {
     args.push('--rm');
   }
-  args.push('--name', opts.containerName, '--network', 'shannon-net');
+  args.push('--name', opts.containerName, '--network', 'dora-net');
   for (const [key, value] of Object.entries(opts.labels ?? {})) {
     args.push('--label', `${key}=${value}`);
   }
@@ -292,7 +292,7 @@ export function buildWorkerArgs(opts: WorkerOptions): string[] {
 
   // UID remapping for Linux bind mounts
   if (os.platform() === 'linux' && process.getuid && process.getgid) {
-    args.push('-e', `SHANNON_HOST_UID=${process.getuid()}`, '-e', `SHANNON_HOST_GID=${process.getgid()}`);
+    args.push('-e', `DORA_HOST_UID=${process.getuid()}`, '-e', `DORA_HOST_GID=${process.getgid()}`);
   }
 
   // Volume mounts
@@ -300,11 +300,11 @@ export function buildWorkerArgs(opts: WorkerOptions): string[] {
   const repositoryMount = `${opts.repo.hostPath}:${opts.repo.containerPath}`;
   args.push('-v', opts.sourceMode === 'url-only' ? repositoryMount : `${repositoryMount}:ro`);
 
-  // Writable overlays: shadow .shannon/ and .playwright/ inside the :ro repo with workspace-backed dirs
+  // Writable overlays: shadow .dora/ and .playwright/ inside the :ro repo with workspace-backed dirs
   const internalPath = path.join(opts.workspacesDir, opts.workspace, INTERNAL_DIR);
-  args.push('-v', `${path.join(internalPath, 'deliverables')}:${opts.repo.containerPath}/.shannon/deliverables`);
-  args.push('-v', `${path.join(internalPath, 'scratchpad')}:${opts.repo.containerPath}/.shannon/scratchpad`);
-  args.push('-v', `${path.join(internalPath, '.playwright-cli')}:${opts.repo.containerPath}/.shannon/.playwright-cli`);
+  args.push('-v', `${path.join(internalPath, 'deliverables')}:${opts.repo.containerPath}/.dora/deliverables`);
+  args.push('-v', `${path.join(internalPath, 'scratchpad')}:${opts.repo.containerPath}/.dora/scratchpad`);
+  args.push('-v', `${path.join(internalPath, '.playwright-cli')}:${opts.repo.containerPath}/.dora/.playwright-cli`);
   args.push('-v', `${path.join(internalPath, '.playwright')}:${opts.repo.containerPath}/.playwright`);
 
   // Local mode: mount prompts for live editing
@@ -426,7 +426,7 @@ class SystemDockerClient implements DockerClient {
   }
 
   async listManagedContainers(): Promise<DockerContainerState[]> {
-    const output = await runAsync('docker', ['ps', '-a', '-q', '--filter', 'label=shannon.managed=true']);
+    const output = await runAsync('docker', ['ps', '-a', '-q', '--filter', 'label=dora.managed=true']);
     if (!output) return [];
     const containers = await Promise.all(
       output
@@ -452,15 +452,19 @@ export function createDockerClient(): DockerClient {
 }
 
 /**
- * Stop all running shannon-worker-* containers.
+ * Stop all running workers, including containers left over from before the
+ * Shannon -> Dora rename so upgrades do not leak orphaned sandboxes.
  */
 export function stopWorkers(): void {
-  const workers = runOutput('docker', ['ps', '-q', '--filter', 'name=shannon-worker-']);
-  if (!workers) return;
+  const ids = ['dora-worker-', 'shannon-worker-'].flatMap((prefix) => {
+    const found = runOutput('docker', ['ps', '-q', '--filter', `name=${prefix}`]);
+    return found ? found.split('\n').filter(Boolean) : [];
+  });
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
 
-  const ids = workers.split('\n').filter(Boolean);
   console.log('Stopping worker containers...');
-  execFileSync('docker', ['stop', ...ids], { stdio: 'inherit' });
+  execFileSync('docker', ['stop', ...unique], { stdio: 'inherit' });
 }
 
 /**
@@ -474,7 +478,7 @@ export function stopInfra(clean: boolean): void {
 }
 
 /**
- * Remove old keygraph/shannon images that don't match the current version.
+ * Remove old keygraph/dora images that don't match the current version.
  */
 function pruneOldImages(currentVersion: string): void {
   const output = runOutput('docker', ['images', NPX_IMAGE_REPO, '--format', '{{.Tag}}']);
@@ -494,7 +498,7 @@ export function listRunningWorkers(): string {
   return runOutput('docker', [
     'ps',
     '--filter',
-    'name=shannon-worker-',
+    'name=dora-worker-',
     '--format',
     'table {{.Names}}\t{{.Status}}\t{{.RunningFor}}',
   ]);

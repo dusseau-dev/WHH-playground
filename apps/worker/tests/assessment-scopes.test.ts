@@ -92,7 +92,7 @@ describe('detection validation settings', () => {
 
   it('normalizes the staging-only executor contract', () => {
     expect(normalizeDetectionValidationSettings(['alerting-effectiveness'], { splunk }, 'staging')).toEqual({
-      canaryPath: '/__shannon__/detection-simulation',
+      canaryPath: '/__dora__/detection-simulation',
       minimumDetectionRate: 1,
       maxWaitSeconds: 180,
       splunk,
@@ -281,7 +281,7 @@ describe('assessment module registry', () => {
           {
             id: 'passive-exposure',
             status: 'completed',
-            evidencePath: '.shannon/deliverables/modules/passive-exposure.json',
+            evidencePath: '.dora/deliverables/modules/passive-exposure.json',
           },
         ],
       ),
@@ -290,7 +290,7 @@ describe('assessment module registry', () => {
         id: 'passive-exposure',
         title: 'Passive exposure review',
         status: 'completed',
-        evidence_path: '.shannon/deliverables/modules/passive-exposure.json',
+        evidence_path: '.dora/deliverables/modules/passive-exposure.json',
       },
       { id: 'automated-dast', title: 'Automated vulnerability scan', status: 'not-run' },
     ]);

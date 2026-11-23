@@ -41,7 +41,7 @@ interface WorkerArgs {
 }
 
 function showUsage(): void {
-  console.log('\nShannon Worker');
+  console.log('\nDora Worker');
   console.log('Polls one controller-owned assessment workflow.\n');
   console.log('Usage:');
   console.log(

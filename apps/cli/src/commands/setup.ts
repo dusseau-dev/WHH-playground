@@ -1,11 +1,11 @@
-/** Interactive one-model provider configuration for ~/.shannon/config.toml. */
+/** Interactive one-model provider configuration for ~/.dora/config.toml. */
 
 import os from 'node:os';
 import path from 'node:path';
 import * as p from '@clack/prompts';
-import { type ShannonConfig, saveConfig } from '../config/writer.js';
+import { type DoraConfig, saveConfig } from '../config/writer.js';
 
-const SHANNON_HOME = path.join(os.homedir(), '.shannon');
+const DORA_HOME = path.join(os.homedir(), '.dora');
 const CURATED_PROVIDERS = ['anthropic', 'openai', 'xai', 'amazon-bedrock'] as const;
 type CuratedProvider = (typeof CURATED_PROVIDERS)[number];
 type OpenAiFormat = 'chat-completions' | 'responses';
@@ -30,12 +30,12 @@ const MODEL_PLACEHOLDER: Readonly<Record<CuratedProvider, string>> = {
 
 interface Selection {
   provider: string;
-  config: ShannonConfig;
+  config: DoraConfig;
   gateway?: { baseUrl: string; format?: OpenAiFormat };
 }
 
 export async function setup(): Promise<void> {
-  p.intro('Shannon Setup');
+  p.intro('Dora Setup');
 
   const selected = await p.select({
     message: 'Select your AI provider',
@@ -61,9 +61,9 @@ export async function setup(): Promise<void> {
   const summary = [`Provider   ${selection.provider}`, `Model      ${modelId}`];
   if (selection.gateway) summary.push(`Endpoint   ${selection.gateway.baseUrl}`);
   if (selection.gateway?.format) summary.push(`API        ${selection.gateway.format}`);
-  p.log.success(`Configuration saved to ${path.join(SHANNON_HOME, 'config.toml')}`);
+  p.log.success(`Configuration saved to ${path.join(DORA_HOME, 'config.toml')}`);
   p.log.info(summary.join('\n'));
-  p.outro('Run `npx @keygraph/shannon start` to begin a scan.');
+  p.outro('Run `npx @keygraph/dora start` to begin a scan.');
 }
 
 async function setupSelection(
@@ -74,7 +74,7 @@ async function setupSelection(
   return { provider: selected, config: await setupProvider(selected) };
 }
 
-async function setupProvider(provider: CuratedProvider): Promise<ShannonConfig> {
+async function setupProvider(provider: CuratedProvider): Promise<DoraConfig> {
   switch (provider) {
     case 'anthropic':
       return { anthropic: { api_key: await promptSecret('Enter your Anthropic API key') } };
@@ -87,7 +87,7 @@ async function setupProvider(provider: CuratedProvider): Promise<ShannonConfig> 
   }
 }
 
-async function setupBedrock(): Promise<ShannonConfig> {
+async function setupBedrock(): Promise<DoraConfig> {
   const region = await p.text({
     message: 'AWS Region',
     placeholder: 'us-east-1',
